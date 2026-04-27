@@ -1,0 +1,238 @@
+#+title: anvil-pkg — Strategic vision: 3-project structure, Lisp comparison, NeLisp synergy, Lisp Machine OS path
+#+author: zawatton
+#+date: 2026-04-27
+#+property: status STRATEGY-DOC
+
+* STATUS
+
+This is a *strategy doc*, not an implementation contract.  It records
+the long-range positioning that justifies the 3-project structure,
+the Phase 3 → lisp-dialect-bridge ordering, and why Elisp + NeLisp +
+bridge is technically defensible as a "world-class Lisp" substrate.
+
+Implementation contracts live in =01-overview.org= (Phase 1 lock) and
+=02-dsl.org= (Phase 2 lock).
+
+* Why this doc exists
+
+The first cut of anvil-pkg framed it as "Nix UX layer in Elisp".  In
+the 2026-04-27 strategy session the user clarified the broader goal:
+
+1. Pull both Nix and Guix users into a single ecosystem.
+2. Eventually target an OS — a research-grade Lisp Machine where
+   /everything is Elisp/.
+3. Treat the Lisp dialect ↔ Elisp converter as a separate NeLisp
+   extension package (the user's own framing).
+
+That re-frame changes the strategic structure.  This doc captures it
+so future contributors / agents do not lose the thread.
+
+* The 3-project structure
+
+| Project              | Role                                           | Status (2026-04-27) | Lifespan     |
+|----------------------+------------------------------------------------+---------------------+--------------|
+| *anvil-pkg*          | Nix store's Emacs-Lisp / AI-native UX layer    | Phase 1 + 2 SHIPPED | 5-10 yr      |
+| *lisp-dialect-bridge*| Lisp-family ↔ Elisp interop, NeLisp extension  | not started         | indefinite   |
+| *lispm-os*           | Lisp Machine OS — Emacs Lisp as system layer   | research only       | 10-20 yr     |
+
+These are *independent repos / brands* that combine into a stack:
+
+#+begin_src text
+  ┌─────────────────────────────────────────────────────────────┐
+  │   lispm-os          (Phase 5+ research, OS substrate)       │
+  ├─────────────────────────────────────────────────────────────┤
+  │   anvil-pkg         (this repo — UX layer over Nix store)   │
+  ├─────────────────────────────────────────────────────────────┤
+  │   lisp-dialect-bridge  (Scheme/CL/Clojure ↔ Elisp interop)  │
+  ├─────────────────────────────────────────────────────────────┤
+  │   NeLisp            (Elisp VM in Elisp — current Phase 7+)  │
+  ├─────────────────────────────────────────────────────────────┤
+  │   Emacs Lisp        (the language, frozen spec)             │
+  └─────────────────────────────────────────────────────────────┘
+#+end_src
+
+* Elisp vs other Lisp dialects (honest)
+
+Elisp is *not* the most powerful Lisp.  Its position in the Lisp
+family by axis:
+
+| Axis             | Elisp | CL | Scheme | Clojure | Racket |
+|------------------+-------+----+--------+---------+--------|
+| TCO              | x     | △  | ◎      | △       | ◎      |
+| Macro hygiene    | x     | x  | ◎      | △       | ◎◎     |
+| Continuations    | x     | x  | ◎      | x       | ◎      |
+| Object system    | △     | ◎◎ | x      | △       | ◎      |
+| Numeric tower    | △     | ◎  | ◎      | △       | ◎      |
+| Concurrency      | x     | △  | △      | ◎◎      | ○      |
+| Type system      | x     | x  | x      | △       | ◎      |
+| Native perf      | △     | ◎◎ | △      | ○       | ○      |
+
+Where Elisp /uniquely/ wins (no other Lisp has these as core):
+
+- Buffer / point / mark / narrow-to-region — text manipulation as a
+  first-class concept of the runtime.
+- Hooks system (=add-hook= / =run-hooks=).
+- =(interactive ...)= command system — editor scripting reified.
+- Living REPL = the editor.  Hot patching is the default mode of
+  development, not an afterthought.
+- MELPA — the largest practical ecosystem of editor-extension code
+  (~5000 packages).
+
+Where Elisp /loses/ in ways that matter for general-purpose work:
+
+- No TCO → recursive functional style stack-overflows.
+- Unhygienic macros → large macro systems are hard to author safely.
+- No first-class continuations → coroutines / generators are
+  expensive to fake.
+- No concurrency → I/O parallelism requires =make-process= dance.
+- Numeric tower limited to int + float.
+
+* NeLisp's effect on the comparison
+
+NeLisp = Elisp implemented in Elisp (analogue of SBCL implementing
+CL in CL).  /The language is unchanged; the runtime is reachable./
+
+What NeLisp can fix without changing Elisp the language:
+
+| Elisp weakness         | Fixable via NeLisp? | How                                                      |
+|------------------------+---------------------+----------------------------------------------------------|
+| TCO                    | yes                 | Detect tail calls at IR level; emit jumps not calls      |
+| Macro hygiene          | yes (as a library)  | Build =syntax-rules= layer on top of Elisp =defmacro=    |
+| Continuations          | yes                 | CPS transform layer on the IR                            |
+| Concurrency            | yes (Phase 4 actor) | Roadmap'd in NeLisp Doc 04 — actor model primary         |
+| Numeric tower          | yes (Phase 7.2/7.3) | Allocator + GC roadmap'd to handle bignum / rational     |
+| Native performance     | partial → yes       | Phase 7.0/7.1 native compiler (x86_64 + arm64) is active |
+
+What NeLisp /cannot/ fix (without breaking Elisp identity):
+
+- Type system — would require new syntax / annotations.
+- Standard library bound to Emacs internals — NeLisp keeps the bond.
+
+* The bridge layer adds the rest
+
+=lisp-dialect-bridge= covers the axes NeLisp itself cannot reach by
+*importing strengths from sibling Lisps*:
+
+- Hygienic macros / syntax-objects — borrow Racket's machinery via
+  source translation.
+- CLOS + MOP — translate from CL.
+- Persistent collections / =core.async= / =spec= — translate from
+  Clojure.
+- Typed Racket — translate type annotations into a type-checker
+  pass at the bridge level.
+
+The synergy:
+
+| Capability             | Elisp | + NeLisp | + bridge |
+|------------------------+-------+----------+----------|
+| Editor integration     | ◎     | ◎        | ◎        |
+| TCO                    | x     | ◎        | ◎        |
+| Macro hygiene          | x     | ◎        | ◎◎       |
+| Concurrency            | x     | ◎        | ◎        |
+| Numeric tower          | △     | ◎        | ◎        |
+| Object system          | △     | △        | ◎ (CLOS) |
+| Type system            | x     | x        | ○        |
+| Native perf            | △     | ○-◎      | ○-◎      |
+| Ecosystem (multi-lang) | △     | △        | ◎        |
+
+The combined stack reaches /every quadrant/ of the Lisp axis space.
+No single existing Lisp does this:
+
+- CL has no editor integration at this level.
+- Scheme ecosystem is fragmented.
+- Clojure is JVM-bound, no editor integration.
+- Racket has its own editor (DrRacket), no editor as living REPL.
+
+* Why this justifies the Lisp Machine OS angle
+
+Symbolics built a Lisp Machine on Common Lisp alone.  A modern
+revival is more interesting if the substrate is /polyglot Lisp/:
+
+- Elisp as the editor / system-call layer (Symbolics-style Genera, but
+  with text-buffers as a first-class concept).
+- NeLisp as the runtime substrate.
+- bridge as the migration path that makes existing CL / Scheme /
+  Clojure code runnable on the OS.
+- anvil-pkg as the package manager / service manager analogue.
+
+Phase 5+ "lispm-os" research is therefore not arbitrary — it is the
+natural endpoint of "Elisp + NeLisp + bridge = world-class Lisp".
+
+* Why Phase 3 before lisp-dialect-bridge (efficiency)
+
+| Axis                  | Phase 3 (anvil-pkg)   | bridge Phase 0-1 |
+|-----------------------+-----------------------+------------------|
+| LOC                   | ~500                  | ~3000+           |
+| Wall-clock            | 1-2 days              | 2-3 weeks        |
+| Completion confidence | 95%+                  | 60-70%           |
+| Short-term user value | high                  | 0                |
+| Long-term moat value  | medium                | maximum          |
+| Risk                  | low                   | medium-high      |
+
+Choosing Phase 3 first is /efficiency/ in the strict ROI sense:
+
+- Phase 3 turns anvil-pkg from "hello world" into "real package
+  manager" in 1-2 days.
+- Bridge needs anvil-pkg to be credible before its migration story
+  has a destination worth migrating to.
+- Macro hygiene is research-grade work; doing it before momentum is
+  established risks an unfinished bridge dragging on.
+
+After Phase 3 ships, lisp-dialect-bridge becomes the next milestone
+with a far stronger foundation behind it.
+
+* Phase ordering (concrete)
+
+| Phase              | Scope                                                          | When                |
+|--------------------+----------------------------------------------------------------+---------------------|
+| anvil-pkg Phase 3  | github-fetch / git-fetch / rust / python / go / Git fallback   | now (1-2 days)      |
+| anvil-pkg Phase 4  | Profile generation rollback, manifest, SQLite registry          | after Phase 3       |
+| bridge Phase 0     | Design doc — surface, IR, hygiene strategy                     | after Phase 3       |
+| bridge Phase 1     | Scheme R7RS subset → Elisp converter MVP (read-only)            | 2-3 weeks           |
+| bridge Phase 2     | Bidirectional Elisp ↔ Scheme                                    | +1-2 months         |
+| bridge Phase 3     | CL subset → Elisp                                              | +3-6 months         |
+| bridge Phase 4     | Nix expression → Elisp IR (so anvil-pkg can ingest nixpkgs)     | +6 months           |
+| anvil-pkg Phase 5+ | OS direction — service manager, init, NeLisp boot path          | research, 5-10 yr   |
+
+* Open strategic questions
+
+** SQ1. Brand consolidation
+
+The 3 projects under one brand or three?
+
+Tentative: keep them separate /repos/ but share an ecosystem name
+("anvil") across docs.  =anvil-pkg= stays =anvil-pkg=.
+=lisp-dialect-bridge= can adopt =anvil-bridge= for cohesion if the
+user wishes; revisit when bridge ships its Phase 1.
+
+** SQ2. Distribution channel
+
+MELPA is hostile to =pkg-= prefix (overly generic).  Options:
+
+- Self-distribute (=git clone= + =add-to-list 'load-path=).
+- Apply for MELPA acceptance with an exemption argument.
+- Distribute via a future =anvil-pkg= bootstrap (Nix flake).
+
+Tentative: self-distribute Phase 1-3, revisit when ecosystem matures.
+
+** SQ3. Migration story for Guix users
+
+This depends on the bridge's Phase 4 (Scheme → Elisp).  Key claim:
+"keep your =package= records in Scheme; we translate to Elisp; you
+gain anvil-pkg + AI integration without rewriting".
+
+Validate by attempting to translate 10 representative Guix recipes
+during bridge Phase 1; if hit-rate < 80% the migration story is
+weak and needs revision.
+
+* References
+
+- =01-overview.org= — Phase 1 contract (LOCKED).
+- =02-dsl.org= — Phase 2 DSL contract (LOCKED).
+- NeLisp Phase 7+ design pipeline (memory: project_nelisp.md).
+- Guix blog 2014 "Emacs as a general-purpose package manager":
+  https://guix.gnu.org/blog/2014/emacs-as-a-general-purpose-package-manager/
+- emacs-guix (closest UX precedent, Guix-only):
+  https://github.com/alezost/guix.el
+- Symbolics Genera / Lisp Machine history (background for the OS
+  angle).
