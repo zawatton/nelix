@@ -62,6 +62,45 @@
        (build-system nim)))
    :type 'anvil-pkg-dsl-error))
 
+(ert-deftest anvil-pkg-dsl-test-define-build-system-emacs-package ()
+  "emacs-package build-system parses to the expected IR shape."
+  (anvil-pkg-dsl-test--with-clean-registry
+    (eval '(pkg-define my-elisp
+             (version "1.2.3")
+             (source (url-fetch "https://example.com/my-elisp.tar.gz"
+                                :sha256 "sha256-elisp"))
+             (build-system emacs-package))
+          t)
+    (let* ((ir (gethash 'my-elisp anvil-pkg--registry))
+           (bs (plist-get ir :build-system)))
+      (should (equal '(:type emacs-package) bs)))))
+
+(ert-deftest anvil-pkg-dsl-test-define-rejects-install-phase-on-emacs-package ()
+  "install-phase is rejected for emacs-package build-system."
+  (should-error
+   (macroexpand-1
+    '(pkg-define my-elisp
+       (version "1.2.3")
+       (source (url-fetch "https://example.com/my-elisp.tar.gz"
+                          :sha256 "sha256-elisp"))
+       (build-system (emacs-package))
+       (install-phase "mkdir -p $out")))
+   :type 'anvil-pkg-dsl-error))
+
+(ert-deftest anvil-pkg-dsl-test-define-depends-on-list ()
+  "depends-on list parses to a list of symbols."
+  (anvil-pkg-dsl-test--with-clean-registry
+    (eval '(pkg-define my-elisp
+             (version "1.2.3")
+             (source (url-fetch "https://example.com/my-elisp.tar.gz"
+                                :sha256 "sha256-elisp"))
+             (build-system emacs-package)
+             (depends-on (list dash transient)))
+          t)
+    (let ((ir (gethash 'my-elisp anvil-pkg--registry)))
+      (should (equal '(dash transient)
+                     (plist-get ir :depends-on))))))
+
 ;;;; --- renderer (pure, golden) ----------------------------------------------
 
 (ert-deftest anvil-pkg-dsl-test-render-stdenv-url-fetch-golden ()
@@ -294,6 +333,39 @@
                    "    sha256 = \"sha256-go\";\n"
                    "  };\n"
                    "  vendorHash = null;\n"
+                   "}")))
+    (should (equal expected (anvil-pkg-render-nix ir)))))
+
+(ert-deftest anvil-pkg-dsl-test-render-emacs-package-with-deps-golden ()
+  "Renderer emits trivialBuild with packageRequires for emacs-package."
+  (let ((ir '(:name magit
+              :version "3.3.0"
+              :source (:type github-fetch
+                       :owner "magit"
+                       :repo "magit"
+                       :rev "v3.3.0"
+                       :sha256 "sha256-magit")
+              :build-system (:type emacs-package)
+              :depends-on (dash transient)
+              :description "A Git porcelain inside Emacs."
+              :homepage "https://magit.vc"
+              :license gpl3))
+        (expected (concat
+                   "pkgs.emacsPackages.trivialBuild {\n"
+                   "  pname = \"magit\";\n"
+                   "  version = \"3.3.0\";\n"
+                   "  src = pkgs.fetchFromGitHub {\n"
+                   "    owner = \"magit\";\n"
+                   "    repo = \"magit\";\n"
+                   "    rev = \"v3.3.0\";\n"
+                   "    sha256 = \"sha256-magit\";\n"
+                   "  };\n"
+                   "  packageRequires = with pkgs.emacsPackages; [ dash transient ];\n"
+                   "  meta = {\n"
+                   "    description = \"A Git porcelain inside Emacs.\";\n"
+                   "    homepage = \"https://magit.vc\";\n"
+                   "    license = pkgs.lib.licenses.gpl3;\n"
+                   "  };\n"
                    "}")))
     (should (equal expected (anvil-pkg-render-nix ir)))))
 
