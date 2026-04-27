@@ -239,20 +239,26 @@ Object -> alist, array -> list, null/false -> nil."
   (cond
    ((fboundp 'string-trim) (string-trim str))
    (t
-    ;; Codepoints below are \x20 \x09 \x0a \x0d (space tab LF CR) —
-    ;; spelt numerically so NeLisp's reader (no `?\s' shorthand) loads
-    ;; this file too.
-    (let ((s (or str ""))
-          (start 0)
-          end)
-      (setq end (length s))
-      (while (and (< start end)
-                  (memq (aref s start) '(32 9 10 13)))
-        (setq start (1+ start)))
-      (while (and (> end start)
-                  (memq (aref s (1- end)) '(32 9 10 13)))
-        (setq end (1- end)))
-      (substring s start end)))))
+    ;; Implementation uses only `substring' + `length' + prefix
+    ;; comparison.  Avoids `aref' (not yet a NeLisp Rust builtin)
+    ;; and `?\s' (not in NeLisp's reader) so the same code runs on
+    ;; both Emacs and NeLisp standalone.
+    (let ((s (or str "")))
+      (while (and (> (length s) 0)
+                  (or (string-prefix-p " "  s)
+                      (string-prefix-p "\t" s)
+                      (string-prefix-p "\n" s)
+                      (string-prefix-p "\r" s)))
+        (setq s (substring s 1)))
+      (while (let ((n (length s)))
+               (and (> n 0)
+                    (let ((tail (substring s (1- n) n)))
+                      (or (string-equal tail " ")
+                          (string-equal tail "\t")
+                          (string-equal tail "\n")
+                          (string-equal tail "\r")))))
+        (setq s (substring s 0 (1- (length s)))))
+      s))))
 
 ;;;; --- error symbols --------------------------------------------------------
 
