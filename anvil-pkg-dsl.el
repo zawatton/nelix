@@ -4,7 +4,7 @@
 
 ;; Author: zawatton
 ;; URL: https://github.com/zawatton/anvil-pkg
-;; Version: 0.2.0
+;; Version: 0.3.0
 ;; Package-Requires: ((emacs "29.1") (anvil-pkg "0.1.0"))
 ;; Keywords: tools, packages, nix
 
@@ -17,17 +17,24 @@
 
 ;;; Commentary:
 
-;; Phase 2 of anvil-pkg.  Provides a Guix-style declarative DSL on top
-;; of the Phase 1 nix profile shell-out wrapper.
+;; Phase 2 + 3 of anvil-pkg.  Provides a Guix-style declarative DSL
+;; on top of the Phase 1 nix profile shell-out wrapper.
 ;;
 ;;   (pkg-define my-ripgrep
 ;;     (version "13.0.0")
-;;     (source (url-fetch "https://..." :sha256 "sha256-..."))
-;;     (build-system stdenv)
-;;     (inputs (list pkg-config openssl))
-;;     (install-phase "make install PREFIX=$out"))
+;;     (source (github-fetch :owner "BurntSushi" :repo "ripgrep"
+;;                           :rev "13.0.0" :sha256 "sha256-..."))
+;;     (build-system (rust :cargo-sha256 "sha256-..."))
+;;     (inputs (list pkg-config openssl)))
 ;;
 ;;   (pkg-install 'my-ripgrep)
+;;
+;; Phase 3 (this file) ships:
+;;   - source types: url-fetch (Phase 2), github-fetch, git-fetch
+;;   - build systems: stdenv (Phase 2), rust, python, go
+;;   - build-system IR upgraded to plist `(:type SYM ...args)' so each
+;;     build system can carry its own required fields (e.g. cargo-sha256
+;;     for rust, vendor-sha256 for go, format for python).
 ;;
 ;; This file owns:
 ;;   - `pkg-define' macro + sub-form parser (errors fire at byte-compile)
@@ -87,7 +94,7 @@
 (defun anvil-pkg--parse-define (name body)
   "Parse pkg-define BODY into IR plist.  Runs at macro-expand time."
   (let ((ir (list :name name
-                  :build-system 'stdenv
+                  :build-system (list :type 'stdenv)
                   :inputs nil
                   :native-inputs nil)))
     (dolist (form body)
@@ -120,17 +127,58 @@
     ('source (anvil-pkg--parse-source name (car val)))
     ((or 'inputs 'native-inputs)
      (anvil-pkg--parse-input-list (car val)))
-    ('build-system
-     (let ((sym (car val)))
-       (cond
-        ((eq sym 'stdenv) sym)
-        (t (signal 'anvil-pkg-dsl-error
-                   (list (format "pkg-define %s: build-system %S not yet supported (Phase 2 = stdenv only)"
-                                 name sym)))))))
+    ('build-system (anvil-pkg--parse-build-system name (car val)))
     (_ (car val))))
 
+(defconst anvil-pkg--known-build-systems
+  '(stdenv rust python go)
+  "Build-system symbols supported by Phase 3.")
+
+(defun anvil-pkg--parse-build-system (name form)
+  "Parse a build-system FORM into a plist `(:type SYM ...args)'.
+
+Accepts:
+  (build-system stdenv)              ; symbol form, no args
+  (build-system (rust :cargo-sha256 \"...\"))
+  (build-system (python :format \"pyproject\"))
+  (build-system (go :vendor-sha256 \"...\"))"
+  (cond
+   ((symbolp form)
+    (anvil-pkg--validate-build-system name form nil)
+    (list :type form))
+   ((and (consp form) (symbolp (car form)))
+    (let ((type (car form))
+          (args (cdr form)))
+      (anvil-pkg--validate-build-system name type args)
+      (apply #'list :type type args)))
+   (t (signal 'anvil-pkg-dsl-error
+              (list (format "pkg-define %s: build-system must be SYMBOL or (SYMBOL :args...), got %S"
+                            name form))))))
+
+(defun anvil-pkg--validate-build-system (name type args)
+  "Validate that build-system TYPE is supported and required ARGS are present."
+  (unless (memq type anvil-pkg--known-build-systems)
+    (signal 'anvil-pkg-dsl-error
+            (list (format "pkg-define %s: build-system %S not yet supported (supported: %S)"
+                          name type anvil-pkg--known-build-systems))))
+  (pcase type
+    ('rust
+     (unless (plist-get args :cargo-sha256)
+       (signal 'anvil-pkg-dsl-error
+               (list (format "pkg-define %s: rust build-system requires :cargo-sha256"
+                             name)))))
+    ;; python: :format optional (defaults to setuptools)
+    ;; go: :vendor-sha256 optional (defaults to vendorHash = null)
+    ;; stdenv: no required args
+    (_ nil)))
+
 (defun anvil-pkg--parse-source (name form)
-  "Parse a source-form into source IR plist."
+  "Parse a source-form into source IR plist.
+
+Phase 3 fetchers:
+  (url-fetch URL :sha256 HASH)
+  (github-fetch :owner OWNER :repo REPO :rev REV :sha256 HASH)
+  (git-fetch :url URL :rev REV :sha256 HASH)"
   (unless (and (consp form) (symbolp (car form)))
     (signal 'anvil-pkg-dsl-error
             (list (format "pkg-define %s: source must be a fetcher form, got %S"
@@ -140,18 +188,41 @@
      (let* ((url (cadr form))
             (rest (cddr form))
             (sha256 (plist-get rest :sha256)))
-       (unless (stringp url)
-         (signal 'anvil-pkg-dsl-error
-                 (list (format "pkg-define %s: url-fetch URL must be a string, got %S"
-                               name url))))
-       (unless (stringp sha256)
-         (signal 'anvil-pkg-dsl-error
-                 (list (format "pkg-define %s: url-fetch missing :sha256"
-                               name))))
+       (anvil-pkg--require-string name "url-fetch URL" url)
+       (anvil-pkg--require-string name "url-fetch :sha256" sha256)
        (list :type 'url-fetch :url url :sha256 sha256)))
+    ('github-fetch
+     (let* ((args (cdr form))
+            (owner (plist-get args :owner))
+            (repo (plist-get args :repo))
+            (rev (plist-get args :rev))
+            (sha256 (plist-get args :sha256)))
+       (anvil-pkg--require-string name "github-fetch :owner" owner)
+       (anvil-pkg--require-string name "github-fetch :repo" repo)
+       (anvil-pkg--require-string name "github-fetch :rev" rev)
+       (anvil-pkg--require-string name "github-fetch :sha256" sha256)
+       (list :type 'github-fetch
+             :owner owner :repo repo :rev rev :sha256 sha256)))
+    ('git-fetch
+     (let* ((args (cdr form))
+            (url (plist-get args :url))
+            (rev (plist-get args :rev))
+            (sha256 (plist-get args :sha256)))
+       (anvil-pkg--require-string name "git-fetch :url" url)
+       (anvil-pkg--require-string name "git-fetch :rev" rev)
+       (anvil-pkg--require-string name "git-fetch :sha256" sha256)
+       (list :type 'git-fetch :url url :rev rev :sha256 sha256)))
     (_ (signal 'anvil-pkg-dsl-error
-               (list (format "pkg-define %s: unsupported source fetcher %S (Phase 2 = url-fetch only)"
+               (list (format "pkg-define %s: unsupported source fetcher %S (supported: url-fetch, github-fetch, git-fetch)"
                              name (car form)))))))
+
+(defun anvil-pkg--require-string (name field val)
+  "Signal `anvil-pkg-dsl-error' unless VAL is a non-empty string.
+NAME is the package name, FIELD a description used in the message."
+  (unless (and (stringp val) (> (length val) 0))
+    (signal 'anvil-pkg-dsl-error
+            (list (format "pkg-define %s: %s must be a non-empty string, got %S"
+                          name field val)))))
 
 (defun anvil-pkg--parse-input-list (form)
   "Coerce FORM into a flat list of nixpkgs attribute symbols.
@@ -190,21 +261,38 @@ load time the IR is registered under NAME and NAME is returned."
 
 (defun anvil-pkg-render-nix (ir)
   "Render IR plist into a single Nix derivation expression string.
-Pure function — same input always yields the same output."
-  (unless (eq 'stdenv (plist-get ir :build-system))
-    (signal 'anvil-pkg-dsl-error
-            (list (format "render: build-system %S not yet supported"
-                          (plist-get ir :build-system)))))
+Pure function — same input always yields the same output.
+
+Dispatches on the build-system :type to select the appropriate
+nixpkgs builder (stdenv.mkDerivation, rustPlatform.buildRustPackage,
+python3Packages.buildPythonPackage, buildGoModule)."
+  (let* ((bs (plist-get ir :build-system))
+         (type (plist-get bs :type)))
+    (pcase type
+      ('stdenv (anvil-pkg--render-stdenv ir))
+      ('rust   (anvil-pkg--render-rust ir))
+      ('python (anvil-pkg--render-python ir))
+      ('go     (anvil-pkg--render-go ir))
+      (_ (signal 'anvil-pkg-dsl-error
+                 (list (format "render: unsupported build-system :type %S"
+                               type)))))))
+
+(defun anvil-pkg--render-derivation (fn-name fields)
+  "Compose `FN-NAME { FIELDS }' into a single Nix expression string.
+FIELDS is a list of pre-rendered, already-indented strings."
+  (concat fn-name " {\n"
+          (mapconcat #'identity fields "\n")
+          "\n}"))
+
+(defun anvil-pkg--render-pre-bs-fields (ir)
+  "Render the common derivation fields that appear BEFORE
+build-system specific fields: pname, version, src, buildInputs,
+nativeBuildInputs.  Returns a list of strings."
   (let* ((name (plist-get ir :name))
          (version (plist-get ir :version))
          (source (plist-get ir :source))
          (inputs (plist-get ir :inputs))
          (native-inputs (plist-get ir :native-inputs))
-         (install-phase (plist-get ir :install-phase))
-         (build-phase (plist-get ir :build-phase))
-         (description (plist-get ir :description))
-         (homepage (plist-get ir :homepage))
-         (license (plist-get ir :license))
          (parts '()))
     (push (format "  pname = %S;" (symbol-name name)) parts)
     (push (format "  version = %S;" version) parts)
@@ -217,6 +305,18 @@ Pure function — same input always yields the same output."
       (push (format "  nativeBuildInputs = with pkgs; [ %s ];"
                     (mapconcat #'symbol-name native-inputs " "))
             parts))
+    (nreverse parts)))
+
+(defun anvil-pkg--render-post-bs-fields (ir)
+  "Render the common derivation fields that appear AFTER
+build-system specific fields: buildPhase, installPhase, meta.
+Returns a list of strings."
+  (let* ((install-phase (plist-get ir :install-phase))
+         (build-phase (plist-get ir :build-phase))
+         (description (plist-get ir :description))
+         (homepage (plist-get ir :homepage))
+         (license (plist-get ir :license))
+         (parts '()))
     (when build-phase
       (push (format "  buildPhase = ''\n%s\n  '';"
                     (anvil-pkg--indent-each-line build-phase 4))
@@ -239,16 +339,70 @@ Pure function — same input always yields the same output."
                       (mapconcat #'identity (nreverse meta-parts) "\n")
                       "\n  };")
               parts)))
-    (concat "pkgs.stdenv.mkDerivation {\n"
-            (mapconcat #'identity (nreverse parts) "\n")
-            "\n}")))
+    (nreverse parts)))
+
+(defun anvil-pkg--render-stdenv (ir)
+  "Render IR using `pkgs.stdenv.mkDerivation'."
+  (anvil-pkg--render-derivation
+   "pkgs.stdenv.mkDerivation"
+   (append (anvil-pkg--render-pre-bs-fields ir)
+           (anvil-pkg--render-post-bs-fields ir))))
+
+(defun anvil-pkg--render-rust (ir)
+  "Render IR using `pkgs.rustPlatform.buildRustPackage'.
+Requires :cargo-sha256 in the build-system args."
+  (let* ((bs (plist-get ir :build-system))
+         (cargo-sha256 (plist-get bs :cargo-sha256)))
+    (anvil-pkg--render-derivation
+     "pkgs.rustPlatform.buildRustPackage"
+     (append (anvil-pkg--render-pre-bs-fields ir)
+             (list (format "  cargoSha256 = %S;" cargo-sha256))
+             (anvil-pkg--render-post-bs-fields ir)))))
+
+(defun anvil-pkg--render-python (ir)
+  "Render IR using `pkgs.python3Packages.buildPythonPackage'.
+Optional :format key (\"setuptools\" default, \"pyproject\" or \"wheel\")."
+  (let* ((bs (plist-get ir :build-system))
+         (format-str (plist-get bs :format)))
+    (anvil-pkg--render-derivation
+     "pkgs.python3Packages.buildPythonPackage"
+     (append (anvil-pkg--render-pre-bs-fields ir)
+             (when format-str
+               (list (format "  format = %S;" format-str)))
+             (anvil-pkg--render-post-bs-fields ir)))))
+
+(defun anvil-pkg--render-go (ir)
+  "Render IR using `pkgs.buildGoModule'.
+Optional :vendor-sha256 (defaults to `vendorHash = null')."
+  (let* ((bs (plist-get ir :build-system))
+         (vendor-sha256 (plist-get bs :vendor-sha256)))
+    (anvil-pkg--render-derivation
+     "pkgs.buildGoModule"
+     (append (anvil-pkg--render-pre-bs-fields ir)
+             (list (if vendor-sha256
+                       (format "  vendorHash = %S;" vendor-sha256)
+                     "  vendorHash = null;"))
+             (anvil-pkg--render-post-bs-fields ir)))))
 
 (defun anvil-pkg--render-source (src)
-  "Render a source IR plist into a Nix fetcher expression."
+  "Render a source IR plist into a Nix fetcher expression.
+
+Phase 3 fetchers: url-fetch, github-fetch, git-fetch."
   (pcase (plist-get src :type)
     ('url-fetch
      (format "pkgs.fetchurl {\n    url = %S;\n    sha256 = %S;\n  }"
              (plist-get src :url)
+             (plist-get src :sha256)))
+    ('github-fetch
+     (format "pkgs.fetchFromGitHub {\n    owner = %S;\n    repo = %S;\n    rev = %S;\n    sha256 = %S;\n  }"
+             (plist-get src :owner)
+             (plist-get src :repo)
+             (plist-get src :rev)
+             (plist-get src :sha256)))
+    ('git-fetch
+     (format "pkgs.fetchgit {\n    url = %S;\n    rev = %S;\n    sha256 = %S;\n  }"
+             (plist-get src :url)
+             (plist-get src :rev)
              (plist-get src :sha256)))
     (_ (signal 'anvil-pkg-dsl-error
                (list (format "render: unsupported source type %S"

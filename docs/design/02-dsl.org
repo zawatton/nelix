@@ -1,20 +1,29 @@
 #+title: anvil-pkg — Phase 2: =pkg-define= DSL → flake.nix generation
 #+author: zawatton
 #+date: 2026-04-27
-#+property: status PHASE-2-SHIPPED
+#+property: status PHASE-3-SHIPPED
 
 * STATUS
 
+Phase 3 SHIPPED — 2026-04-27.  Source types =github-fetch= and
+=git-fetch= added; build systems =rust=, =python=, =go= added; the
+=:build-system= IR was upgraded to a plist =(:type SYM ...args)= so
+each build system can carry its own required fields (e.g.
+=:cargo-sha256= for rust, =:vendor-sha256= for go, =:format= for
+python).  ERT 21/21 PASS (Phase 1: 6 + Phase 2: 6 + Phase 3: 9
+including the IR-shape regressions).
+
+Renderer was refactored into common =render-pre-bs-fields= /
+=render-post-bs-fields= helpers + a per-build-system function so
+Phase 4+ build-system additions are straightforward extensions.
+
 Phase 2 SHIPPED — 2026-04-27.  =anvil-pkg-dsl.el= ships =pkg-define=
 macro + parser + IR + pure renderer + registry + flake.nix writer
-+ symbol install path.  ERT 12/12 PASS (Phase 1 + 2 combined).
-=pkg-install= now dispatches both nixpkgs strings and declared
-symbols through the same entry point.
++ symbol install path.
 
-Note: Phase 2 ships as a single file =anvil-pkg-dsl.el= (~270 LOC)
+Note: Phase 2/3 ship as a single file =anvil-pkg-dsl.el= (~430 LOC)
 rather than the 3-file split sketched below; we will revisit the
-split when the file grows past 500 LOC or Phase 3 introduces a
-second renderer.
+split when the file grows past 600 LOC.
 
 * Goal
 
@@ -71,23 +80,40 @@ serialising into Nix.
 
 ** Source forms
 
-Phase 2 supports exactly one fetcher:
+Phase 2 ships =url-fetch=; Phase 3 added =github-fetch= and
+=git-fetch=:
 
 #+begin_src elisp
-(url-fetch URL &key sha256)
+(url-fetch URL :sha256 HASH)
+(github-fetch :owner OWNER :repo REPO :rev REV :sha256 HASH)
+(git-fetch :url URL :rev REV :sha256 HASH)
 #+end_src
 
-Renders as:
+Each renders as the obvious nixpkgs fetcher
+(=pkgs.fetchurl= / =pkgs.fetchFromGitHub= / =pkgs.fetchgit=) — see
+=anvil-pkg--render-source= in the source.
 
-#+begin_src nix
-fetchurl {
-  url    = "<URL>";
-  sha256 = "<sha256>";
-}
+** Build-system forms (Phase 3)
+
+The =:build-system= IR is a plist =(:type SYM ...args)= so each
+build system can carry its own fields:
+
+#+begin_src elisp
+(build-system stdenv)                          ; symbol form
+(build-system (stdenv))                        ; equivalent
+(build-system (rust :cargo-sha256 "sha256-..."))
+(build-system (python :format "pyproject"))   ; format optional
+(build-system (go :vendor-sha256 "sha256-...")); vendor-sha256 optional
 #+end_src
 
-Phase 3 will add =github-fetch= (=fetchFromGitHub=) and =git-fetch=
-(=fetchgit=).
+Generated derivations:
+
+| Build-system | Nix builder                                  | Required args        |
+|--------------+----------------------------------------------+----------------------|
+| =stdenv=     | =pkgs.stdenv.mkDerivation=                   | (none)               |
+| =rust=       | =pkgs.rustPlatform.buildRustPackage=         | =:cargo-sha256=      |
+| =python=     | =pkgs.python3Packages.buildPythonPackage=    | (none)               |
+| =go=         | =pkgs.buildGoModule=                         | (none, defaults to vendorHash = null) |
 
 * Implementation outline
 

@@ -17,22 +17,21 @@ agents can install anything by writing one Lisp form.
 
 * Status
 
-*Phase 1+2 SHIPPED* (2026-04-27) — Full DSL stack on top of the Nix
-store: =pkg-define= macro + Guix-style declarative records, pure-Elisp
-=anvil-pkg-render-nix= renderer, registry + flake.nix generator,
-=pkg-install= dispatching nixpkgs strings *and* declared symbols
-through the same entry point.  ERT 12/12 PASS (mocked, no nix
-binary needed to run the suite).
+*Phase 1+2+3 SHIPPED* (2026-04-27) — Full DSL stack on top of the
+Nix store with multiple fetcher and build-system support.  ERT
+21/21 PASS (mocked, no nix binary needed to run the suite).
 
 Public Elisp API uses the short =pkg-= prefix:
 - =pkg-install= / =pkg-search= / =pkg-list= — Phase 1
 - =pkg-define= macro — Phase 2
+- =github-fetch= / =git-fetch= sources, =rust= / =python= / =go=
+  build systems — Phase 3
 
 Long-form aliases (=anvil-pkg-install= etc.) are provided via
 =defalias= for Emacs-prefix purists.
 
-Phase 3 (Git-host fallback + additional source/build-system types)
-is the next milestone; see =docs/design/02-dsl.org=.
+Phase 4 (profile generation rollback) is the next milestone;
+see =docs/design/02-dsl.org=.
 
 * Why?
 
@@ -94,9 +93,9 @@ your config should not require learning a new macro language.
 |-------+----------------------------------------------------------------------+----------------|
 | 1     | =nix profile= shell-out wrapper. 3 MCP tools. =install/search/list= | *SHIPPED*      |
 | 2     | =pkg-define= DSL macro + flake.nix generation + symbol install     | *SHIPPED*      |
-| 3     | Git-host fallback + more source / build-system types                 | next           |
-| 4     | Profile / generation management (rollback wrap)                      | planned        |
-| 5+    | Optional: independent package server, OS angle                       | research       |
+| 3     | =github-fetch= / =git-fetch= sources + =rust= / =python= / =go= bs | *SHIPPED*      |
+| 4     | Profile / generation management (rollback wrap)                      | next           |
+| 5+    | Optional: independent package server, OS angle (research)            | research       |
 
 See =docs/design/01-overview.org= for the full Phase 1 contract.
 
@@ -134,6 +133,21 @@ In your Emacs init:
   (install-phase "make install PREFIX=$out"))
 
 (pkg-install 'my-rg)            ; goes through generated flake.nix
+
+;; Phase 3 — github-fetch + rust build-system
+(pkg-define my-rust-tool
+  (version "1.0.0")
+  (source (github-fetch :owner "user" :repo "tool"
+                        :rev "v1.0.0" :sha256 "sha256-..."))
+  (build-system (rust :cargo-sha256 "sha256-..."))
+  (inputs (list openssl)))
+
+;; Phase 3 — git-fetch + go build-system (vendored deps)
+(pkg-define my-go-tool
+  (version "0.3.0"  )
+  (source (git-fetch :url "https://example.com/tool.git"
+                     :rev "v0.3.0" :sha256 "sha256-..."))
+  (build-system (go)))           ; vendorHash = null (vendored)
 #+end_src
 
 CLI sub-command (=anvil pkg install ...=) lands in =anvil.el= via a
