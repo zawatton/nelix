@@ -1,11 +1,16 @@
 #+title: anvil-pkg — Overview & Phase 1 contract
 #+author: zawatton
 #+date: 2026-04-27
-#+property: status PHASE-0-DESIGN
+#+property: status PHASE-1-SHIPPED
 
 * STATUS
 
-Phase 0 (this document) — DESIGN.  Phase 1 PoC not yet started.
+Phase 1 SHIPPED — 2026-04-27.  =anvil-pkg.el= ships the synchronous
+=nix profile install / search / list= wrappers + 3 MCP tools
+(=pkg-install= / =pkg-search= / =pkg-list=) + ERT 6 (6/6 PASS,
+mocked).
+
+Phase 2 (Elisp DSL macro =anvil-pkg-define=) is next.
 
 Naming and architectural decisions in this document are *load-bearing*
 for downstream phases; revise here before changing code.

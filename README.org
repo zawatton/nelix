@@ -17,11 +17,14 @@ agents can install anything by writing one Lisp form.
 
 * Status
 
-*Phase 0* — design (this document) is the only thing that exists.
-Phase 1 (PoC: =nix profile= shell-out wrapper, 3 MCP tools) is the next
-milestone; see =docs/design/01-overview.org=.
+*Phase 1 SHIPPED* (2026-04-27) — PoC =nix profile= shell-out wrapper +
+3 MCP tools + ERT 6 (6/6 PASS, mocked, no nix binary needed to run
+the suite).  Public API: =anvil-pkg-install= / =anvil-pkg-search= /
+=anvil-pkg-list=.  MCP tools: =pkg-install= / =pkg-search= / =pkg-list=
+(registered by =anvil-pkg-enable=).
 
-No code runs yet.
+Phase 2 (Elisp DSL macro =anvil-pkg-define=) is the next milestone;
+see =docs/design/01-overview.org=.
 
 * Why?
 
@@ -79,11 +82,11 @@ your config should not require learning a new macro language.
 
 * Phase plan
 
-| Phase | Scope                                                                | ETA            |
+| Phase | Scope                                                                | Status         |
 |-------+----------------------------------------------------------------------+----------------|
-| 1     | =nix profile= shell-out wrapper. 3 MCP tools. =install/search/list= | week           |
-| 2     | Elisp DSL → Nix expr generation. =anvil-pkg-define= macro            | 2-3 weeks      |
-| 3     | Git-host fallback (async-installer derived) + manifest               | 1-2 weeks      |
+| 1     | =nix profile= shell-out wrapper. 3 MCP tools. =install/search/list= | *SHIPPED*      |
+| 2     | Elisp DSL → Nix expr generation. =anvil-pkg-define= macro            | next           |
+| 3     | Git-host fallback (async-installer derived) + manifest               | planned        |
 | 4     | Profile / generation management (Nix profile rollback wrap or own)   | TBD            |
 | 5+    | Optional: independent package server, distro angle                   | not promised   |
 
@@ -91,9 +94,28 @@ See =docs/design/01-overview.org= for the full Phase 1 contract.
 
 * Install
 
-*Not yet installable.*  When Phase 1 ships, =anvil-pkg= will be loaded as
-an =anvil.el= module: =(require 'anvil-pkg)=.  The CLI surface will be
-=anvil pkg install ...= via =bin/anvil= sub-command dispatch.
+#+begin_src shell
+git clone https://github.com/zawatton/anvil-pkg ~/anvil-pkg
+#+end_src
+
+In your Emacs init:
+
+#+begin_src elisp
+(add-to-list 'load-path "~/anvil-pkg")
+(require 'anvil-pkg)
+;; To register pkg-* MCP tools (requires anvil.el loaded):
+(anvil-pkg-enable)
+#+end_src
+
+CLI sub-command (=anvil pkg install ...=) lands in =anvil.el= via a
+separate PR; until then call the Elisp API directly.
+
+** Run the test suite
+
+#+begin_src shell
+make test       # 6 ERT tests, no nix binary required (all mocked)
+make compile    # byte-compile, warnings-as-errors
+#+end_src
 
 * Requirements (planned)
 
