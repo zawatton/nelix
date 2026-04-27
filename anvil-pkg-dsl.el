@@ -90,7 +90,8 @@
 
 (defconst anvil-pkg--known-keywords
   '(version source build-system inputs native-inputs
-            install-phase build-phase description homepage license)
+            install-phase build-phase depends-on
+            description homepage license)
   "Sub-form keywords accepted inside `pkg-define'.")
 
 (defun anvil-pkg--parse-define (name body)
@@ -98,7 +99,8 @@
   (let ((ir (list :name name
                   :build-system (list :type 'stdenv)
                   :inputs nil
-                  :native-inputs nil)))
+                  :native-inputs nil
+                  :depends-on nil)))
     (dolist (form body)
       (unless (and (consp form) (symbolp (car form)))
         (signal 'anvil-pkg-dsl-error
@@ -121,20 +123,21 @@
       (signal 'anvil-pkg-dsl-error
               (list (format "pkg-define %s: missing required (source ...)"
                             name))))
+    (anvil-pkg--validate-ir name ir)
     ir))
 
 (defun anvil-pkg--parse-value (name key val)
   "Coerce sub-form VAL based on KEY into IR shape."
   (pcase key
     ('source (anvil-pkg--parse-source name (car val)))
-    ((or 'inputs 'native-inputs)
+    ((or 'inputs 'native-inputs 'depends-on)
      (anvil-pkg--parse-input-list (car val)))
     ('build-system (anvil-pkg--parse-build-system name (car val)))
     (_ (car val))))
 
 (defconst anvil-pkg--known-build-systems
-  '(stdenv rust python go)
-  "Build-system symbols supported by Phase 3.")
+  '(stdenv rust python go emacs-package)
+  "Build-system symbols supported by the DSL.")
 
 (defun anvil-pkg--parse-build-system (name form)
   "Parse a build-system FORM into a plist `(:type SYM ...args)'.
@@ -171,8 +174,21 @@ Accepts:
                              name)))))
     ;; python: :format optional (defaults to setuptools)
     ;; go: :vendor-sha256 optional (defaults to vendorHash = null)
-    ;; stdenv: no required args
+    ;; stdenv/emacs-package: no required args
     (_ nil)))
+
+(defun anvil-pkg--validate-ir (name ir)
+  "Validate cross-field constraints for package NAME and parsed IR."
+  (let ((build-system-type (plist-get (plist-get ir :build-system) :type)))
+    (when (eq build-system-type 'emacs-package)
+      (when (plist-get ir :install-phase)
+        (signal 'anvil-pkg-dsl-error
+                (list (format "pkg-define %s: install-phase is not supported with build-system emacs-package"
+                              name))))
+      (when (plist-get ir :build-phase)
+        (signal 'anvil-pkg-dsl-error
+                (list (format "pkg-define %s: build-phase is not supported with build-system emacs-package"
+                              name)))))))
 
 (defun anvil-pkg--parse-source (name form)
   "Parse a source-form into source IR plist.
@@ -275,6 +291,7 @@ python3Packages.buildPythonPackage, buildGoModule)."
       ('rust   (anvil-pkg--render-rust ir))
       ('python (anvil-pkg--render-python ir))
       ('go     (anvil-pkg--render-go ir))
+      ('emacs-package (anvil-pkg--render-emacs-package ir))
       (_ (signal 'anvil-pkg-dsl-error
                  (list (format "render: unsupported build-system :type %S"
                                type)))))))
@@ -384,6 +401,17 @@ Optional :vendor-sha256 (defaults to `vendorHash = null')."
              (list (if vendor-sha256
                        (format "  vendorHash = %S;" vendor-sha256)
                      "  vendorHash = null;"))
+             (anvil-pkg--render-post-bs-fields ir)))))
+
+(defun anvil-pkg--render-emacs-package (ir)
+  "Render IR using `pkgs.emacsPackages.trivialBuild'."
+  (let ((depends-on (plist-get ir :depends-on)))
+    (anvil-pkg--render-derivation
+     "pkgs.emacsPackages.trivialBuild"
+     (append (anvil-pkg--render-pre-bs-fields ir)
+             (when depends-on
+               (list (format "  packageRequires = with pkgs.emacsPackages; [ %s ];"
+                             (mapconcat #'symbol-name depends-on " "))))
              (anvil-pkg--render-post-bs-fields ir)))))
 
 (defun anvil-pkg--render-source (src)
