@@ -5,6 +5,10 @@
 
 * STATUS
 
+Phase 4-A IN PROGRESS — 2026-04-27.  =emacs-package= will map to
+=pkgs.emacsPackages.trivialBuild=, with post-install =load-path=
+augmentation and optional =:require=.
+
 Phase 3 SHIPPED — 2026-04-27.  Source types =github-fetch= and
 =git-fetch= added; build systems =rust=, =python=, =go= added; the
 =:build-system= IR was upgraded to a plist =(:type SYM ...args)= so
@@ -114,6 +118,7 @@ Generated derivations:
 | =rust=       | =pkgs.rustPlatform.buildRustPackage=         | =:cargo-sha256=      |
 | =python=     | =pkgs.python3Packages.buildPythonPackage=    | (none)               |
 | =go=         | =pkgs.buildGoModule=                         | (none, defaults to vendorHash = null) |
+| =emacs-package= | =pkgs.emacsPackages.trivialBuild=         | (none) -- Phase 4-A; =:depends-on= for elisp deps |
 
 * Implementation outline
 

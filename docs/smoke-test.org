@@ -219,6 +219,35 @@ If you have anvil.el loaded and your MCP server running:
 From a Claude Code session connected to that MCP server, you should
 now see =pkg-install= / =pkg-search= / =pkg-list= in the tool list.
 
+* Step 9 — real emacs-package install + require
+
+This exercises the Phase 4-A =emacs-package= path, including
+post-install =load-path= augmentation and optional =:require=.
+
+#+begin_src elisp
+(pkg-define dash-test
+  (version "2.20.0")
+  (source (github-fetch :owner "magnars" :repo "dash.el"
+                        :rev "2.20.0"
+                        :sha256 "sha256-PLACEHOLDER"))
+  (build-system emacs-package))
+
+(pkg-install 'dash-test :require 'dash)
+#+end_src
+
+| Case             | Setup                    | Pass criterion                          |
+|------------------+--------------------------+-----------------------------------------|
+| Placeholder hash | Leave =sha256-...= fake  | Nix reports hash mismatch               |
+| Real hash        | Replace with real hash   | =(require 'dash)= returns symbol =dash= |
+| Idempotent       | Re-run same install      | Nix/cache path is reused (cache hit)    |
+
+Recovery:
+
+#+begin_src shell
+nix profile remove dash-test
+rm -rf ~/.local/state/anvil-pkg
+#+end_src
+
 * Cleanup after the test run
 
 #+begin_src shell
