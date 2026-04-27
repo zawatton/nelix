@@ -132,5 +132,65 @@ when the call-nix fn is not the default)."
               :stderr ""))
     (should (null (pkg-list)))))
 
+(ert-deftest anvil-pkg-test-install-emacs-package-augments-load-path ()
+  "pkg-install adds the installed emacs-package site-lisp dir to `load-path'."
+  (require 'anvil-pkg-dsl)
+  (let* ((store-root "/tmp/anvil-pkg-test/fakestore/foo-store")
+         (site-lisp-dir (expand-file-name "share/emacs/site-lisp/foo" store-root))
+         (flake-path "/tmp/anvil-pkg-test/flake.nix")
+         (load-path (copy-sequence load-path)))
+    (unwind-protect
+        (progn
+          (anvil-pkg--registry-clear)
+          (if (and (boundp 'anvil-pkg--known-build-systems)
+                   (memq 'emacs-package anvil-pkg--known-build-systems))
+              (eval '(pkg-define foo
+                       (version "1.0.0")
+                       (source (url-fetch "https://example.invalid/foo.tar.gz"
+                                          :sha256 "sha256-foo"))
+                       (build-system emacs-package))
+                    t)
+            (anvil-pkg--register
+             'foo
+             '(:name foo
+               :version "1.0.0"
+               :source (:type url-fetch
+                        :url "https://example.invalid/foo.tar.gz"
+                        :sha256 "sha256-foo")
+               :build-system (:type emacs-package)
+               :inputs nil
+               :native-inputs nil)))
+          (anvil-pkg-compat-make-directory site-lisp-dir t)
+          (let ((anvil-pkg--write-flake-fn (lambda () flake-path)))
+            (anvil-pkg-test--with-mock
+                (lambda (args)
+                  (cond
+                   ((and (member "profile" args)
+                         (member "install" args))
+                    (list :exit 0 :stdout "" :stderr ""))
+                   ((and (member "profile" args)
+                         (member "list" args)
+                         (member "--json" args))
+                    (list :exit 0
+                          :stdout (concat
+                                   "{\"version\":3,"
+                                   "\"elements\":{"
+                                   "\"foo\":{"
+                                   "\"active\":true,"
+                                   "\"attrPath\":\"foo\","
+                                   "\"originalUrl\":\"path:/tmp/anvil-pkg-test#foo\","
+                                   "\"storePaths\":[\""
+                                   store-root
+                                   "\"]"
+                                   "}"
+                                   "}}")
+                          :stderr ""))
+                   (t (ert-fail (format "unexpected nix args: %S" args)))))
+              (should (eq t (pkg-install 'foo)))
+              (should (member site-lisp-dir load-path)))))
+      (anvil-pkg--registry-clear)
+      (when (file-exists-p "/tmp/anvil-pkg-test")
+        (delete-directory "/tmp/anvil-pkg-test" t)))))
+
 (provide 'anvil-pkg-test)
 ;;; anvil-pkg-test.el ends here
