@@ -201,6 +201,51 @@ keyed by package name."
                         :store-paths (alist-get 'storePaths info))))
               elements))))
 
+(declare-function anvil-pkg--registry-get "anvil-pkg-dsl")
+
+(defun anvil-pkg--plist-has-key-p (plist key)
+  "Return non-nil when PLIST contains KEY."
+  (let ((rest plist)
+        found)
+    (while rest
+      (when (eq (car rest) key)
+        (setq found t
+              rest nil))
+      (when rest
+        (setq rest (cddr rest))))
+    found))
+
+(defun anvil-pkg--registry-build-system-type (name)
+  "Return registered build-system :type for symbol package NAME."
+  (let ((ir (anvil-pkg--registry-get name)))
+    (plist-get (plist-get ir :build-system) :type)))
+
+(defun anvil-pkg--emacs-package-after-install (name)
+  "Augment `load-path' for installed Emacs package NAME.
+
+Looks up NAME in `pkg-list', searches its `:store-paths' for
+`share/emacs/site-lisp/<pname>', adds the first match to
+`load-path', and returns that directory path.  Returns nil when no
+matching profile element or site-lisp directory exists."
+  (let* ((pkg-name (symbol-name name))
+         (entries (pkg-list))
+         entry
+         match-dir)
+    (dolist (item entries)
+      (when (and (null entry)
+                 (equal (plist-get item :name) pkg-name))
+        (setq entry item)))
+    (when entry
+      (dolist (store-path (plist-get entry :store-paths))
+        (let ((candidate (expand-file-name
+                          (format "share/emacs/site-lisp/%s" pkg-name)
+                          store-path)))
+          (when (and (null match-dir)
+                     (anvil-pkg-compat-file-exists-p candidate))
+            (add-to-list 'load-path candidate)
+            (setq match-dir candidate)))))
+    match-dir))
+
 ;;;; --- public API ------------------------------------------------------------
 
 (defun anvil-pkg--install-nixpkgs (name)
@@ -224,7 +269,7 @@ Internal helper called by `pkg-install' when NAME is a string."
 (declare-function anvil-pkg--install-symbol "anvil-pkg-dsl")
 
 ;;;###autoload
-(defun pkg-install (name)
+(defun pkg-install (name &rest plist)
   "Install package NAME.
 
 NAME is one of:
@@ -234,6 +279,11 @@ NAME is one of:
     → looks up the local registry, regenerates flake.nix under
     `anvil-pkg-profile-dir's parent, and installs from that flake.
 
+Recognised PLIST keys:
+  :require SYMBOL
+    After a successful `emacs-package' symbol install, augment
+    `load-path' and call `(require SYMBOL)'.
+
 Returns t on success.  Signals `anvil-pkg-nix-failed' /
 `anvil-pkg-nix-not-found' / `anvil-pkg-undefined-package' as
 appropriate."
@@ -241,7 +291,19 @@ appropriate."
    ((stringp name) (anvil-pkg--install-nixpkgs name))
    ((symbolp name)
     (require 'anvil-pkg-dsl)
-    (anvil-pkg--install-symbol name))
+    (let* ((require-supplied (anvil-pkg--plist-has-key-p plist :require))
+           (require-sym (plist-get plist :require))
+           (build-system-type (anvil-pkg--registry-build-system-type name))
+           (installed (anvil-pkg--install-symbol name)))
+      (when (eq build-system-type 'emacs-package)
+        (let ((load-path-dir (anvil-pkg--emacs-package-after-install name)))
+          (when (and require-supplied (null load-path-dir))
+            (signal 'anvil-pkg-error
+                    (list (format "pkg-install: could not locate load-path directory for %s"
+                                  name))))
+          (when require-supplied
+            (require require-sym))))
+      installed))
    (t (signal 'anvil-pkg-error
               (list (format "pkg-install: NAME must be string or symbol, got %S"
                             name))))))
