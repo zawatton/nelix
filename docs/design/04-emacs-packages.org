@@ -1,0 +1,268 @@
+#+title: anvil-pkg — Phase 4-A: Emacs-package backend (async-installer 後継)
+#+author: zawatton
+#+date: 2026-04-27
+#+property: status PHASE-4A-DESIGN
+
+* STATUS
+
+Phase 4-A — DESIGN.  Implementation will be dispatched to codex via
+anvil-orchestrator (3 parallel sub-tasks); claude judges + integrates.
+
+This phase adds an /Emacs-package/ build-system to anvil-pkg's DSL so
+Elisp libraries (magit, helm, transient, ...) can be installed by the
+same =pkg-define= / =pkg-install= surface that already covers system
+tools.  The Nix builder is =pkgs.emacsPackages.trivialBuild= /
+=melpaBuild=, so reproducibility / binary cache / load-path
+augmentation all come for free.
+
+* Goal
+
+Replace the user's =async-installer= flow:
+
+#+begin_src elisp
+;; Old (async-installer):
+(async-installer-git-add "magit/magit"
+                         :commit "v3.3.0")
+
+;; New (anvil-pkg Phase 4-A):
+(pkg-define magit
+  (version "3.3.0")
+  (source (github-fetch :owner "magit" :repo "magit"
+                        :rev "v3.3.0"
+                        :sha256 "sha256-..."))
+  (build-system emacs-package))
+(pkg-install 'magit)   ; -> Nix builds, load-path augmented, (require 'magit) works.
+#+end_src
+
+* Non-goals
+
+- =melpaBuild= dependency-graph resolution.  The user supplies
+  =:depends-on= manually; we do not introspect =Package-Requires=.
+  Phase 4-B will scrape the header.
+- Pure-Emacs (no Nix) install path.  Phase 4-A requires Nix; the
+  legacy =async-installer= continues to cover Nix-less environments.
+- Mutating the user's running =EMACSLOADPATH= permanently.  We add
+  the store path to =load-path= /in-process/; the user's init.el can
+  re-add the same path on next startup if they want persistence.
+
+* Locked decisions
+
+** L7. Build-system name = =emacs-package=
+
+Plain =emacs-package=, not =elisp= or =melpa= or =trivial-build=.
+Reason: matches Elisp users' mental model — "this is an Emacs Lisp
+package" — and stays neutral on the Nix builder underneath
+(=trivialBuild= for git-fetch'd raw .el dirs, =melpaBuild= for
+recipe-style packaging).  Phase 4-A picks =trivialBuild=; Phase 4-B
+adds the =:format= switch for =melpaBuild=.
+
+** L8. DSL surface
+
+Symbol form (defaults to trivialBuild, no extra args):
+
+#+begin_src elisp
+(build-system emacs-package)
+#+end_src
+
+Args form (Phase 4-B will recognise =:format=):
+
+#+begin_src elisp
+(build-system (emacs-package :format "trivial"))
+#+end_src
+
+Plus a new top-level sub-form keyword =:depends-on= for declaring
+Elisp dependencies that are themselves anvil-pkg-installed:
+
+#+begin_src elisp
+(pkg-define magit
+  ...
+  (build-system emacs-package)
+  (depends-on (list dash transient with-editor)))
+#+end_src
+
+These map to =propagatedBuildInputs = with pkgs.emacsPackages; [...]=
+in the rendered Nix derivation, so building magit pulls in dash,
+transient, with-editor as Emacs packages and adds them to its
+load-path.
+
+** L9. Render target = =pkgs.emacsPackages.trivialBuild=
+
+The simplest of the nixpkgs Emacs builders.  Takes =pname= /
+=version= / =src= / =packageRequires= (= propagated inputs).  Output
+is a derivation whose =share/emacs/site-lisp/<pname>/= is the
+.el(c) install directory.
+
+Phase 4-A renderer skeleton:
+
+#+begin_src nix
+pkgs.emacsPackages.trivialBuild {
+  pname = "magit";
+  version = "3.3.0";
+  src = pkgs.fetchFromGitHub {
+    owner = "magit"; repo = "magit"; rev = "v3.3.0";
+    sha256 = "sha256-...";
+  };
+  packageRequires = with pkgs.emacsPackages; [ dash transient with-editor ];
+}
+#+end_src
+
+** L10. Post-install load-path augmentation
+
+After =(pkg-install 'pkg)= for an =emacs-package= entry, the new
+helper =anvil-pkg--emacs-package-after-install= must:
+
+1. Resolve the store path of the installed package (from =nix profile
+   list --json='s =storePaths= field).
+2. Locate =share/emacs/site-lisp/<pname>/= within that store path.
+3. =add-to-list 'load-path= for that directory.
+4. Optionally =require= the package — only when the caller passed
+   =:require= in the install call.  No automatic require by default
+   (let the user choose when to load).
+
+Implementation lives in =anvil-pkg.el= since the post-install hook
+needs access to the Phase 1 install result plist.  NeLisp standalone
+can re-use the same code unchanged — =add-to-list= is already core,
+=require= is already in the Rust evaluator's builtin set.
+
+** L11. Default profile dir for emacs-package installs
+
+Same =anvil-pkg-profile-dir= as system-tool installs.  Sharing the
+profile keeps a single =nix profile list= showing both kinds — and
+the load-path augmentation already reads the profile JSON.  No
+separate dir.
+
+** L12. async-installer migration story
+
+Document only — do NOT bundle a converter in this phase.  The user
+rewrites their async-installer entries to =pkg-define= forms
+manually; later Phase 4-B may ship a =anvil-pkg-import-async-installer=
+utility that scans an =async-installer-git-list= variable and emits
+=pkg-define= forms.
+
+* Phase 4-A implementation contract
+
+** Files touched
+
+| File                                | Change                                                         |
+|-------------------------------------+----------------------------------------------------------------|
+| =anvil-pkg-dsl.el=                  | parser: accept =emacs-package= build-system + =depends-on= field |
+| =anvil-pkg-dsl.el=                  | renderer: emit =pkgs.emacsPackages.trivialBuild= derivation     |
+| =anvil-pkg.el=                      | post-install hook: parse profile, add to load-path              |
+| =test/anvil-pkg-dsl-test.el=        | golden + parser tests for the new build-system                  |
+| =test/anvil-pkg-test.el=            | post-install hook smoke test (mocked profile JSON)              |
+| =docs/design/02-dsl.org=            | locked-decisions + sub-form keyword table updated               |
+| =docs/smoke-test.org=               | new step "install magit + (require 'magit)"                     |
+| =README.org=                        | example: install magit via pkg-install                          |
+
+** Public surface diff
+
+#+begin_src elisp
+;; Phase 4-A additions to the DSL grammar
+(build-system emacs-package)                                ; bare form
+(build-system (emacs-package))                              ; equivalent
+(depends-on (list SYM1 SYM2 ...))                            ; new sub-form
+
+;; pkg-install gains an optional :require keyword
+(pkg-install 'magit :require 'magit)
+;; -> install + add-to-load-path + (require 'magit)
+#+end_src
+
+** Mappings
+
+| DSL                                  | IR                                              | Nix render                                  |
+|--------------------------------------+-------------------------------------------------+----------------------------------------------|
+| =(build-system emacs-package)=       | =(:type emacs-package)=                         | =pkgs.emacsPackages.trivialBuild { ... }=    |
+| =(depends-on (list SYM ...))=        | =:depends-on (SYM ...)=                         | =packageRequires = with pkgs.emacsPackages; [...]= |
+| =(source (github-fetch ...))=        | unchanged from Phase 3                          | =pkgs.fetchFromGitHub { ... }=               |
+| =(install-phase ...)= / =(build-phase ...)= | rejected for emacs-package (= not honoured by trivialBuild) | n/a |
+
+** ERT plan (4 new tests)
+
+1. =define-build-system-emacs-package= — parser: =(build-system emacs-package)=
+   shape produces =(:type emacs-package)= IR.
+2. =define-rejects-install-phase-on-emacs-package= — install-phase /
+   build-phase is incompatible with trivialBuild; parser raises.
+3. =define-depends-on-list= — =(depends-on (list dash transient))=
+   parses into =:depends-on (dash transient)= symbols list.
+4. =render-emacs-package-with-deps-golden= — full pipeline: package
+   IR with github-fetch source + emacs-package build-system + 2
+   depends-on entries → exact =trivialBuild { ... }= Nix string.
+
+Plus 1 mocked post-install test:
+
+5. =install-emacs-package-augments-load-path= — mock the profile
+   JSON to point at a fake store path with =share/emacs/site-lisp/foo=,
+   verify =anvil-pkg--emacs-package-after-install= adds that dir to
+   =load-path=.
+
+** Reject list (Phase 4-A errors)
+
+- =(install-phase ...)= or =(build-phase ...)= specified with
+  =build-system emacs-package= → =anvil-pkg-dsl-error= (these are
+  meaningful only for stdenv / rust / etc., not trivialBuild).
+- Nested =build-system= forms.
+
+** Smoke test (Emacs side, Nix-required)
+
+Add to =docs/smoke-test.org=:
+
+#+begin_src elisp
+(pkg-define dash-test
+  (version "2.20.0")
+  (source (github-fetch :owner "magnars" :repo "dash.el"
+                        :rev "2.20.0"
+                        :sha256 "sha256-..."))   ; placeholder ok
+  (build-system emacs-package))
+
+(pkg-install 'dash-test :require 'dash)
+;; expect: nix builds dash; load-path augmented; (require 'dash) returns 'dash
+;; on placeholder hash: anvil-pkg-nix-failed (= the dispatch reached the daemon)
+#+end_src
+
+* Open questions
+
+** OQ4. =:require= timing relative to flake build
+
+If =pkg-install= returns =t= while the build is still in flight (it
+shouldn't with synchronous =call-process= but worth checking on slow
+builds), the =:require= would fire on a non-existent file.  Phase
+4-A relies on synchronous nix; Phase 4-B may make it async and need
+a sentinel chain like async-installer's.
+
+Tentative: synchronous in 4-A, defer async to Phase 4-B.
+
+** OQ5. melpaBuild vs trivialBuild
+
+trivialBuild is the simplest builder but does not apply Elisp
+package conventions like =Package-Requires= header parsing or
+=byte-compile-file= invocation.  melpaBuild does.  For Phase 4-A
+trivialBuild is enough; Phase 4-B can add =:format "melpa"=.
+
+** OQ6. Native compilation
+
+nixpkgs's trivialBuild can be wrapped with
+=emacsPackages.withNativeCompilation = true=.  Phase 4-A defaults to
+unwrapped (= no native comp); Phase 4-B can flip the default once
+real-world performance data is in.
+
+* Codex parallel decomposition (anvil-orchestrator)
+
+Sub-task A: parser + renderer (anvil-pkg-dsl.el) + ERT 1-4.
+Sub-task B: post-install hook in anvil-pkg.el (=:require= keyword
+support, profile-JSON walk, load-path augment) + ERT 5.
+Sub-task C: docs (02-dsl.org / smoke-test.org / README.org)
+updates + commit message draft.
+
+claude judges + integrates + runs =make test= + smoke; commits
+single squashed result.
+
+* References
+
+- =01-overview.org= (Phase 1 contract, locked).
+- =02-dsl.org= (Phase 2 + 3 DSL, locked).
+- =03-strategy-vision.org= (3-project structure).
+- =anvil-pkg-compat.el= (portability layer covering Emacs and NeLisp
+  standalone).
+- nixpkgs =trivialBuild= reference: https://nixos.org/manual/nixpkgs/stable/#sec-emacs
+- =async-installer= (legacy Git-only path):
+  /home/madblack-21/.emacs.d/external-packages/async-installer/
