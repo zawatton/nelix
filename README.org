@@ -43,7 +43,9 @@ Long-form aliases (=anvil-pkg-install= etc.) are provided via
 =defalias= for Emacs-prefix purists.
 
 Phase 4 (profile generation rollback + Nix 2.34's
-=install=→=add= deprecation follow-up) is the next milestone;
+=install=→=add= deprecation follow-up) is the next milestone.  Phase
+4-A is also the current async-installer replacement candidate for
+Nix-backed Emacs package installs;
 see =docs/design/02-dsl.org=.
 
 * Why?
@@ -108,6 +110,7 @@ your config should not require learning a new macro language.
 | 2     | =pkg-define= DSL macro + flake.nix generation + symbol install     | *SHIPPED*      |
 | 3     | =github-fetch= / =git-fetch= sources + =rust= / =python= / =go= bs | *SHIPPED*      |
 | 4     | Profile / generation management (rollback wrap)                      | next           |
+| 4-A   | emacs-package build-system + post-install load-path                  | next           |
 | 5+    | Optional: independent package server, OS angle (research)            | research       |
 
 See =docs/design/01-overview.org= for the full Phase 1 contract.
@@ -161,6 +164,15 @@ In your Emacs init:
   (source (git-fetch :url "https://example.com/tool.git"
                      :rev "v0.3.0" :sha256 "sha256-..."))
   (build-system (go)))           ; vendorHash = null (vendored)
+
+;; Phase 4-A — emacs-package build-system + post-install require
+(pkg-define dash-test
+  (version "2.20.0")
+  (source (github-fetch :owner "magnars" :repo "dash.el"
+                        :rev "2.20.0" :sha256 "sha256-..."))
+  (build-system emacs-package))
+
+(pkg-install 'dash-test :require 'dash)
 #+end_src
 
 CLI sub-command (=anvil pkg install ...=) lands in =anvil.el= via a
