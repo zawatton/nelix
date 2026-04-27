@@ -1,0 +1,116 @@
+#+title: anvil-pkg — Elisp DSL package manager for anvil, backed by Nix store
+#+author: zawatton
+#+date: 2026-04-27
+
+* What is anvil-pkg?
+
+*anvil-pkg* is a package manager you configure in /Emacs Lisp/, backed
+by the Nix store.  It is a sub-system of [[https://github.com/zawatton/anvil.el][anvil.el]] (the AI tool
+workbench), exposing package install / search / definition both as
+Elisp API and as Claude Code MCP tools.
+
+#+begin_quote
+The same idea as GNU Guix (Scheme over the Nix store) — but in Emacs
+Lisp, integrated with the anvil + NeLisp tool ecosystem so that AI
+agents can install anything by writing one Lisp form.
+#+end_quote
+
+* Status
+
+*Phase 0* — design (this document) is the only thing that exists.
+Phase 1 (PoC: =nix profile= shell-out wrapper, 3 MCP tools) is the next
+milestone; see =docs/design/01-overview.org=.
+
+No code runs yet.
+
+* Why?
+
+** AI agents need a single DSL for tool installation
+
+Claude Code (and similar agents) already speak anvil's MCP tools
+fluently.  Adding =anvil-pkg-install= to that surface means an agent can
+provision its own dependencies — install =ripgrep=, =jq=, language
+servers, anything in nixpkgs — by emitting one Elisp form, without
+shelling out to a different package manager per OS.
+
+** Nix solves the hard problems; we add the DSL
+
+Nix already handles dependency closures, content-addressed storage,
+sandboxed builds, and binary caches.  =anvil-pkg= does *not* re-implement
+any of that.  It provides:
+
+1. An Elisp DSL (=anvil-pkg-define=, =anvil-pkg-install=, ...)  that
+   feels native to Emacs / NeLisp users.
+2. A wrapper that translates that DSL to Nix expressions / =nix profile=
+   commands.
+3. A fallback path for Git-host packages /not/ in nixpkgs (private
+   repos, in-development MCP servers), inspired by =async-installer=.
+
+** Plain Elisp, no macro DSL forced on you
+
+Like async-installer, =anvil-pkg= prefers =setq= / =defun= /
+=anvil-pkg-define= over a baroque =use-package=-style macro.  Reading
+your config should not require learning a new macro language.
+
+* Design overview
+
+#+begin_src text
+   ┌─────────────────────────────────────────────────────────────┐
+   │  Elisp DSL                                                   │
+   │  (anvil-pkg-install "ripgrep")                               │
+   │  (anvil-pkg-define my-tool :src (github "...") :build ...)   │
+   └─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+   ┌─────────────────────────────────────────────────────────────┐
+   │  anvil-pkg core (this repo)                                  │
+   │   - DSL parser / form → backend dispatch                     │
+   │   - manifest / generation tracking                           │
+   │   - MCP tool surface: anvil_pkg_install / search / list ...  │
+   └─────────────────────────────────────────────────────────────┘
+                  │                         │
+                  ▼                         ▼
+   ┌─────────────────────────────┐   ┌─────────────────────────────┐
+   │  Nix backend (primary)       │   │  Git backend (fallback)     │
+   │  nix profile install ...     │   │  inspired by async-installer│
+   │  nix-eval / flake / nixpkgs  │   │  for non-nixpkgs repos      │
+   └─────────────────────────────┘   └─────────────────────────────┘
+#+end_src
+
+* Phase plan
+
+| Phase | Scope                                                                | ETA            |
+|-------+----------------------------------------------------------------------+----------------|
+| 1     | =nix profile= shell-out wrapper. 3 MCP tools. =install/search/list= | week           |
+| 2     | Elisp DSL → Nix expr generation. =anvil-pkg-define= macro            | 2-3 weeks      |
+| 3     | Git-host fallback (async-installer derived) + manifest               | 1-2 weeks      |
+| 4     | Profile / generation management (Nix profile rollback wrap or own)   | TBD            |
+| 5+    | Optional: independent package server, distro angle                   | not promised   |
+
+See =docs/design/01-overview.org= for the full Phase 1 contract.
+
+* Install
+
+*Not yet installable.*  When Phase 1 ships, =anvil-pkg= will be loaded as
+an =anvil.el= module: =(require 'anvil-pkg)=.  The CLI surface will be
+=anvil pkg install ...= via =bin/anvil= sub-command dispatch.
+
+* Requirements (planned)
+
+- Emacs 29+ (anvil runtime requirement)
+- Nix 2.18+ with flakes enabled (Phase 1 backend)
+- =anvil.el= loaded
+
+* Naming
+
+=anvil-pkg= follows the existing anvil sub-module pattern (=anvil-http=,
+=anvil-state=, =anvil-defs=, =anvil-org-index=, ...).  CLI is exposed as a
+=bin/anvil= sub-command (=anvil pkg install ...=) so the user only ever
+has one binary in =$PATH=.
+
+If the project later outgrows anvil's ecosystem, a standalone brand
+rename remains an option.  Phase 1-3 do not require it.
+
+* License
+
+GPL-3.0-or-later.  Same as =anvil.el= and =NeLisp=.

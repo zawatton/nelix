@@ -1,0 +1,12 @@
+*.elc
+*~
+\#*\#
+.\#*
+.dir-locals.el
+/result
+/result-*
+/.direnv/
+/.envrc
+*.log
+/build/
+/dist/

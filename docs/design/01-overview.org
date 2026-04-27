@@ -1,0 +1,168 @@
+#+title: anvil-pkg — Overview & Phase 1 contract
+#+author: zawatton
+#+date: 2026-04-27
+#+property: status PHASE-0-DESIGN
+
+* STATUS
+
+Phase 0 (this document) — DESIGN.  Phase 1 PoC not yet started.
+
+Naming and architectural decisions in this document are *load-bearing*
+for downstream phases; revise here before changing code.
+
+* Goal
+
+Provide an /Emacs Lisp DSL package manager/, backed by the Nix store,
+exposed as both Elisp API and Claude Code MCP tools, integrated as an
+=anvil.el= sub-module.
+
+The same idea as Guix (Scheme + Nix-store) — but written in /Emacs
+Lisp/, so AI agents using anvil's MCP surface can install packages by
+emitting one Lisp form.
+
+* Non-goals
+
+- *Re-implement Nix.*  Closure resolution, content-addressed storage,
+  sandboxed builds, binary caches — all delegated to the Nix daemon.
+  We are a wrapper, not a competitor.
+- *Become a distribution.*  =anvil-pkg= manages user / project profiles.
+  System-level / OS-level package management (Yuki OS / NixOS-style)
+  is explicitly out of scope.
+- *Replace =use-package=.*  =anvil-pkg= manages /external tools/
+  (binaries, language servers, libraries available in nixpkgs), not
+  Emacs packages from MELPA.  Emacs package management remains the job
+  of =package.el= / =async-installer= / =use-package= / =elpaca=.
+- *Force a new macro DSL on users.*  Plain =setq= / =defun= /
+  =anvil-pkg-define= must remain sufficient.
+
+* Architectural decisions (locked at Phase 0)
+
+** A1. Backend = Nix daemon (primary), Git-host (fallback)
+
+Nix gives us nixpkgs (~100 000 packages), reproducibility, sandbox.
+Reimplementing any of this is out of scope.  Decision: =anvil-pkg=
+shells out to =nix profile= / =nix search= / =nix build= via
+=make-process=, parses =--json= output.
+
+Git-host fallback (Phase 3) handles packages /not/ in nixpkgs (private
+repos, in-development MCP servers).  Inspired by =async-installer='s
+Git pin + sentinel chain, but rewritten in anvil idiom.
+
+** A2. CLI = =anvil= sub-command, no separate binary
+
+CLI verbs go through =bin/anvil pkg <verb>= dispatch on the anvil
+launcher, not a separate =bin/anvil-pkg=.  Reason: discoverable from
+=anvil --help=, single PATH entry, single shell completion file, modern
+CLI convention (cargo / nix / git / gh).
+
+The anvil.el side of dispatch is a separate PR against
+zawatton/anvil.el; this repo only ships the Elisp module.
+
+** A3. Function namespace = =anvil-pkg-=, MCP tool namespace = =anvil_pkg_=
+
+Matches =anvil-state-= / =anvil_state_= /  =anvil-http-= / =anvil_http_=
+exactly.  No deviation.
+
+** A4. Backend abstraction layer
+
+Public API (=anvil-pkg-install=, etc.) does not call =nix= directly.
+All Nix-specific code lives in =anvil-pkg--nix-*= private helpers.  This
+keeps Phase 4+ open for an independent package server without
+re-engineering callers.
+
+** A5. License = GPL-3.0-or-later
+
+Same as =anvil.el= / =NeLisp=.
+
+* Phase 1 contract (PoC)
+
+** Scope
+
+Three Elisp functions, three MCP tools, three Nix sub-commands wrapped.
+
+| Public API                                | Wraps                                  |
+|-------------------------------------------+----------------------------------------|
+| =(anvil-pkg-install NAME)=                | =nix profile install nixpkgs#NAME=     |
+| =(anvil-pkg-search QUERY)=                | =nix search nixpkgs QUERY --json=      |
+| =(anvil-pkg-list)=                        | =nix profile list --json=              |
+
+** Non-functional requirements
+
+- Errors from =nix= surface as Elisp signals carrying stderr.
+- =nix search= JSON parsed lazily; never load full nixpkgs in memory.
+- Profile path: =~/.local/state/anvil-pkg/profile/= (Nix profile dir,
+  not the user's default =~/.nix-profile=, so anvil-pkg installs do
+  not collide with the user's other Nix profiles).
+- Phase 1 has *no* manifest, *no* generation tracking, *no* DSL macro.
+  Those land in Phase 2-4.
+
+** ERT coverage target
+
+- 6 tests minimum:
+  - install happy path (mocked =make-process=)
+  - install error path (nix non-zero exit)
+  - search happy path (JSON parse)
+  - search empty result
+  - list happy path
+  - list with empty profile
+
+** MCP integration
+
+Three tools registered via anvil's =anvil-register-tools= macro:
+
+#+begin_src elisp
+(anvil-register-tools 'anvil-pkg
+  '((anvil_pkg_install
+     :handler anvil-pkg-install
+     :description "Install a package by name into the anvil-pkg profile.")
+    (anvil_pkg_search
+     :handler anvil-pkg-search
+     :description "Search nixpkgs for packages matching QUERY.")
+    (anvil_pkg_list
+     :handler anvil-pkg-list
+     :description "List packages currently installed in the anvil-pkg profile.")))
+#+end_src
+
+** Out of scope for Phase 1
+
+- DSL macro (=anvil-pkg-define=) — Phase 2
+- Git-host fallback — Phase 3
+- Profile rollback / generation switching — Phase 4
+- Concurrent install dispatch — Phase 4+
+- Windows support — Phase 5+ (Nix on Windows requires WSL2 today)
+
+* Open questions for Phase 1
+
+** Q1. nix availability detection
+
+Where do we check for the =nix= binary?  Options:
+
+1. On first =anvil-pkg-install= call, error if missing.
+2. On =(require 'anvil-pkg)= load, warn if missing.
+3. =anvil doctor pkg= explicit health check.
+
+Tentative: 1 + 3.  Loud failure on call site, optional pre-flight via
+doctor.  Don't error at load time (anvil-pkg may be loaded for inspection
+on machines without Nix).
+
+** Q2. Profile location (anvil's own vs user's default)
+
+Tentative: =~/.local/state/anvil-pkg/profile= so anvil-pkg installs
+isolate from a user's existing Nix profile.  PATH augmentation handled
+by the user (or a future =anvil pkg env= command).
+
+** Q3. flake-vs-channels
+
+Tentative: flakes (=nixpkgs#NAME=).  Channels require =nix-channel
+--update= state which complicates reproducibility.  Hard-fail if user
+has flakes disabled, with a clear error pointing at
+=experimental-features = nix-command flakes=.
+
+* References
+
+- Nix manual: =nix profile= (https://nix.dev/manual/nix/2.18/command-ref/new-cli/nix3-profile)
+- Guix architecture (Scheme over Nix store): https://guix.gnu.org/manual/en/html_node/Architecture.html
+- =async-installer= (Phase 3 inspiration):
+  /home/madblack-21/.emacs.d/external-packages/async-installer/
+- =anvil.el= sub-module conventions: =anvil-state.el=, =anvil-http.el=,
+  =anvil-defs.el=
