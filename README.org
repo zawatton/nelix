@@ -17,9 +17,21 @@ agents can install anything by writing one Lisp form.
 
 * Status
 
-*Phase 1+2+3 SHIPPED* (2026-04-27) — Full DSL stack on top of the
-Nix store with multiple fetcher and build-system support.  ERT
-21/21 PASS (mocked, no nix binary needed to run the suite).
+*Phase 1+2+3 SHIPPED + REAL-NIX VERIFIED* (2026-04-27) — Full DSL
+stack on top of the Nix store with multiple fetcher and build-system
+support.
+
+- ERT 21/21 PASS (mocked, runs without a nix binary).
+- /Real-nix smoke test/ executed end-to-end in a =nixos/nix:2.34=
+  rootless podman container with Emacs 30.2:
+  - =(pkg-install "hello")= installed GNU Hello into an isolated
+    profile and the binary ran.
+  - =(pkg-list)= reflected the install.
+  - =(pkg-search "hello")= returned 30 hits.
+  - =(pkg-define) + (pkg-install 'sym)= reached the Nix daemon
+    through the generated =flake.nix= and surfaced the expected
+    hash-mismatch error from a placeholder.
+- Generated =flake.nix= validated by Nix as well-formed.
 
 Public Elisp API uses the short =pkg-= prefix:
 - =pkg-install= / =pkg-search= / =pkg-list= — Phase 1
@@ -30,7 +42,8 @@ Public Elisp API uses the short =pkg-= prefix:
 Long-form aliases (=anvil-pkg-install= etc.) are provided via
 =defalias= for Emacs-prefix purists.
 
-Phase 4 (profile generation rollback) is the next milestone;
+Phase 4 (profile generation rollback + Nix 2.34's
+=install=→=add= deprecation follow-up) is the next milestone;
 see =docs/design/02-dsl.org=.
 
 * Why?
