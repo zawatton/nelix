@@ -48,7 +48,7 @@
 ;;; Code:
 
 (require 'anvil-pkg)
-(require 'subr-x)
+(require 'anvil-pkg-compat)
 
 (declare-function anvil-pkg--ensure-nix "anvil-pkg")
 (declare-function anvil-pkg--call-nix "anvil-pkg")
@@ -56,10 +56,12 @@
 
 ;;;; --- error symbols ---------------------------------------------------------
 
-(define-error 'anvil-pkg-dsl-error
-              "anvil-pkg DSL error" 'anvil-pkg-error)
-(define-error 'anvil-pkg-undefined-package
-              "Symbol not registered via pkg-define" 'anvil-pkg-error)
+(anvil-pkg-compat-define-error-symbol 'anvil-pkg-dsl-error
+                                      "anvil-pkg DSL error"
+                                      'anvil-pkg-error)
+(anvil-pkg-compat-define-error-symbol 'anvil-pkg-undefined-package
+                                      "Symbol not registered via pkg-define"
+                                      'anvil-pkg-error)
 
 ;;;; --- registry --------------------------------------------------------------
 
@@ -488,9 +490,8 @@ flake.nix file it wrote.")
 (defun anvil-pkg--write-flake-default ()
   "Render the registry into flake.nix on disk.  Returns the path."
   (let ((file (anvil-pkg--flake-path)))
-    (make-directory (file-name-directory file) t)
-    (with-temp-file file
-      (insert (anvil-pkg--render-flake)))
+    (anvil-pkg-compat-make-directory (file-name-directory file) t)
+    (anvil-pkg-compat-write-file file (anvil-pkg--render-flake))
     file))
 
 ;;;; --- symbol install path --------------------------------------------------
@@ -515,7 +516,7 @@ install path:STATE_DIR#SYM."
               (list (format "nix profile install %s failed (exit %s): %s"
                             sym
                             (plist-get res :exit)
-                            (string-trim (or (plist-get res :stderr) "")))
+                            (anvil-pkg-compat-string-trim (or (plist-get res :stderr) "")))
                     :stderr (plist-get res :stderr))))))
 
 (provide 'anvil-pkg-dsl)

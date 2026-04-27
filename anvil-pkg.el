@@ -58,8 +58,7 @@
 
 ;;; Code:
 
-(require 'json)
-(require 'subr-x)
+(require 'anvil-pkg-compat)
 
 (defgroup anvil-pkg nil
   "Elisp DSL package manager backed by Nix store."
@@ -86,10 +85,11 @@ Used as `<channel>#<name>' when invoking `nix profile install'."
   :group 'anvil-pkg)
 
 (defcustom anvil-pkg-profile-dir
-  (expand-file-name "anvil-pkg/profile"
-                    (or (getenv "XDG_STATE_HOME")
-                        (expand-file-name ".local/state"
-                                          (or (getenv "HOME") "~"))))
+  (expand-file-name
+   "anvil-pkg/profile"
+   (or (anvil-pkg-compat-getenv "XDG_STATE_HOME")
+       (expand-file-name ".local/state"
+                         (or (anvil-pkg-compat-getenv "HOME") "~"))))
   "Directory for the anvil-pkg Nix profile.
 Isolated from `~/.nix-profile' so anvil-pkg installs do not collide
 with the user's other Nix profiles.  PATH augmentation is the
@@ -105,13 +105,16 @@ helper)."
 
 ;;;; --- error symbols ---------------------------------------------------------
 
-(define-error 'anvil-pkg-error "anvil-pkg error")
-(define-error 'anvil-pkg-nix-not-found
-              "nix binary not found on PATH"
-              'anvil-pkg-error)
-(define-error 'anvil-pkg-nix-failed
-              "nix command exited non-zero"
-              'anvil-pkg-error)
+;; Use the compat helper instead of `define-error' so the same install
+;; runs on NeLisp standalone (which does not provide that macro).
+(anvil-pkg-compat-define-error-symbol 'anvil-pkg-error
+                                      "anvil-pkg error")
+(anvil-pkg-compat-define-error-symbol 'anvil-pkg-nix-not-found
+                                      "nix binary not found on PATH"
+                                      'anvil-pkg-error)
+(anvil-pkg-compat-define-error-symbol 'anvil-pkg-nix-failed
+                                      "nix command exited non-zero"
+                                      'anvil-pkg-error)
 
 ;;;; --- backend abstraction ---------------------------------------------------
 
@@ -123,34 +126,15 @@ executable.  Must return a plist with the keys :exit (integer),
 :stdout (string), :stderr (string).")
 
 (defun anvil-pkg--call-nix-default (args)
-  "Default `nix' invoker.  Run synchronously via `call-process'.
+  "Default `nix' invoker.  Synchronous, runtime-portable.
 
 ARGS is a list of string arguments passed to the executable named
-by `anvil-pkg-nix-program'.  Stdout is captured to a buffer,
-stderr to a temp file (so the two streams stay separate even when
-nix interleaves them).  Returns plist (:exit :stdout :stderr).
+by `anvil-pkg-nix-program'.  Returns plist (:exit :stdout :stderr).
 
-Phase 4 will introduce an async variant gated by `:async'; for now
-install / search / list block the daemon while nix runs.  This is
-acceptable for PoC because search is fast (<1s warm cache) and
-install is a user-initiated action."
-  (let ((stdout-buf (generate-new-buffer " *anvil-pkg-nix-stdout*"))
-        (stderr-file (make-temp-file "anvil-pkg-nix-stderr-")))
-    (unwind-protect
-        (let ((exit (apply #'call-process
-                           anvil-pkg-nix-program
-                           nil
-                           (list stdout-buf stderr-file)
-                           nil
-                           args)))
-          (list :exit (if (numberp exit) exit -1)
-                :stdout (with-current-buffer stdout-buf
-                          (buffer-string))
-                :stderr (with-temp-buffer
-                          (insert-file-contents stderr-file)
-                          (buffer-string))))
-      (when (buffer-live-p stdout-buf) (kill-buffer stdout-buf))
-      (when (file-exists-p stderr-file) (delete-file stderr-file)))))
+Implementation defers I/O to `anvil-pkg-compat-call-process' so
+the same code runs on Emacs and on NeLisp standalone.  Phase 4
+will introduce an async variant gated by `:async'."
+  (anvil-pkg-compat-call-process anvil-pkg-nix-program args))
 
 (defun anvil-pkg--call-nix (args)
   "Invoke `nix' with ARGS via `anvil-pkg--call-nix-fn'."
@@ -158,9 +142,11 @@ install is a user-initiated action."
 
 (defun anvil-pkg--ensure-nix ()
   "Signal `anvil-pkg-nix-not-found' if the nix binary is missing.
-Q1 in design doc 01: loud failure at call site, not at load time."
+Q1 in design doc 01: loud failure at call site, not at load time.
+Skipped in test mode (= when `anvil-pkg--call-nix-fn' is
+overridden) because mock backends do not need nix on PATH."
   (unless (or (not (eq anvil-pkg--call-nix-fn #'anvil-pkg--call-nix-default))
-              (executable-find anvil-pkg-nix-program))
+              (anvil-pkg-compat-executable-find anvil-pkg-nix-program))
     (signal 'anvil-pkg-nix-not-found
             (list (format "%s not on PATH; install Nix 2.18+ with flakes"
                           anvil-pkg-nix-program)))))
@@ -173,12 +159,7 @@ Q1 in design doc 01: loud failure at call site, not at load time."
 
 (defun anvil-pkg--json-parse (json-str)
   "Parse JSON-STR into nested alists/lists.  Empty string returns nil."
-  (when (and json-str (> (length (string-trim json-str)) 0))
-    (json-parse-string json-str
-                       :object-type 'alist
-                       :array-type 'list
-                       :null-object nil
-                       :false-object nil)))
+  (anvil-pkg-compat-json-parse json-str))
 
 (defun anvil-pkg--parse-search (json-str)
   "Parse `nix search --json' output JSON-STR into list of plists.
@@ -237,7 +218,7 @@ Internal helper called by `pkg-install' when NAME is a string."
               (list (format "nix profile install %s failed (exit %s): %s"
                             name
                             (plist-get res :exit)
-                            (string-trim (or (plist-get res :stderr) "")))
+                            (anvil-pkg-compat-string-trim (or (plist-get res :stderr) "")))
                     :stderr (plist-get res :stderr))))))
 
 (declare-function anvil-pkg--install-symbol "anvil-pkg-dsl")
@@ -280,7 +261,7 @@ when no packages match."
               (list (format "nix search %s failed (exit %s): %s"
                             query
                             (plist-get res :exit)
-                            (string-trim (or (plist-get res :stderr) "")))
+                            (anvil-pkg-compat-string-trim (or (plist-get res :stderr) "")))
                     :stderr (plist-get res :stderr))))
     (anvil-pkg--parse-search (plist-get res :stdout))))
 
@@ -298,7 +279,7 @@ Returns a list of plists carrying :name :attr-path :original-url
       (signal 'anvil-pkg-nix-failed
               (list (format "nix profile list failed (exit %s): %s"
                             (plist-get res :exit)
-                            (string-trim (or (plist-get res :stderr) "")))
+                            (anvil-pkg-compat-string-trim (or (plist-get res :stderr) "")))
                     :stderr (plist-get res :stderr))))
     (anvil-pkg--parse-list (plist-get res :stdout))))
 

@@ -1,5 +1,5 @@
 EMACS ?= emacs
-SRC = anvil-pkg.el anvil-pkg-dsl.el
+SRC = anvil-pkg-compat.el anvil-pkg.el anvil-pkg-dsl.el
 TEST_SRC = test/anvil-pkg-test.el test/anvil-pkg-dsl-test.el
 
 EMACS_BATCH = $(EMACS) -Q --batch -L . -L test
