@@ -1,0 +1,253 @@
+#+title: anvil-pkg — Smoke test guide for first real-world install
+#+author: zawatton
+#+date: 2026-04-27
+
+* Purpose
+
+Phase 1+2+3 ship code that is /structurally complete/ and ERT-verified
+(21/21 mocked).  This guide walks through the steps to verify the
+code on a real machine with Nix installed — turning "should work"
+into "verified to work".
+
+Run the steps in order.  Each step has a /pass criterion/, an /expected
+failure mode/, and a /recovery procedure/ if it fails.  Capture
+anything unexpected as a GitHub issue once the repo has a remote.
+
+* Prerequisites
+
+| Requirement      | Why                                          | How to install                                              |
+|------------------+----------------------------------------------+-------------------------------------------------------------|
+| Emacs 29+        | anvil-pkg runtime                             | distro-package or build from source                         |
+| Nix 2.18+        | =pkg-install= backend                         | =sh <(curl -L https://nixos.org/nix/install)= (Determinate) |
+| flakes enabled   | =nix profile install nixpkgs#NAME= relies on it | =/etc/nix/nix.conf= or =~/.config/nix/nix.conf=            |
+| anvil-pkg cloned | source on load-path                           | =git clone <repo> ~/anvil-pkg=                              |
+
+** Verify Nix install + flakes
+
+#+begin_src shell
+nix --version
+# expect: nix (Nix) 2.18.x or later
+
+cat ~/.config/nix/nix.conf 2>/dev/null | grep experimental-features
+# expect a line like:
+# experimental-features = nix-command flakes
+
+# If the line is absent, add it:
+mkdir -p ~/.config/nix
+echo 'experimental-features = nix-command flakes' >> ~/.config/nix/nix.conf
+#+end_src
+
+If you used the Determinate-style installer (=sh <(curl -L
+https://nixos.org/nix/install)=), flakes are enabled by default.
+
+** Verify nix profile dispatch works (sanity check independent of anvil-pkg)
+
+#+begin_src shell
+nix profile install nixpkgs#hello
+hello
+# expect: "Hello, world!"
+
+nix profile remove hello
+# cleanup so the rest of the test starts clean
+#+end_src
+
+If the above fails, the issue is in your Nix install, not anvil-pkg.
+Fix that first.
+
+* Step 1 — load anvil-pkg in Emacs
+
+In your =init.el= (or temporary scratch buffer):
+
+#+begin_src elisp
+(add-to-list 'load-path "~/anvil-pkg")
+(require 'anvil-pkg)
+(require 'anvil-pkg-dsl)              ; Phase 2 + 3 forms
+#+end_src
+
+Pass criterion: no error.  =M-x describe-function pkg-install= shows
+the docstring.
+
+Failure modes:
+- "Cannot open load file: anvil-pkg" — load-path is wrong.  Fix the
+  path or use absolute path.
+- byte-compile warnings on require — should not happen; if it does,
+  open an issue with the warning text.
+
+* Step 2 — string-form install (Phase 1 path)
+
+#+begin_src elisp
+;; The simplest possible nixpkgs package — small, fast, dependency-free.
+(pkg-install "hello")
+;; expect: t   (no error, returns t)
+
+(pkg-list)
+;; expect: a list of one plist with :name "hello" / :attr-path "hello"
+#+end_src
+
+Verify in shell:
+
+#+begin_src shell
+~/.local/state/anvil-pkg/profile/bin/hello
+# expect: "Hello, world!"
+#+end_src
+
+Pass criterion: =pkg-install= returns =t=, =pkg-list= shows the entry,
+the binary runs.
+
+Failure modes:
+
+| Failure                                               | Likely cause                                            | Recovery                                                                  |
+|-------------------------------------------------------+---------------------------------------------------------+---------------------------------------------------------------------------|
+| =anvil-pkg-nix-not-found=                             | =nix= not on PATH from inside Emacs                     | Set =anvil-pkg-nix-program= to absolute path (e.g. =/nix/var/nix/profiles/default/bin/nix=) |
+| =anvil-pkg-nix-failed= "experimental feature flakes"  | flakes not enabled                                      | See "Verify Nix install + flakes" above                                  |
+| =anvil-pkg-nix-failed= "permission denied" on profile | profile dir conflict with another nix profile           | =rm -rf ~/.local/state/anvil-pkg= and retry                              |
+| =pkg-list= returns nil after a successful install     | profile path mismatch between commands                   | check =anvil-pkg-profile-dir= matches what =nix profile list= sees       |
+
+* Step 3 — search
+
+#+begin_src elisp
+(let ((results (pkg-search "ripgrep")))
+  (mapcar (lambda (row) (plist-get row :name)) results))
+;; expect: a list including "ripgrep" (plus any sub-attributes)
+#+end_src
+
+Pass criterion: list non-empty, includes a row whose =:name= is
+"ripgrep".
+
+Failure modes:
+- =anvil-pkg-nix-failed= with empty stderr — you may be hitting the
+  first-time channel evaluation cost (>10s).  Re-run; should be fast
+  the second time.
+- Empty result for a name you /know/ exists in nixpkgs — try a
+  different query string; =nix search= matches against
+  attribute-path / pname / description by default.
+
+* Step 4 — DSL form, symbol install (Phase 2 + 3 path)
+
+This exercises the flake.nix generation + symbol install dispatch.
+
+#+begin_src elisp
+;; A trivial url-fetch + stdenv recipe for verification.
+;; The hash is intentionally a placeholder — Nix will reject install
+;; until you replace it with the real one.  This is fine for the
+;; "code path runs" check; we know /a/ test passes by seeing the
+;; expected hash-mismatch error from nix.
+(pkg-define my-hello-test
+  (version "2.12.1")
+  (source (url-fetch "https://ftp.gnu.org/gnu/hello/hello-2.12.1.tar.gz"
+                     :sha256 "sha256-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx="))
+  (build-system stdenv)
+  (description "GNU Hello — sanity test for anvil-pkg DSL"))
+
+(condition-case err
+    (pkg-install 'my-hello-test)
+  (anvil-pkg-nix-failed
+    (message "Got expected nix failure: %s"
+             (cadr err))))
+;; expect: "Got expected nix failure: nix profile install ... hash mismatch"
+;; (or similar — nix tells you the real hash)
+#+end_src
+
+Pass criterion: the error message mentions "hash mismatch" or
+"sha256" — meaning the flake was generated, parsed by nix, and got
+to the build / fetch step.
+
+The flake.nix file should now exist:
+
+#+begin_src shell
+cat ~/.local/state/anvil-pkg/flake.nix
+# expect: a real flake declaring `packages.x86_64-linux.my-hello-test`
+#+end_src
+
+Failure modes:
+- =flake.nix= absent → =anvil-pkg--write-flake-default= did not run;
+  check =M-: anvil-pkg--write-flake-fn= equals =anvil-pkg--write-flake-default=.
+- =anvil-pkg-dsl-error "render: unsupported source type"= → DSL parse
+  succeeded but emitter failed; this should not happen for url-fetch
+  — open an issue with the IR plist (=M-:= the registry).
+- nix complains about flake schema → the generated flake violates
+  Nix's expected shape; capture the nix error and the generated
+  flake file as an issue.
+
+** Real install with correct hash
+
+Once you have the right hash (Nix tells you), re-run with the
+correct value to perform a real build:
+
+#+begin_src elisp
+(pkg-define my-hello-test
+  (version "2.12.1")
+  (source (url-fetch "https://ftp.gnu.org/gnu/hello/hello-2.12.1.tar.gz"
+                     :sha256 "sha256-CORRECT-HASH-FROM-NIX-ERROR"))
+  (build-system stdenv))
+
+(pkg-install 'my-hello-test)
+;; expect: t after a few seconds of build
+#+end_src
+
+* Step 5 — github-fetch + rust (Phase 3 path)
+
+#+begin_src elisp
+(pkg-define my-rg-test
+  (version "14.1.0")
+  (source (github-fetch :owner "BurntSushi" :repo "ripgrep"
+                        :rev "14.1.0"
+                        :sha256 "sha256-PLACEHOLDER"))
+  (build-system (rust :cargo-sha256 "sha256-PLACEHOLDER")))
+
+(condition-case err
+    (pkg-install 'my-rg-test)
+  (anvil-pkg-nix-failed
+    (message "Phase 3 dispatch reached nix: %s" (cadr err))))
+#+end_src
+
+Pass criterion: like Step 4, the error message comes from nix (hash
+mismatch or build failure), proving the dispatch chain reached the
+Nix daemon.
+
+This proves the Phase 3 work end-to-end without needing real hashes.
+
+* Step 6 — MCP tool registration (optional, requires anvil.el)
+
+If you have anvil.el loaded and your MCP server running:
+
+#+begin_src elisp
+(anvil-pkg-enable)
+;; expect: "anvil-pkg: enabled (3 MCP tools, profile = ...)"
+#+end_src
+
+From a Claude Code session connected to that MCP server, you should
+now see =pkg-install= / =pkg-search= / =pkg-list= in the tool list.
+
+* Cleanup after the test run
+
+#+begin_src shell
+# remove the test profile and generated flake
+rm -rf ~/.local/state/anvil-pkg
+
+# verify your normal nix profile is untouched
+nix profile list
+#+end_src
+
+Because anvil-pkg uses an isolated profile dir, removing
+=~/.local/state/anvil-pkg= cannot affect your default
+=~/.nix-profile= installs.
+
+* What to capture as bugs
+
+Anything in the above that fails for a reason /not/ already in the
+"failure modes" tables.  Capture in a (future) GitHub issue:
+
+1. Step number that failed.
+2. Full error message including stack trace.
+3. =M-:= output for any anvil-pkg internal var the failure reference
+   (=anvil-pkg-profile-dir=, =anvil-pkg-nix-channel=, the registry
+   contents, etc.).
+4. Output of =nix --version= and =nix flake metadata nixpkgs= for
+   the env baseline.
+
+* Related design notes
+
+- Phase 1 contract:    =docs/design/01-overview.org=
+- Phase 2 + 3 DSL:     =docs/design/02-dsl.org=
+- Strategy framework:  =docs/design/03-strategy-vision.org=
