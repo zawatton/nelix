@@ -33,6 +33,12 @@
 
 ;;; Code:
 
+;; `declare-function' is a byte-compiler hint in Emacs and a no-op
+;; at runtime; NeLisp does not ship it.  Stub it so this file loads
+;; on bare NeLisp standalone (Phase 8.x Rust evaluator).
+(unless (fboundp 'declare-function)
+  (defmacro declare-function (&rest _ignored) nil))
+
 ;; --- declare-function shims for NeLisp Layer-2 dispatch targets --
 ;; These functions only exist when nelisp-process / nelisp-json /
 ;; nelisp-emacs-compat are loaded (= NeLisp standalone runtime).
@@ -233,15 +239,18 @@ Object -> alist, array -> list, null/false -> nil."
   (cond
    ((fboundp 'string-trim) (string-trim str))
    (t
+    ;; Codepoints below are \x20 \x09 \x0a \x0d (space tab LF CR) —
+    ;; spelt numerically so NeLisp's reader (no `?\s' shorthand) loads
+    ;; this file too.
     (let ((s (or str ""))
           (start 0)
           end)
       (setq end (length s))
       (while (and (< start end)
-                  (memq (aref s start) '(?\s ?\t ?\n ?\r)))
+                  (memq (aref s start) '(32 9 10 13)))
         (setq start (1+ start)))
       (while (and (> end start)
-                  (memq (aref s (1- end)) '(?\s ?\t ?\n ?\r)))
+                  (memq (aref s (1- end)) '(32 9 10 13)))
         (setq end (1- end)))
       (substring s start end)))))
 
