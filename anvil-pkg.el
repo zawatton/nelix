@@ -223,10 +223,18 @@ keyed by package name."
 (defun anvil-pkg--emacs-package-after-install (name)
   "Augment `load-path' for installed Emacs package NAME.
 
-Looks up NAME in `pkg-list', searches its `:store-paths' for
-`share/emacs/site-lisp/<pname>', adds the first match to
-`load-path', and returns that directory path.  Returns nil when no
-matching profile element or site-lisp directory exists."
+Looks up NAME in `pkg-list', then searches its `:store-paths' for
+the first existing site-lisp directory.  nixpkgs Emacs builders
+emit one of two layouts:
+
+  - flat        :  $out/share/emacs/site-lisp/             (trivialBuild)
+  - per-package :  $out/share/emacs/site-lisp/<pname>/     (some recipes)
+  - elpa-style  :  $out/share/emacs/site-lisp/elpa/<pname>-<ver>/  (melpaBuild)
+
+We try the per-package, elpa, then flat candidate in turn and add
+the first hit to `load-path'.  Returns the directory path on
+success or nil when no profile element / no site-lisp dir
+exists."
   (let* ((pkg-name (symbol-name name))
          (entries (pkg-list))
          entry
@@ -237,13 +245,30 @@ matching profile element or site-lisp directory exists."
         (setq entry item)))
     (when entry
       (dolist (store-path (plist-get entry :store-paths))
-        (let ((candidate (expand-file-name
-                          (format "share/emacs/site-lisp/%s" pkg-name)
-                          store-path)))
-          (when (and (null match-dir)
-                     (anvil-pkg-compat-file-exists-p candidate))
-            (add-to-list 'load-path candidate)
-            (setq match-dir candidate)))))
+        (when (null match-dir)
+          (let* ((per-pkg (expand-file-name
+                           (format "share/emacs/site-lisp/%s" pkg-name)
+                           store-path))
+                 (flat    (expand-file-name "share/emacs/site-lisp"
+                                            store-path))
+                 (chosen
+                  (cond
+                   ;; per-package subdir wins when it exists
+                   ((anvil-pkg-compat-file-exists-p per-pkg) per-pkg)
+                   ;; elpa-style: pick the first elpa subdir starting with pname
+                   ((let* ((elpa-dir (expand-file-name "elpa" flat))
+                           (entries (and (anvil-pkg-compat-file-exists-p elpa-dir)
+                                         (ignore-errors
+                                           (directory-files elpa-dir t
+                                                            (concat "\\`" (regexp-quote pkg-name) "-")))))
+                           (hit (and entries (car entries))))
+                      hit))
+                   ;; flat layout: $out/share/emacs/site-lisp/<pname>.el
+                   ((let ((flat-el (expand-file-name (concat pkg-name ".el") flat)))
+                      (and (anvil-pkg-compat-file-exists-p flat-el) flat))))))
+            (when chosen
+              (add-to-list 'load-path chosen)
+              (setq match-dir chosen))))))
     match-dir))
 
 ;;;; --- public API ------------------------------------------------------------
