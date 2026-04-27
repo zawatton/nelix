@@ -1,0 +1,223 @@
+#+title: anvil-pkg — Phase 2: =pkg-define= DSL → flake.nix generation
+#+author: zawatton
+#+date: 2026-04-27
+#+property: status PHASE-2-SHIPPED
+
+* STATUS
+
+Phase 2 SHIPPED — 2026-04-27.  =anvil-pkg-dsl.el= ships =pkg-define=
+macro + parser + IR + pure renderer + registry + flake.nix writer
++ symbol install path.  ERT 12/12 PASS (Phase 1 + 2 combined).
+=pkg-install= now dispatches both nixpkgs strings and declared
+symbols through the same entry point.
+
+Note: Phase 2 ships as a single file =anvil-pkg-dsl.el= (~270 LOC)
+rather than the 3-file split sketched below; we will revisit the
+split when the file grows past 500 LOC or Phase 3 introduces a
+second renderer.
+
+* Goal
+
+Let users (and AI agents) declare packages in *Emacs Lisp* using a
+Guix-style record DSL, have those declarations compile to a
+=flake.nix= under =anvil-pkg-state-dir=, and let =pkg-install= dispatch
+both nixpkgs attribute paths *and* declared symbols through the same
+entry point.
+
+* Non-goals (deferred to later phases)
+
+- Multiple source types (only =url-fetch= in Phase 2; =github-fetch= /
+  =git-fetch= land in Phase 3).
+- Multiple build systems (only =stdenv= in Phase 2; =rust-build-system=
+  / =python-build-system= / =go-build-system= land in Phase 3).
+- Override-based DSL (`:extends` / `:inherit-from`) — Phase 3.
+- SQLite-backed registry — Phase 4 (alist suffices for Phase 2).
+- Generation rollback — Phase 4 (`nix profile rollback` wrapper).
+- Lisp dialect import (Guix Scheme → Elisp) — separate
+  =lisp-dialect-bridge= project.
+
+* DSL contract
+
+** Surface form
+
+#+begin_src elisp
+(pkg-define my-ripgrep
+  (version      "13.0.0")
+  (source       (url-fetch "https://github.com/BurntSushi/ripgrep/archive/13.0.0.tar.gz"
+                           :sha256 "sha256-AbCd..."))
+  (build-system stdenv)
+  (inputs       (list pkg-config openssl))
+  (install-phase "make install PREFIX=$out"))
+#+end_src
+
+** Sub-form keywords (recognised inside the macro)
+
+| Keyword           | Required | Type                       | Notes                                                      |
+|-------------------+----------+----------------------------+------------------------------------------------------------|
+| =version=         | yes      | string                     | Becomes Nix =version= attribute                            |
+| =source=          | yes      | source-form (see below)    | Translates to a Nix fetcher derivation                     |
+| =build-system=    | no       | symbol (default `stdenv')  | Phase 2 only honours =stdenv= — others raise               |
+| =inputs=          | no       | list of nixpkgs symbols    | Renders as Nix =buildInputs = [ ... ]=                     |
+| =native-inputs=   | no       | list of nixpkgs symbols    | Renders as Nix =nativeBuildInputs = [ ... ]=               |
+| =install-phase=   | no       | string (shell)             | Dropped verbatim into Nix =installPhase=                   |
+| =build-phase=     | no       | string (shell)             | Dropped verbatim into Nix =buildPhase=                     |
+| =description=     | no       | string                     | Renders as =meta.description=                              |
+| =homepage=        | no       | string                     | Renders as =meta.homepage=                                 |
+| =license=         | no       | symbol (e.g. `mit', `gpl3')| Renders to nixpkgs =lib.licenses.<sym>=                    |
+
+Unknown keywords raise =anvil-pkg-dsl-error= at macroexpand time so
+typos surface in =M-x byte-compile-file= rather than silently
+serialising into Nix.
+
+** Source forms
+
+Phase 2 supports exactly one fetcher:
+
+#+begin_src elisp
+(url-fetch URL &key sha256)
+#+end_src
+
+Renders as:
+
+#+begin_src nix
+fetchurl {
+  url    = "<URL>";
+  sha256 = "<sha256>";
+}
+#+end_src
+
+Phase 3 will add =github-fetch= (=fetchFromGitHub=) and =git-fetch=
+(=fetchgit=).
+
+* Implementation outline
+
+** Layout
+
+| File                               | Role                                              |
+|------------------------------------+---------------------------------------------------|
+| =anvil-pkg-dsl.el=                 | =pkg-define= macro + sub-form parser              |
+| =anvil-pkg-render.el=              | Internal IR → Nix expression renderer (pure fn)   |
+| =anvil-pkg-registry.el=            | In-memory hash registry + =flake.nix= writer      |
+| =anvil-pkg.el= (existing)          | Re-exports + lifecycle (`anvil-pkg-enable')       |
+| =test/anvil-pkg-dsl-test.el=       | Phase 2 ERT (6 tests)                             |
+
+The split keeps the renderer (the part most likely to grow long and
+testable in isolation) outside the macro file.
+
+** Internal IR
+
+A defined package is stored as a plist with stable keys:
+
+#+begin_src elisp
+(:name        my-ripgrep
+ :version     "13.0.0"
+ :source      (:type url-fetch :url "..." :sha256 "...")
+ :build-system stdenv
+ :inputs       (pkg-config openssl)
+ :native-inputs nil
+ :install-phase "make install PREFIX=$out"
+ :build-phase  nil
+ :description  nil
+ :homepage     nil
+ :license      nil)
+#+end_src
+
+This shape is *frozen* — Phase 3 source / build-system additions
+extend the =:type= dispatch in =anvil-pkg-render-source= and
+=anvil-pkg-render-build-system= without changing the IR shape itself.
+
+** =pkg-define= macro
+
+#+begin_src elisp
+(defmacro pkg-define (name &rest body)
+  "Declare a package NAME from a Guix-style record BODY.
+The macro parses BODY into the internal IR and stores it under NAME
+in `anvil-pkg--registry'.  Returns NAME at expansion time so
+top-level forms read naturally."
+  (declare (indent 1))
+  (let ((ir (anvil-pkg--parse-define name body)))
+    `(progn
+       (anvil-pkg--register ',name ',ir)
+       ',name)))
+#+end_src
+
+Note: parsing happens at macroexpand time so unknown keywords / type
+errors fire at byte-compile, not at install.
+
+** Nix render contract
+
+#+begin_src elisp
+(anvil-pkg-render-nix IR) => string
+#+end_src
+
+Pure function — same IR in, same Nix string out.  Tested against
+golden output (no nix binary needed).
+
+The renderer emits a *single self-contained derivation expression*
+suitable for embedding inside a flake's =packages.<system>.<name>=
+attribute.  =anvil-pkg--write-flake= concatenates all registered IRs
+into one =flake.nix= file.
+
+** =pkg-install= extension (symbol path)
+
+#+begin_src elisp
+(pkg-install "ripgrep")     ; existing — nixpkgs#ripgrep
+(pkg-install 'my-ripgrep)   ; new — registry lookup → flake.nix → install
+#+end_src
+
+Dispatch on the argument type at the top of =pkg-install=:
+
+- =stringp=: existing nixpkgs path (unchanged).
+- =symbolp=: lookup in =anvil-pkg--registry=, regenerate
+  =flake.nix= under =anvil-pkg-state-dir=, then call
+  =nix profile install path:STATE_DIR#NAME=.
+
+A symbol that is not in the registry signals
+=anvil-pkg-undefined-package=.
+
+* Test plan (ERT 6, mocked)
+
+| #  | Test                                          | What it covers                                  |
+|----+-----------------------------------------------+-------------------------------------------------|
+| 1  | =pkg-define-registers-package=                | Macro stores IR under correct key               |
+| 2  | =pkg-define-rejects-unknown-keyword=          | Unknown sub-form raises at expansion            |
+| 3  | =render-nix-stdenv-url-fetch-golden=          | IR → Nix string equals expected (golden)        |
+| 4  | =render-nix-rejects-non-stdenv-build-system=  | =rust-build-system= signals not-yet-supported   |
+| 5  | =pkg-install-symbol-dispatches-to-flake=      | Symbol arg triggers flake.nix write + install   |
+| 6  | =pkg-install-undefined-symbol-errors=         | Symbol not in registry signals                  |
+
+Tests stay independent of the nix binary by mocking
+=anvil-pkg--call-nix-fn= and =anvil-pkg--write-flake-fn=.
+
+* Open questions
+
+** Q1. Re-definition policy
+
+Should =pkg-define= silently overwrite an existing entry, or signal a
+warning?
+
+Tentative: silent overwrite at runtime (interactive iteration); show
+=lwarn= on byte-compile-time re-definition of the same name within
+one batch run (catches duplicate entries in a config file).
+
+** Q2. flake.nix regeneration trigger
+
+Eager (every =pkg-define= writes the file) vs lazy (write only on
+first =pkg-install 'sym=)?
+
+Tentative: lazy.  Avoids touching disk during config evaluation;
+keeps =M-x ielm= experiments cheap.
+
+** Q3. License symbol coverage
+
+Phase 2: handle the common 6 (=mit=, =gpl2=, =gpl3=, =bsd2=, =bsd3=,
+=apache2=).  Unknown licenses fall back to a string-literal
+=meta.license= entry rather than =lib.licenses.<unknown>=.
+
+* References
+
+- Guix package record reference (=guix/packages.scm= =define-record-type=
+  for `package').
+- Nix flakes manual: https://nixos.org/manual/nix/stable/command-ref/new-cli/nix3-flake.html
+- nixpkgs =stdenv.mkDerivation= reference: https://nixos.org/manual/nixpkgs/stable/#part-stdenv
+- Phase 1 doc: =docs/design/01-overview.org= (locked decisions A1-A5).

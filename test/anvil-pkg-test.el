@@ -42,7 +42,7 @@ when the call-nix fn is not the default)."
         (lambda (args)
           (setq captured-args args)
           (list :exit 0 :stdout "" :stderr ""))
-      (should (eq t (anvil-pkg-install "ripgrep"))))
+      (should (eq t (pkg-install "ripgrep"))))
     (should (member "profile" captured-args))
     (should (member "install" captured-args))
     (should (member "nixpkgs#ripgrep" captured-args))
@@ -55,7 +55,7 @@ when the call-nix fn is not the default)."
         (list :exit 1
               :stdout ""
               :stderr "error: cannot resolve flake reference 'nixpkgs#nope'\n"))
-    (let ((err (should-error (anvil-pkg-install "nope")
+    (let ((err (should-error (pkg-install "nope")
                              :type 'anvil-pkg-nix-failed)))
       (should (string-match-p "cannot resolve" (cadr err))))))
 
@@ -77,7 +77,7 @@ when the call-nix fn is not the default)."
                        "\"description\":\"A line-oriented search tool\"}"
                        "}")
               :stderr ""))
-    (let* ((res (anvil-pkg-search "ripgrep"))
+    (let* ((res (pkg-search "ripgrep"))
            (row (car res)))
       (should (= 1 (length res)))
       (should (equal "ripgrep" (plist-get row :name)))
@@ -90,7 +90,7 @@ when the call-nix fn is not the default)."
   "anvil-pkg-search returns nil when nix returns an empty object."
   (anvil-pkg-test--with-mock
       (lambda (_args) (list :exit 0 :stdout "{}" :stderr ""))
-    (should (null (anvil-pkg-search "no-such-pkg-xyzzy")))))
+    (should (null (pkg-search "no-such-pkg-xyzzy")))))
 
 ;;;; --- list ------------------------------------------------------------------
 
@@ -114,7 +114,7 @@ when the call-nix fn is not the default)."
                        "}"
                        "}}")
               :stderr ""))
-    (let* ((res (anvil-pkg-list))
+    (let* ((res (pkg-list))
            (row (car res)))
       (should (= 1 (length res)))
       (should (equal "ripgrep" (plist-get row :name)))
@@ -130,7 +130,7 @@ when the call-nix fn is not the default)."
         (list :exit 0
               :stdout "{\"version\":3,\"elements\":{}}"
               :stderr ""))
-    (should (null (anvil-pkg-list)))))
+    (should (null (pkg-list)))))
 
 (provide 'anvil-pkg-test)
 ;;; anvil-pkg-test.el ends here

@@ -38,10 +38,15 @@
 ;; macro (`anvil-pkg-define'); Phase 3 a Git-host fallback; Phase 4
 ;; profile / generation management.
 ;;
-;; Public Elisp API:
-;;   (anvil-pkg-install NAME)
-;;   (anvil-pkg-search QUERY)
-;;   (anvil-pkg-list)
+;; Public Elisp API (pkg- short prefix; anvil-pkg owns the `pkg-'
+;; namespace by deliberate ecosystem choice — see CLAUDE.md):
+;;   (pkg-install NAME)
+;;   (pkg-search QUERY)
+;;   (pkg-list)
+;;   (pkg-define NAME &rest BODY)   ; Phase 2
+;;
+;; Backwards-compatible long-form aliases (`anvil-pkg-install' etc.) are
+;; provided via `defalias' for callers that prefer Emacs prefix style.
 ;;
 ;; MCP tools (registered by `anvil-pkg-enable'):
 ;;   pkg-install / pkg-search / pkg-list
@@ -217,14 +222,9 @@ keyed by package name."
 
 ;;;; --- public API ------------------------------------------------------------
 
-;;;###autoload
-(defun anvil-pkg-install (name)
-  "Install package NAME via `nix profile install <channel>#<name>'.
-
-NAME is a nixpkgs attribute path (e.g. \"ripgrep\", \"nodejs_20\").
-Returns t on success.  Signals `anvil-pkg-nix-failed' (a child of
-`anvil-pkg-error') with stderr captured if nix exits non-zero, or
-`anvil-pkg-nix-not-found' if the nix binary is missing."
+(defun anvil-pkg--install-nixpkgs (name)
+  "Install nixpkgs#NAME via `nix profile install'.  String path.
+Internal helper called by `pkg-install' when NAME is a string."
   (anvil-pkg--ensure-nix)
   (let* ((flakeref (format "%s#%s" anvil-pkg-nix-channel name))
          (args (append (list "profile" "install")
@@ -240,8 +240,33 @@ Returns t on success.  Signals `anvil-pkg-nix-failed' (a child of
                             (string-trim (or (plist-get res :stderr) "")))
                     :stderr (plist-get res :stderr))))))
 
+(declare-function anvil-pkg--install-symbol "anvil-pkg-dsl")
+
 ;;;###autoload
-(defun anvil-pkg-search (query)
+(defun pkg-install (name)
+  "Install package NAME.
+
+NAME is one of:
+  - a string nixpkgs attribute path (e.g. \"ripgrep\", \"nodejs_20\")
+    → installs nixpkgs#NAME directly;
+  - a symbol previously declared via `pkg-define' (Phase 2)
+    → looks up the local registry, regenerates flake.nix under
+    `anvil-pkg-profile-dir's parent, and installs from that flake.
+
+Returns t on success.  Signals `anvil-pkg-nix-failed' /
+`anvil-pkg-nix-not-found' / `anvil-pkg-undefined-package' as
+appropriate."
+  (cond
+   ((stringp name) (anvil-pkg--install-nixpkgs name))
+   ((symbolp name)
+    (require 'anvil-pkg-dsl)
+    (anvil-pkg--install-symbol name))
+   (t (signal 'anvil-pkg-error
+              (list (format "pkg-install: NAME must be string or symbol, got %S"
+                            name))))))
+
+;;;###autoload
+(defun pkg-search (query)
   "Search nixpkgs for packages matching QUERY.
 
 QUERY is a free-form regex passed to `nix search'.  Returns a list
@@ -260,7 +285,7 @@ when no packages match."
     (anvil-pkg--parse-search (plist-get res :stdout))))
 
 ;;;###autoload
-(defun anvil-pkg-list ()
+(defun pkg-list ()
   "List packages installed in the anvil-pkg Nix profile.
 
 Returns a list of plists carrying :name :attr-path :original-url
@@ -277,33 +302,45 @@ Returns a list of plists carrying :name :attr-path :original-url
                     :stderr (plist-get res :stderr))))
     (anvil-pkg--parse-list (plist-get res :stdout))))
 
+;;;; --- backwards-compatible long-form aliases -------------------------------
+;; anvil-pkg owns the `pkg-' namespace as its public DSL surface; the
+;; long-form `anvil-pkg-' aliases below remain available so callers
+;; using strict Emacs-prefix style still work.
+
+;;;###autoload
+(defalias 'anvil-pkg-install #'pkg-install)
+;;;###autoload
+(defalias 'anvil-pkg-search #'pkg-search)
+;;;###autoload
+(defalias 'anvil-pkg-list #'pkg-list)
+
 ;;;; --- MCP tool surface ------------------------------------------------------
 
 (declare-function anvil-server-register-tool "anvil-server")
 (declare-function anvil-server-unregister-tool "anvil-server")
 
 (defun anvil-pkg--tool-install (name)
-  "MCP wrapper around `anvil-pkg-install'.
+  "MCP wrapper around `pkg-install'.
 
 MCP Parameters:
   name - nixpkgs attribute path to install (e.g. \"ripgrep\")."
-  (anvil-pkg-install name)
+  (pkg-install name)
   (list :status "ok" :name name))
 
 (defun anvil-pkg--tool-search (query)
-  "MCP wrapper around `anvil-pkg-search'.
+  "MCP wrapper around `pkg-search'.
 
 MCP Parameters:
   query - free-form search regex passed to `nix search'."
-  (let ((rows (anvil-pkg-search query)))
+  (let ((rows (pkg-search query)))
     (list :count (length rows)
           :results (or rows []))))
 
 (defun anvil-pkg--tool-list ()
-  "MCP wrapper around `anvil-pkg-list'.
+  "MCP wrapper around `pkg-list'.
 
 MCP Parameters: (none)."
-  (let ((rows (anvil-pkg-list)))
+  (let ((rows (pkg-list)))
     (list :count (length rows)
           :installed (or rows []))))
 

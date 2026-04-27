@@ -9,8 +9,14 @@
 ## 設計 invariant
 
 1. **DSL は Elisp、構文の説明は "Emacs Lisp" を使う** — NeLisp は runtime 詳細であり、ユーザーが書くのは Elisp。
-2. **backend 抽象化を保つ** — Phase 4+ で独自 package server に移行する可能性があるため、`nix-` 直接呼び出しは `anvil-pkg-nix-*` に閉じ込め、コア API には漏らさない。
-3. **anvil 命名規約準拠** — 関数 prefix `anvil-pkg-`, MCP tool prefix `anvil_pkg_`, defcustom group `anvil-pkg`。
+2. **backend 抽象化を保つ** — Phase 4+ で独自 package server に移行する可能性があるため、`nix-` 直接呼び出しは `anvil-pkg--nix-*` (private) に閉じ込め、コア API には漏らさない。
+3. **3-layer 命名規約**:
+   - **project / brand**: `anvil-pkg` (repo / docs / commit message)
+   - **公開 Elisp API + DSL macro**: `pkg-` 短形 (`pkg-install` / `pkg-search` / `pkg-list` / `pkg-define`) — anvil-pkg が `pkg-` namespace を deliberate に claim、`package.el` (built-in) は `package-` で衝突なし
+   - **Elisp 内部実装**: `anvil-pkg--` (private double-dash)
+   - **MCP tool id**: `pkg-install` 等 (Elisp 公開 API と一致)
+   - **DSL sub-form** (macro 内部): unprefixed Guix 風 — `(version "1.0") (source (url-fetch ...))`、macro consume のため global namespace 不汚染
+   - **互換 alias**: `anvil-pkg-install` 等は `defalias` で残す (prefix 派対応)
 4. **CLI は `anvil pkg ...` サブコマンド形** — `bin/anvil-pkg` 別 binary は作らない。bin/anvil dispatch は anvil.el 側 PR で実装。
 
 ## コーディング規約

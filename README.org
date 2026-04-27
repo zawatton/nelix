@@ -17,14 +17,22 @@ agents can install anything by writing one Lisp form.
 
 * Status
 
-*Phase 1 SHIPPED* (2026-04-27) — PoC =nix profile= shell-out wrapper +
-3 MCP tools + ERT 6 (6/6 PASS, mocked, no nix binary needed to run
-the suite).  Public API: =anvil-pkg-install= / =anvil-pkg-search= /
-=anvil-pkg-list=.  MCP tools: =pkg-install= / =pkg-search= / =pkg-list=
-(registered by =anvil-pkg-enable=).
+*Phase 1+2 SHIPPED* (2026-04-27) — Full DSL stack on top of the Nix
+store: =pkg-define= macro + Guix-style declarative records, pure-Elisp
+=anvil-pkg-render-nix= renderer, registry + flake.nix generator,
+=pkg-install= dispatching nixpkgs strings *and* declared symbols
+through the same entry point.  ERT 12/12 PASS (mocked, no nix
+binary needed to run the suite).
 
-Phase 2 (Elisp DSL macro =anvil-pkg-define=) is the next milestone;
-see =docs/design/01-overview.org=.
+Public Elisp API uses the short =pkg-= prefix:
+- =pkg-install= / =pkg-search= / =pkg-list= — Phase 1
+- =pkg-define= macro — Phase 2
+
+Long-form aliases (=anvil-pkg-install= etc.) are provided via
+=defalias= for Emacs-prefix purists.
+
+Phase 3 (Git-host fallback + additional source/build-system types)
+is the next milestone; see =docs/design/02-dsl.org=.
 
 * Why?
 
@@ -85,10 +93,10 @@ your config should not require learning a new macro language.
 | Phase | Scope                                                                | Status         |
 |-------+----------------------------------------------------------------------+----------------|
 | 1     | =nix profile= shell-out wrapper. 3 MCP tools. =install/search/list= | *SHIPPED*      |
-| 2     | Elisp DSL → Nix expr generation. =anvil-pkg-define= macro            | next           |
-| 3     | Git-host fallback (async-installer derived) + manifest               | planned        |
-| 4     | Profile / generation management (Nix profile rollback wrap or own)   | TBD            |
-| 5+    | Optional: independent package server, distro angle                   | not promised   |
+| 2     | =pkg-define= DSL macro + flake.nix generation + symbol install     | *SHIPPED*      |
+| 3     | Git-host fallback + more source / build-system types                 | next           |
+| 4     | Profile / generation management (rollback wrap)                      | planned        |
+| 5+    | Optional: independent package server, OS angle                       | research       |
 
 See =docs/design/01-overview.org= for the full Phase 1 contract.
 
@@ -103,8 +111,29 @@ In your Emacs init:
 #+begin_src elisp
 (add-to-list 'load-path "~/anvil-pkg")
 (require 'anvil-pkg)
+(require 'anvil-pkg-dsl)        ; Phase 2 — pkg-define macro
 ;; To register pkg-* MCP tools (requires anvil.el loaded):
 (anvil-pkg-enable)
+#+end_src
+
+** Examples
+
+#+begin_src elisp
+;; Phase 1 — install a package straight from nixpkgs
+(pkg-install "ripgrep")
+(pkg-search "rust")
+(pkg-list)
+
+;; Phase 2 — declare a custom package and install by symbol
+(pkg-define my-rg
+  (version "13.0.0")
+  (source (url-fetch "https://github.com/BurntSushi/ripgrep/archive/13.0.0.tar.gz"
+                     :sha256 "sha256-..."))
+  (build-system stdenv)
+  (inputs (list pkg-config openssl))
+  (install-phase "make install PREFIX=$out"))
+
+(pkg-install 'my-rg)            ; goes through generated flake.nix
 #+end_src
 
 CLI sub-command (=anvil pkg install ...=) lands in =anvil.el= via a
