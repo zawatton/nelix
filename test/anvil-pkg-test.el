@@ -192,5 +192,127 @@ when the call-nix fn is not the default)."
       (when (file-exists-p "/tmp/anvil-pkg-test")
         (delete-directory "/tmp/anvil-pkg-test" t)))))
 
+(ert-deftest anvil-pkg-test-install-emacs-package-flat-layout ()
+  "pkg-install adds the flat site-lisp dir for the trivialBuild flat layout.
+Regression for the gcmh real-Nix install where
+$out/share/emacs/site-lisp/<pname>.el sits directly in the flat
+dir with no per-package subdir (commit 7c466b6 follow-up)."
+  (require 'anvil-pkg-dsl)
+  (let* ((store-root "/tmp/anvil-pkg-test/fakestore-flat/bar-store")
+         (flat-dir (expand-file-name "share/emacs/site-lisp" store-root))
+         (flat-el  (expand-file-name "bar.el" flat-dir))
+         (flake-path "/tmp/anvil-pkg-test/flake.nix")
+         (load-path (copy-sequence load-path)))
+    (unwind-protect
+        (progn
+          (anvil-pkg--registry-clear)
+          (anvil-pkg--register
+           'bar
+           '(:name bar
+             :version "1.0.0"
+             :source (:type url-fetch
+                      :url "https://example.invalid/bar.tar.gz"
+                      :sha256 "sha256-bar")
+             :build-system (:type emacs-package)
+             :inputs nil
+             :native-inputs nil))
+          (anvil-pkg-compat-make-directory flat-dir t)
+          (with-temp-file flat-el (insert ";; bar.el placeholder\n"))
+          (let ((anvil-pkg--write-flake-fn (lambda () flake-path)))
+            (anvil-pkg-test--with-mock
+                (lambda (args)
+                  (cond
+                   ((and (member "profile" args)
+                         (member "install" args))
+                    (list :exit 0 :stdout "" :stderr ""))
+                   ((and (member "profile" args)
+                         (member "list" args)
+                         (member "--json" args))
+                    (list :exit 0
+                          :stdout (concat
+                                   "{\"version\":3,"
+                                   "\"elements\":{"
+                                   "\"bar\":{"
+                                   "\"active\":true,"
+                                   "\"attrPath\":\"bar\","
+                                   "\"originalUrl\":\"path:/tmp/anvil-pkg-test#bar\","
+                                   "\"storePaths\":[\""
+                                   store-root
+                                   "\"]"
+                                   "}"
+                                   "}}")
+                          :stderr ""))
+                   (t (ert-fail (format "unexpected nix args: %S" args)))))
+              (should (eq t (pkg-install 'bar)))
+              (should (member flat-dir load-path))
+              ;; Per-package dir was never created; ensure the hook did
+              ;; not fall back to it.
+              (should-not (member (expand-file-name "bar" flat-dir)
+                                  load-path)))))
+      (anvil-pkg--registry-clear)
+      (when (file-exists-p "/tmp/anvil-pkg-test")
+        (delete-directory "/tmp/anvil-pkg-test" t)))))
+
+(ert-deftest anvil-pkg-test-install-emacs-package-elpa-style-layout ()
+  "pkg-install adds the elpa subdir for the melpaBuild elpa-style layout.
+Mocks $out/share/emacs/site-lisp/elpa/<pname>-<ver>/ and verifies
+the version-suffixed directory itself is what lands on
+`load-path' (commit 7c466b6 follow-up)."
+  (require 'anvil-pkg-dsl)
+  (let* ((store-root "/tmp/anvil-pkg-test/fakestore-elpa/baz-store")
+         (flat-dir (expand-file-name "share/emacs/site-lisp" store-root))
+         (elpa-subdir (expand-file-name "elpa/baz-1.2.3" flat-dir))
+         (flake-path "/tmp/anvil-pkg-test/flake.nix")
+         (load-path (copy-sequence load-path)))
+    (unwind-protect
+        (progn
+          (anvil-pkg--registry-clear)
+          (anvil-pkg--register
+           'baz
+           '(:name baz
+             :version "1.2.3"
+             :source (:type url-fetch
+                      :url "https://example.invalid/baz.tar.gz"
+                      :sha256 "sha256-baz")
+             :build-system (:type emacs-package)
+             :inputs nil
+             :native-inputs nil))
+          (anvil-pkg-compat-make-directory elpa-subdir t)
+          (let ((anvil-pkg--write-flake-fn (lambda () flake-path)))
+            (anvil-pkg-test--with-mock
+                (lambda (args)
+                  (cond
+                   ((and (member "profile" args)
+                         (member "install" args))
+                    (list :exit 0 :stdout "" :stderr ""))
+                   ((and (member "profile" args)
+                         (member "list" args)
+                         (member "--json" args))
+                    (list :exit 0
+                          :stdout (concat
+                                   "{\"version\":3,"
+                                   "\"elements\":{"
+                                   "\"baz\":{"
+                                   "\"active\":true,"
+                                   "\"attrPath\":\"baz\","
+                                   "\"originalUrl\":\"path:/tmp/anvil-pkg-test#baz\","
+                                   "\"storePaths\":[\""
+                                   store-root
+                                   "\"]"
+                                   "}"
+                                   "}}")
+                          :stderr ""))
+                   (t (ert-fail (format "unexpected nix args: %S" args)))))
+              (should (eq t (pkg-install 'baz)))
+              (should (member elpa-subdir load-path))
+              ;; Neither the per-package nor the bare flat dir should win
+              ;; when only the elpa subdir exists.
+              (should-not (member (expand-file-name "baz" flat-dir)
+                                  load-path))
+              (should-not (member flat-dir load-path)))))
+      (anvil-pkg--registry-clear)
+      (when (file-exists-p "/tmp/anvil-pkg-test")
+        (delete-directory "/tmp/anvil-pkg-test" t)))))
+
 (provide 'anvil-pkg-test)
 ;;; anvil-pkg-test.el ends here
