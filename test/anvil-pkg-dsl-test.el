@@ -369,5 +369,122 @@
                    "}")))
     (should (equal expected (anvil-pkg-render-nix ir)))))
 
+;;;; --- Phase 4-B sub-task A: emacs-package :format / :native-comp ----------
+
+(ert-deftest anvil-pkg-dsl-test-define-build-system-emacs-package-format-trivial ()
+  "Explicit :format \"trivial\" parses to (:type emacs-package :format \"trivial\")."
+  (anvil-pkg-dsl-test--with-clean-registry
+    (eval '(pkg-define my-elisp
+             (version "1.0.0")
+             (source (url-fetch "https://example.com/my-elisp.tar.gz"
+                                :sha256 "sha256-elisp"))
+             (build-system (emacs-package :format "trivial")))
+          t)
+    (let ((bs (plist-get (gethash 'my-elisp anvil-pkg--registry) :build-system)))
+      (should (eq 'emacs-package (plist-get bs :type)))
+      (should (equal "trivial" (plist-get bs :format))))))
+
+(ert-deftest anvil-pkg-dsl-test-define-build-system-emacs-package-format-melpa ()
+  ":format \"melpa\" round-trips into the IR build-system plist."
+  (anvil-pkg-dsl-test--with-clean-registry
+    (eval '(pkg-define my-elisp
+             (version "1.0.0")
+             (source (url-fetch "https://example.com/my-elisp.tar.gz"
+                                :sha256 "sha256-elisp"))
+             (build-system (emacs-package :format "melpa")))
+          t)
+    (let ((bs (plist-get (gethash 'my-elisp anvil-pkg--registry) :build-system)))
+      (should (eq 'emacs-package (plist-get bs :type)))
+      (should (equal "melpa" (plist-get bs :format))))))
+
+(ert-deftest anvil-pkg-dsl-test-define-rejects-unknown-format ()
+  "Unknown :format value raises anvil-pkg-dsl-error at parse time."
+  (should-error
+   (macroexpand-1
+    '(pkg-define my-elisp
+       (version "1.0")
+       (source (url-fetch "https://x" :sha256 "y"))
+       (build-system (emacs-package :format "garbage"))))
+   :type 'anvil-pkg-dsl-error))
+
+(ert-deftest anvil-pkg-dsl-test-define-build-system-emacs-package-native-comp ()
+  ":native-comp t round-trips into the IR build-system plist."
+  (anvil-pkg-dsl-test--with-clean-registry
+    (eval '(pkg-define my-elisp
+             (version "1.0.0")
+             (source (url-fetch "https://example.com/my-elisp.tar.gz"
+                                :sha256 "sha256-elisp"))
+             (build-system (emacs-package :format "melpa" :native-comp t)))
+          t)
+    (let ((bs (plist-get (gethash 'my-elisp anvil-pkg--registry) :build-system)))
+      (should (eq 'emacs-package (plist-get bs :type)))
+      (should (equal "melpa" (plist-get bs :format)))
+      (should (eq t (plist-get bs :native-comp))))))
+
+(ert-deftest anvil-pkg-dsl-test-define-rejects-native-comp-on-non-emacs-package ()
+  ":native-comp on stdenv / rust / python / go raises at parse time (L13)."
+  (should-error
+   (macroexpand-1
+    '(pkg-define my-rust-tool
+       (version "1.0")
+       (source (url-fetch "https://x" :sha256 "y"))
+       (build-system (rust :cargo-sha256 "sha256-cargo" :native-comp t))))
+   :type 'anvil-pkg-dsl-error)
+  (should-error
+   (macroexpand-1
+    '(pkg-define my-py-tool
+       (version "1.0")
+       (source (url-fetch "https://x" :sha256 "y"))
+       (build-system (python :native-comp t))))
+   :type 'anvil-pkg-dsl-error))
+
+(ert-deftest anvil-pkg-dsl-test-render-emacs-package-melpa-golden ()
+  "Renderer emits melpaBuild when :format is \"melpa\"."
+  (let ((ir '(:name magit
+              :version "3.3.0"
+              :source (:type github-fetch
+                       :owner "magit"
+                       :repo "magit"
+                       :rev "v3.3.0"
+                       :sha256 "sha256-magit")
+              :build-system (:type emacs-package :format "melpa")
+              :depends-on (dash transient)))
+        (expected (concat
+                   "pkgs.emacsPackages.melpaBuild {\n"
+                   "  pname = \"magit\";\n"
+                   "  version = \"3.3.0\";\n"
+                   "  src = pkgs.fetchFromGitHub {\n"
+                   "    owner = \"magit\";\n"
+                   "    repo = \"magit\";\n"
+                   "    rev = \"v3.3.0\";\n"
+                   "    sha256 = \"sha256-magit\";\n"
+                   "  };\n"
+                   "  packageRequires = with pkgs.emacsPackages; [ dash transient ];\n"
+                   "}")))
+    (should (equal expected (anvil-pkg-render-nix ir)))))
+
+(ert-deftest anvil-pkg-dsl-test-render-emacs-package-native-comp-golden ()
+  "Renderer wraps with (emacsPackagesFor pkgs.emacs) when :native-comp t."
+  (let ((ir '(:name dash
+              :version "2.20.0"
+              :source (:type github-fetch
+                       :owner "magnars"
+                       :repo "dash.el"
+                       :rev "2.20.0"
+                       :sha256 "sha256-dash")
+              :build-system (:type emacs-package :format "trivial" :native-comp t)))
+        (expected (concat
+                   "(pkgs.emacsPackagesFor pkgs.emacs).trivialBuild {\n"
+                   "  pname = \"dash\";\n"
+                   "  version = \"2.20.0\";\n"
+                   "  src = pkgs.fetchFromGitHub {\n"
+                   "    owner = \"magnars\";\n"
+                   "    repo = \"dash.el\";\n"
+                   "    rev = \"2.20.0\";\n"
+                   "    sha256 = \"sha256-dash\";\n"
+                   "  };\n"
+                   "}")))
+    (should (equal expected (anvil-pkg-render-nix ir)))))
+
 (provide 'anvil-pkg-dsl-test)
 ;;; anvil-pkg-dsl-test.el ends here

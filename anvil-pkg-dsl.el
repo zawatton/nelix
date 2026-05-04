@@ -171,11 +171,41 @@ Accepts:
      (unless (plist-get args :cargo-sha256)
        (signal 'anvil-pkg-dsl-error
                (list (format "pkg-define %s: rust build-system requires :cargo-sha256"
-                             name)))))
+                             name))))
+     (anvil-pkg--reject-non-emacs-package-args name type args))
+    ('emacs-package
+     (anvil-pkg--validate-emacs-package-args name args))
     ;; python: :format optional (defaults to setuptools)
     ;; go: :vendor-sha256 optional (defaults to vendorHash = null)
-    ;; stdenv/emacs-package: no required args
-    (_ nil)))
+    ;; stdenv: no required args
+    ;; All non-emacs-package types reject :native-comp (L13).
+    (_
+     (anvil-pkg--reject-non-emacs-package-args name type args))))
+
+(defun anvil-pkg--reject-non-emacs-package-args (name type args)
+  "Signal when ARGS carry emacs-package-only keys on non-emacs TYPE.
+Currently catches :native-comp (Phase 4-B L13 reject)."
+  (when (anvil-pkg--plist-has-key-p args :native-comp)
+    (signal 'anvil-pkg-dsl-error
+            (list (format "pkg-define %s: :native-comp is only valid on emacs-package build-system, not %S"
+                          name type)))))
+
+(defun anvil-pkg--validate-emacs-package-args (name args)
+  "Validate :format and :native-comp for the emacs-package build-system.
+Phase 4-B L13/L14: :format must be \"trivial\" or \"melpa\";
+:native-comp must be t or nil when supplied."
+  (let ((fmt (plist-get args :format)))
+    (when fmt
+      (unless (member fmt '("trivial" "melpa"))
+        (signal 'anvil-pkg-dsl-error
+                (list (format "pkg-define %s: emacs-package :format must be \"trivial\" or \"melpa\", got %S"
+                              name fmt))))))
+  (when (anvil-pkg--plist-has-key-p args :native-comp)
+    (let ((nc (plist-get args :native-comp)))
+      (unless (booleanp nc)
+        (signal 'anvil-pkg-dsl-error
+                (list (format "pkg-define %s: emacs-package :native-comp must be t or nil, got %S"
+                              name nc)))))))
 
 (defun anvil-pkg--validate-ir (name ir)
   "Validate cross-field constraints for package NAME and parsed IR."
@@ -404,13 +434,31 @@ Optional :vendor-sha256 (defaults to `vendorHash = null')."
              (anvil-pkg--render-post-bs-fields ir)))))
 
 (defun anvil-pkg--render-emacs-package (ir)
-  "Render IR using `pkgs.emacsPackages.trivialBuild'."
-  (let ((depends-on (plist-get ir :depends-on)))
+  "Render IR using `pkgs.emacsPackages.trivialBuild' or `.melpaBuild'.
+Phase 4-B: :format selects the builder (default \"trivial\");
+:native-comp t wraps via `pkgs.emacsPackagesFor pkgs.emacs' so
+native compilation flows through both the build call and the
+propagated inputs."
+  (let* ((bs (plist-get ir :build-system))
+         (format-str (or (plist-get bs :format) "trivial"))
+         (native-comp (plist-get bs :native-comp))
+         (builder-suffix (pcase format-str
+                           ("trivial" "trivialBuild")
+                           ("melpa"   "melpaBuild")
+                           (_ (signal 'anvil-pkg-dsl-error
+                                      (list (format "render: unsupported emacs-package :format %S"
+                                                    format-str))))))
+         (epkgs-set (if native-comp
+                        "(pkgs.emacsPackagesFor pkgs.emacs)"
+                      "pkgs.emacsPackages"))
+         (builder (format "%s.%s" epkgs-set builder-suffix))
+         (depends-on (plist-get ir :depends-on)))
     (anvil-pkg--render-derivation
-     "pkgs.emacsPackages.trivialBuild"
+     builder
      (append (anvil-pkg--render-pre-bs-fields ir)
              (when depends-on
-               (list (format "  packageRequires = with pkgs.emacsPackages; [ %s ];"
+               (list (format "  packageRequires = with %s; [ %s ];"
+                             epkgs-set
                              (mapconcat #'symbol-name depends-on " "))))
              (anvil-pkg--render-post-bs-fields ir)))))
 
