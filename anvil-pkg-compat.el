@@ -60,9 +60,22 @@
 (declare-function nelisp-ec-buffer-string       "ext:nelisp-emacs-compat" t t)
 (declare-function nelisp-ec-with-current-buffer "ext:nelisp-emacs-compat" t t)
 
-(defconst anvil-pkg-compat--nelisp-runtime-p
+(defvar anvil-pkg-compat--nelisp-runtime-p
   (fboundp 'nelisp-call-process)
-  "Non-nil when nelisp-process is loaded — choose Layer 2 backends.")
+  "Non-nil when nelisp-process is loaded — choose Layer 2 backends.
+
+Defined as a defvar (not defconst) so tests can override the value
+via `cl-letf' / `let'.  Production code should consult
+`anvil-pkg-compat-runtime' rather than reading this variable
+directly so callers (e.g. anvil-pkg.el's :async branch) get a
+single, mockable runtime decision point.")
+
+(defun anvil-pkg-compat-runtime ()
+  "Return the active runtime symbol: `nelisp' or `emacs'.
+Sole authority for runtime branching outside this file.  Tests
+can override via `cl-letf' on this function (preferred) or by
+let-binding `anvil-pkg-compat--nelisp-runtime-p'."
+  (if anvil-pkg-compat--nelisp-runtime-p 'nelisp 'emacs))
 
 ;;;; --- environment / path helpers -------------------------------------------
 
