@@ -119,5 +119,50 @@ must match between the two runs to make the comparison meaningful."
       (when (file-directory-p tmpdir)
         (delete-directory tmpdir t)))))
 
+;;;; --- Phase 4-C L21: :scrape-deps from local clone ------------------------
+
+(ert-deftest anvil-pkg-import-test-scrape-deps-from-local-clone ()
+  "L21: when a local clone has <pname>-pkg.el, deps are emitted.
+
+Fixture: writes /tmp/.../foo/foo-pkg.el carrying a `define-package'
+sexp with deps `(dash s)'.  The importer is called with
+`:scrape-deps t' and a `:clone-dir-fn' pointing at the fixture
+directory.  HTTP mock raises if invoked — we expect the local
+clone to win."
+  (let* ((tmpdir (make-temp-file "anvil-pkg-import-clone-test-" t))
+         (foo-dir (expand-file-name "foo" tmpdir))
+         (foo-pkg-el (expand-file-name "foo-pkg.el" foo-dir))
+         (tmpfile (expand-file-name "out.el" tmpdir))
+         (async-installer-test-list
+          '(("owner/foo" :tag "1.0.0"))))
+    (unwind-protect
+        (progn
+          (make-directory foo-dir t)
+          (with-temp-file foo-pkg-el
+            (insert
+             "(define-package \"foo\" \"1.0\" \"d\" "
+             "'((dash \"2.0\") (s \"1.0\")))\n"))
+          ;; HTTP mock that raises if called — proves local clone won.
+          (cl-letf (((symbol-function 'anvil-pkg-compat-http-get)
+                     (lambda (&rest _)
+                       (ert-fail "HTTP fetch must NOT happen — local clone exists")
+                       (list :status 0 :body ""))))
+            (anvil-pkg-import-async-installer
+             :var 'async-installer-test-list
+             :emit tmpfile
+             :scrape-deps t
+             :clone-dir-fn
+             (lambda (entry-info)
+               (when (equal (plist-get entry-info :name) "foo")
+                 foo-dir))))
+          (let ((content (with-temp-buffer
+                           (insert-file-contents tmpfile)
+                           (buffer-string))))
+            (should (string-match-p
+                     "(depends-on (list dash s))"
+                     content))))
+      (when (file-directory-p tmpdir)
+        (delete-directory tmpdir t)))))
+
 (provide 'anvil-pkg-import-test)
 ;;; anvil-pkg-import-test.el ends here
