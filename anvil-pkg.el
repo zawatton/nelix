@@ -284,15 +284,73 @@ exists."
               (setq match-dir chosen))))))
     match-dir))
 
+;;;; --- Nix version detection (L20) ------------------------------------------
+;; Nix 2.34 deprecated `nix profile install' in favour of `nix profile add'.
+;; Both subcommands take identical arguments and exit semantics.  Detect the
+;; runtime version once per Emacs session and dispatch the right subcommand
+;; so >= 2.34 stops emitting the deprecation warning.
+
+(defvar anvil-pkg--nix-version-cache nil
+  "Cached `nix --version' output as a version string (e.g. \"2.34.6\").
+Per-Emacs-session cache; nil triggers re-detection on next call.
+Phase 4-C defers persistent caching to Phase 4-D when anvil-state
+integration lands; until then this resets on every Emacs restart.")
+
+(defun anvil-pkg--detect-nix-version ()
+  "Return the Nix version string by calling `nix --version'.
+
+Caches the result in `anvil-pkg--nix-version-cache' so subsequent
+calls are free.  When the executable is missing or the call fails
+this returns nil and the caller MUST treat that as `< 2.34' for
+safety (= keep using the older `install' subcommand)."
+  (or anvil-pkg--nix-version-cache
+      (let ((res (condition-case _
+                     (anvil-pkg--call-nix (list "--version"))
+                   (error nil))))
+        (when (and res (eq 0 (plist-get res :exit)))
+          (let ((stdout (or (plist-get res :stdout) "")))
+            (when (string-match "\\([0-9]+\\.[0-9]+\\(?:\\.[0-9]+\\)?\\)"
+                                stdout)
+              (setq anvil-pkg--nix-version-cache
+                    (match-string 1 stdout))))))))
+
+(defun anvil-pkg--nix-version-at-least-p (major minor)
+  "Return non-nil when the cached Nix version is >= MAJOR.MINOR.
+
+Operates on `anvil-pkg--detect-nix-version's cached value.  Only
+the major and minor components are compared — patch-level
+differences are irrelevant for the 2.34 install→add rename."
+  (let ((ver (anvil-pkg--detect-nix-version)))
+    (when (and ver (string-match "\\`\\([0-9]+\\)\\.\\([0-9]+\\)" ver))
+      (let ((maj (string-to-number (match-string 1 ver)))
+            (min (string-to-number (match-string 2 ver))))
+        (or (> maj major)
+            (and (= maj major) (>= min minor)))))))
+
+(defun anvil-pkg--nix-install-subcommand ()
+  "Return the right `nix profile' install subcommand for this Nix.
+
+Emits \"add\" on Nix >= 2.34 (= the new spelling, no deprecation
+warning) and \"install\" otherwise.  Detection failure falls back
+to \"install\" — older Nix accepts the legacy spelling and 2.34+
+still understands it (with a warning) so degrading to the safer
+default never breaks the install."
+  (if (anvil-pkg--nix-version-at-least-p 2 34)
+      "add"
+    "install"))
+
 ;;;; --- public API ------------------------------------------------------------
 
 (defun anvil-pkg--install-nixpkgs-args (name)
   "Return the `nix' argv list to install nixpkgs#NAME.
 Shared between the synchronous path (`anvil-pkg--install-nixpkgs')
 and the asynchronous `:async t' path so the two routes never
-diverge on flag composition."
-  (let ((flakeref (format "%s#%s" anvil-pkg-nix-channel name)))
-    (append (list "profile" "install")
+diverge on flag composition.  The install subcommand
+(`install' vs `add') is resolved via
+`anvil-pkg--nix-install-subcommand' for Nix 2.34 compatibility."
+  (let ((flakeref (format "%s#%s" anvil-pkg-nix-channel name))
+        (subcmd (anvil-pkg--nix-install-subcommand)))
+    (append (list "profile" subcmd)
             (anvil-pkg--profile-args)
             (list flakeref))))
 
@@ -494,7 +552,8 @@ process object.  Signals `anvil-pkg-nix-failed' /
         (let* ((flake-path (funcall anvil-pkg--write-flake-fn))
                (flake-dir  (directory-file-name (file-name-directory flake-path)))
                (flakeref   (format "path:%s#%s" flake-dir name))
-               (args       (append (list "profile" "install")
+               (subcmd     (anvil-pkg--nix-install-subcommand))
+               (args       (append (list "profile" subcmd)
                                    (anvil-pkg--profile-args)
                                    (list flakeref)))
                (build-system-type (anvil-pkg--registry-build-system-type name)))
@@ -561,6 +620,223 @@ Returns a list of plists carrying :name :attr-path :original-url
                     :stderr (plist-get res :stderr))))
     (anvil-pkg--parse-list (plist-get res :stdout))))
 
+;;;; --- profile generation rollback (L19) ------------------------------------
+;; Phase 4-C sub-task B: wrap `nix profile history --json' / `nix profile
+;; rollback' so users can recover from a regressing install.  The local
+;; mirror is a per-Emacs-session defvar; persistent storage is deferred
+;; to Phase 4-D when anvil-state integration lands.
+
+(defvar anvil-pkg--generations-cache nil
+  "In-process mirror of `nix profile history --json' for the anvil-pkg profile.
+
+A list of plists: (:id INT :date STR :packages (SYM ...) :active BOOL).
+Refreshed on every `pkg-list-generations' call and on every
+`pkg-rollback'.  `pkg-history' reads from this cache without
+shelling out so per-package event lookups stay cheap.
+
+Per-Emacs-session only; resets on Emacs restart.  Phase 4-D will
+back this with `anvil-state' so cross-session history survives.")
+
+(defun anvil-pkg--parse-history (json-str)
+  "Parse `nix profile history --json' output JSON-STR into list of plists.
+
+Each plist carries :id (integer), :date (ISO string), :packages
+(list of symbols), :active (boolean).  Sorted by :id ascending so
+the most recent generation lands at the tail.
+
+Targets the Nix 2.18+ schema where the top-level object has a
+`generations' array of objects with `id' / `date' /
+`packages' (or `elements') and an optional `active' flag.  When
+`packages' is absent we fall back to the keys of `elements' (the
+Nix 2.18 `nix profile list --json' shape Nix's history endpoint
+inherits)."
+  (let* ((data (anvil-pkg--json-parse json-str))
+         (generations (alist-get 'generations data)))
+    (when (and generations (listp generations))
+      (let ((parsed
+             (mapcar
+              (lambda (entry)
+                (let* ((id (alist-get 'id entry))
+                       (date (alist-get 'date entry))
+                       (active (alist-get 'active entry))
+                       (pkgs-raw (or (alist-get 'packages entry)
+                                     (let ((els (alist-get 'elements entry)))
+                                       (cond
+                                        ((null els) nil)
+                                        ;; elements as alist (= JSON
+                                        ;; object with name keys): take
+                                        ;; the keys.
+                                        ((and (consp els)
+                                              (consp (car els)))
+                                         (mapcar #'car els))
+                                        ;; elements as plain list of
+                                        ;; names (newer Nix shape).
+                                        (t els)))))
+                       (pkgs (mapcar
+                              (lambda (p)
+                                (cond
+                                 ((symbolp p) p)
+                                 ((stringp p) (intern p))
+                                 (t (intern (format "%s" p)))))
+                              (or pkgs-raw '()))))
+                  (list :id (if (numberp id) id 0)
+                        :date (or date "")
+                        :packages pkgs
+                        :active (and active t))))
+              generations)))
+        (sort parsed (lambda (a b) (< (plist-get a :id)
+                                      (plist-get b :id))))))))
+
+;;;###autoload
+(defun pkg-list-generations ()
+  "List Nix profile generations for the anvil-pkg profile.
+
+Returns a list of plists carrying :id, :date, :packages,
+:active.  Generations are sorted by :id ascending so
+`(car (last (pkg-list-generations)))' is the latest.
+
+Side effects: refreshes `anvil-pkg--generations-cache' so
+`pkg-history' has fresh data without an extra shell-out.
+
+Signals `anvil-pkg-nix-failed' on a non-zero `nix profile history'
+exit (e.g. corrupt profile)."
+  (anvil-pkg--ensure-nix)
+  (let* ((args (append (list "profile" "history" "--json")
+                       (anvil-pkg--profile-args)))
+         (res (anvil-pkg--call-nix args)))
+    (unless (eq 0 (plist-get res :exit))
+      (signal 'anvil-pkg-nix-failed
+              (list (format "nix profile history failed (exit %s): %s"
+                            (plist-get res :exit)
+                            (anvil-pkg-compat-string-trim
+                             (or (plist-get res :stderr) "")))
+                    :stderr (plist-get res :stderr))))
+    (let ((generations (anvil-pkg--parse-history
+                        (or (plist-get res :stdout) ""))))
+      (setq anvil-pkg--generations-cache generations)
+      generations)))
+
+(defun anvil-pkg--rollback-replay-emacs-hooks ()
+  "Re-run `anvil-pkg--emacs-package-after-install' for the active generation.
+
+After `nix profile rollback' switches generations the user's
+`load-path' may be pointing at store paths that no longer match
+the live profile — replay the post-install hook for every emacs
+package in the now-active generation so `load-path' is correct
+again.  The hook is idempotent (`add-to-list')."
+  (let ((entries (condition-case _ (pkg-list) (error nil))))
+    (dolist (entry entries)
+      (let ((name (plist-get entry :name)))
+        (when (stringp name)
+          (condition-case _
+              (anvil-pkg--emacs-package-after-install (intern name))
+            (error nil)))))))
+
+(defun anvil-pkg--generation-id-known-p (id)
+  "Return non-nil when ID matches a generation in the cache."
+  (let (found)
+    (dolist (gen anvil-pkg--generations-cache)
+      (when (and (not found) (eq (plist-get gen :id) id))
+        (setq found t)))
+    found))
+
+;;;###autoload
+(defun pkg-rollback (&optional generation-id)
+  "Roll the anvil-pkg Nix profile back to GENERATION-ID.
+
+When GENERATION-ID is nil rolls back one step (= the previous
+generation).  When supplied as an integer, jumps directly to that
+generation; signals `anvil-pkg-error' if it is not in the local
+generations mirror (after a refresh).
+
+After a successful rollback the in-process generations cache is
+refreshed and the post-install hook is replayed for every
+emacs-package in the now-active generation so `load-path' stays
+in sync.
+
+Returns t on success.  Signals `anvil-pkg-nix-failed' on a
+non-zero `nix profile rollback' exit."
+  (anvil-pkg--ensure-nix)
+  ;; If a specific id was requested, ensure it exists.  Refresh the
+  ;; cache once before signalling so concurrent installs that bumped
+  ;; the generation count don't trigger a false negative.
+  (when generation-id
+    (unless (integerp generation-id)
+      (signal 'anvil-pkg-error
+              (list (format "pkg-rollback: GENERATION-ID must be integer, got %S"
+                            generation-id))))
+    (unless (anvil-pkg--generation-id-known-p generation-id)
+      (pkg-list-generations)
+      (unless (anvil-pkg--generation-id-known-p generation-id)
+        (signal 'anvil-pkg-error
+                (list (format "pkg-rollback: generation %d not found in profile history"
+                              generation-id))))))
+  (let* ((base-args (append (list "profile" "rollback")
+                            (anvil-pkg--profile-args)))
+         (args (if generation-id
+                   (append base-args
+                           (list "--to-generation"
+                                 (number-to-string generation-id)))
+                 base-args))
+         (res (anvil-pkg--call-nix args)))
+    (unless (eq 0 (plist-get res :exit))
+      (signal 'anvil-pkg-nix-failed
+              (list (format "nix profile rollback failed (exit %s): %s"
+                            (plist-get res :exit)
+                            (anvil-pkg-compat-string-trim
+                             (or (plist-get res :stderr) "")))
+                    :stderr (plist-get res :stderr))))
+    ;; Refresh the cache + replay emacs-package hooks.  Both are
+    ;; condition-case-wrapped so a refresh failure doesn't mask a
+    ;; successful rollback.
+    (condition-case _ (pkg-list-generations) (error nil))
+    (anvil-pkg--rollback-replay-emacs-hooks)
+    t))
+
+;;;###autoload
+(defun pkg-history (pkg-name)
+  "Return install / remove events for PKG-NAME (a symbol).
+
+Result is a list of plists carrying :generation, :event, :date.
+Event is one of `:installed' / `:removed' (cross-generation
+diffing detects the upgrade / downgrade case as a paired
+remove + install on adjacent generations; Phase 4-C does not
+attempt to coalesce these into `:upgraded' / `:downgraded' — that
+needs version metadata the history endpoint does not surface).
+
+Reads from `anvil-pkg--generations-cache'; if the cache is empty,
+calls `pkg-list-generations' once to populate it.  Pass a fresh
+generations list by calling `pkg-list-generations' explicitly
+beforehand."
+  (unless (symbolp pkg-name)
+    (signal 'anvil-pkg-error
+            (list (format "pkg-history: PKG-NAME must be symbol, got %S"
+                          pkg-name))))
+  (when (null anvil-pkg--generations-cache)
+    (pkg-list-generations))
+  (let ((events nil)
+        (prev-pkgs nil)
+        (prev-set-initialised nil))
+    (dolist (gen anvil-pkg--generations-cache)
+      (let* ((id (plist-get gen :id))
+             (date (plist-get gen :date))
+             (pkgs (plist-get gen :packages))
+             (in-prev (and prev-set-initialised (memq pkg-name prev-pkgs)))
+             (in-now  (memq pkg-name pkgs)))
+        (cond
+         ;; First generation we look at — anything present counts as
+         ;; an :installed event so the user can see the package's
+         ;; lineage even when we don't have an empty pre-state.
+         ((and (not prev-set-initialised) in-now)
+          (push (list :generation id :event :installed :date date) events))
+         ((and in-now (not in-prev))
+          (push (list :generation id :event :installed :date date) events))
+         ((and (not in-now) in-prev)
+          (push (list :generation id :event :removed :date date) events)))
+        (setq prev-pkgs pkgs
+              prev-set-initialised t)))
+    (nreverse events)))
+
 ;;;; --- backwards-compatible long-form aliases -------------------------------
 ;; anvil-pkg owns the `pkg-' namespace as its public DSL surface; the
 ;; long-form `anvil-pkg-' aliases below remain available so callers
@@ -572,6 +848,12 @@ Returns a list of plists carrying :name :attr-path :original-url
 (defalias 'anvil-pkg-search #'pkg-search)
 ;;;###autoload
 (defalias 'anvil-pkg-list #'pkg-list)
+;;;###autoload
+(defalias 'anvil-pkg-list-generations #'pkg-list-generations)
+;;;###autoload
+(defalias 'anvil-pkg-rollback #'pkg-rollback)
+;;;###autoload
+(defalias 'anvil-pkg-history #'pkg-history)
 
 ;;;; --- MCP tool surface ------------------------------------------------------
 
@@ -602,6 +884,50 @@ MCP Parameters: (none)."
   (let ((rows (pkg-list)))
     (list :count (length rows)
           :installed (or rows []))))
+
+(defun anvil-pkg--tool-list-generations ()
+  "MCP wrapper around `pkg-list-generations'.
+
+MCP Parameters: (none)."
+  (let ((rows (pkg-list-generations)))
+    (list :count (length rows)
+          :generations (or rows []))))
+
+(defun anvil-pkg--tool-rollback (generation-id)
+  "MCP wrapper around `pkg-rollback'.
+
+MCP Parameters:
+  generation-id - integer generation id to roll back to,
+    or nil / 0 to roll back one step (= the previous generation)."
+  (let* ((gid (cond
+               ((null generation-id) nil)
+               ((integerp generation-id)
+                (if (zerop generation-id) nil generation-id))
+               ((stringp generation-id)
+                (let ((trimmed (anvil-pkg-compat-string-trim generation-id)))
+                  (if (zerop (length trimmed))
+                      nil
+                    (string-to-number trimmed))))
+               (t generation-id))))
+    (pkg-rollback gid)
+    (list :status "ok"
+          :generation-id (or gid :previous))))
+
+(defun anvil-pkg--tool-history (pkg-name)
+  "MCP wrapper around `pkg-history'.
+
+MCP Parameters:
+  pkg-name - package name (string or symbol)."
+  (let* ((sym (cond
+               ((symbolp pkg-name) pkg-name)
+               ((stringp pkg-name) (intern pkg-name))
+               (t (signal 'anvil-pkg-error
+                          (list (format "pkg-history: name must be string or symbol, got %S"
+                                        pkg-name))))))
+         (events (pkg-history sym)))
+    (list :name (symbol-name sym)
+          :count (length events)
+          :events (or events []))))
 
 (defun anvil-pkg--register-tools ()
   "Register pkg-* MCP tools under `anvil-pkg--server-id'."
@@ -639,11 +965,50 @@ attrpath).  Read-only — does not modify the profile."
    "List packages currently installed in the anvil-pkg Nix profile.
 Returns :count and :installed (list of plists with name, attr-path,
 original-url, store-paths).  Read-only."
+   :read-only t)
+
+  (anvil-server-register-tool
+   #'anvil-pkg--tool-list-generations
+   :id "pkg-list-generations"
+   :intent '(packages)
+   :layer 'io
+   :server-id anvil-pkg--server-id
+   :description
+   "List Nix profile generations for the anvil-pkg profile.
+Wraps `nix profile history --json' and returns :count and
+:generations (list of plists with id, date, packages, active).
+Refreshes the in-process generations mirror used by pkg-history.
+Read-only."
+   :read-only t)
+
+  (anvil-server-register-tool
+   #'anvil-pkg--tool-rollback
+   :id "pkg-rollback"
+   :intent '(packages)
+   :layer 'io
+   :server-id anvil-pkg--server-id
+   :description
+   "Roll the anvil-pkg Nix profile back to a previous generation.
+generation-id may be an integer generation id, or nil / 0 to roll
+back one step.  Replays the post-install hook for emacs packages
+in the now-active generation so load-path stays in sync.")
+
+  (anvil-server-register-tool
+   #'anvil-pkg--tool-history
+   :id "pkg-history"
+   :intent '(packages)
+   :layer 'io
+   :server-id anvil-pkg--server-id
+   :description
+   "Return install / remove events for a package across the
+anvil-pkg profile generations.  Reads from the in-process mirror;
+call pkg-list-generations first for fresh data.  Read-only."
    :read-only t))
 
 (defun anvil-pkg--unregister-tools ()
   "Remove every pkg-* MCP tool from the shared anvil server."
-  (dolist (id '("pkg-install" "pkg-search" "pkg-list"))
+  (dolist (id '("pkg-install" "pkg-search" "pkg-list"
+                "pkg-list-generations" "pkg-rollback" "pkg-history"))
     (anvil-server-unregister-tool id anvil-pkg--server-id)))
 
 ;;;###autoload
@@ -654,7 +1019,7 @@ repeatedly — re-registers idempotently."
   (interactive)
   (require 'anvil-server)
   (anvil-pkg--register-tools)
-  (message "anvil-pkg: enabled (3 MCP tools, profile = %s)"
+  (message "anvil-pkg: enabled (6 MCP tools, profile = %s)"
            anvil-pkg-profile-dir))
 
 (defun anvil-pkg-disable ()
