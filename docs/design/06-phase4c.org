@@ -1,14 +1,25 @@
 #+title: anvil-pkg — Phase 4-C: pre-fetch, rollback, Nix 2.34, compat async
 #+author: zawatton
 #+date: 2026-05-04
-#+property: status PHASE-4C-DESIGN
+#+property: status PHASE-4C-SHIPPED
 
 * STATUS
 
-Phase 4-C — DESIGN.  Builds on Phase 4-B (commits =40067ff= /
-=239141f= / =91dde54= / integration =ee93113=) which shipped the
-=:format= / =:native-comp= / =:async= keywords plus the
+Phase 4-C — SHIPPED 2026-05-04.  Builds on Phase 4-B (commits
+=40067ff= / =239141f= / =91dde54= / integration =ee93113=) which
+shipped the =:format= / =:native-comp= / =:async= keywords plus the
 =anvil-pkg-import-async-installer= migration utility.
+
+Sub-tasks landed as:
+- D = =36222e8= (compat async primitive, claude direct, +2 ERT)
+- A = =153c065= → merge =8f21b18= (L18 pre-fetch + L21 importer
+  integration, parallel worktree, +8 ERT)
+- B+C = =eafe1ba= → merge =8c62284= (L19 rollback + L20 Nix 2.34,
+  parallel worktree, +5 ERT)
+- This integration commit closes the phase.
+
+ERT 42 → 55 (actual; design target was 54, +1 from sub-task A's
+extra L21 ERT).
 
 Phase 4-C closes Phase 4-B's deferred L15 (=:depends-on=
 auto-derive) with a proper pre-fetch design, ships the Nix 2.34
@@ -406,38 +417,47 @@ Emacs path and a NeLisp stub that signals
 =anvil-pkg-http-not-supported= until Phase 5 grows a NeLisp HTTP
 backend.  Same pattern as =compat-make-process-async=.
 
-* Sub-task decomposition (parallel worktrees, planned)
+* Sub-task decomposition (parallel worktrees, all SHIPPED)
 
 Sub-task A: L18 + L21 (=anvil-pkg-emacs.el= new + importer
-extension + compat HTTP primitive) + ERT 1-7 + 13.
+extension + compat HTTP primitive) + ERT 1-7 + 13.  Commit
+=153c065= via parallel worktree.  Notes: HTTP body extraction
+splits on =\r?\n\r?\n= for portability across Emacs versions;
+=url-show-status= bound nil with =defvar= + =ignore= to silence
+byte-compiler.  IR mutation strategy: =plist-put (copy-sequence
+ir)= then =puthash= back into the registry — keeps the renderer
+pure.
 
-Sub-task B: L19 (rollback API in =anvil-pkg.el= + state
-namespace) + ERT 8-10.  Independent of A.
-
-Sub-task C: L20 (Nix 2.34 dispatch) + ERT 11-12.  Trivial; bundle
-with B at integration.
+Sub-task B+C: L19 (rollback API + state mirror) + L20 (Nix 2.34
+=install=→=add= dispatch) + ERT 8-12.  Commit =eafe1ba= via
+parallel worktree.  Notes: =nix profile history --json= schema
+not verifiable without nix on the host; parser accepts both
+=packages= (list of names) and =elements= (alist) shapes.
+Post-rollback hook re-run iterates =pkg-list= for every entry —
+=anvil-pkg--emacs-package-after-install= is idempotent so
+non-emacs entries see a wasted no-op rather than a wrong
+=load-path= mutation.
 
 Sub-task D: L22 (=compat-make-process-async= refactor + Emacs
-impl + NeLisp stub) + ERT 14.  Touches compat layer only;
-independent of A/B/C but landing it BEFORE A means A's HTTP
-primitive can also use the same compat-runtime branching pattern.
+impl + NeLisp stub) + ERT 14 + bonus Emacs-passthrough ERT.
+Commit =36222e8= via claude direct (skipped worktree — small
+refactor of an existing file).
 
-Recommended landing order: D → A → B/C (parallel).
+Landing order taken: D → A + B+C (parallel) → integration.
 
-* Effort estimate (planning)
+* Effort estimate (actuals)
 
-| Sub-task | LOC (src+test, est) | Risk    | Reason                                          |
-|----------+---------------------+---------+-------------------------------------------------|
-| A        | ~250                | medium  | OQ11 rate limits + cache TTL semantics + L21    |
-| B        | ~180                | medium  | OQ13 rollback granularity + state mirror sync   |
-| C        | ~50                 | low     | trivial dispatch fork                           |
-| D        | ~120                | low     | refactor; NeLisp stub already designed in 4-B   |
-| Total    | ~600                | medium  |                                                 |
+| Sub-task | LOC (src+test, actual) | Status                                            |
+|----------+------------------------+---------------------------------------------------|
+| A        | ~700                   | SHIPPED 153c065 (+8 ERT: 7 L18 + 1 L21)            |
+| B+C      | ~530                   | SHIPPED eafe1ba (+5 ERT: 3 L19 + 2 L20)            |
+| D        | ~165                   | SHIPPED 36222e8 (+2 ERT: 1 L22 + 1 passthrough)    |
+| Total    | ~1395                  |                                                    |
 
 ** Cumulative test count
 
-Phase 4-B baseline: 40.  Phase 4-C target: 54 (+14 new ERTs;
-A=8, B=3, C=2, D=1).
+Phase 4-B baseline: 40.  Phase 4-C actual: 55 (+15 new ERTs;
+A=8, B+C=5, D=2 — exceeded the design 14 target by 1).
 
 * References
 

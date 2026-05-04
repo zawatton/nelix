@@ -17,14 +17,19 @@ agents can install anything by writing one Lisp form.
 
 * Status
 
-*Phase 1+2+3+4-A+4-B SHIPPED + REAL-NIX VERIFIED* (2026-05-04) — Full
-DSL stack on top of the Nix store with multiple fetcher / build-system
-support, an =emacs-package= backend that round-trips Elisp libraries
-through =trivialBuild= / =melpaBuild= with optional =:native-comp=, an
-opt-in =:async= install path, and a one-shot =async-installer=
-importer.
+*Phase 1+2+3+4-A+4-B+4-C SHIPPED + REAL-NIX VERIFIED* (2026-05-04) —
+Full DSL stack on top of the Nix store with multiple fetcher /
+build-system support, an =emacs-package= backend that round-trips
+Elisp libraries through =trivialBuild= / =melpaBuild= with optional
+=:native-comp=, an opt-in =:async= install path, automatic
+=:depends-on= derivation from =Package-Requires= via a small
+raw.githubusercontent.com pre-fetch with per-session caching,
+profile generation rollback (=pkg-list-generations= / =pkg-rollback=
+/ =pkg-history=), Nix 2.34 =install=→=add= dispatch, and a one-shot
+=async-installer= importer that auto-populates =:depends-on= from
+local clones.
 
-- ERT 40/40 PASS (mocked, runs without a nix binary).
+- ERT 55/55 PASS (mocked, runs without a nix binary).
 - /Real-nix smoke test/ executed end-to-end in a =nixos/nix:2.34=
   rootless podman container with Emacs 30.2:
   - =(pkg-install "hello")= installed GNU Hello into an isolated
@@ -47,16 +52,22 @@ Public Elisp API uses the short =pkg-= prefix:
   =emacs-package=, =:async= keyword on =pkg-install= with
   =:on-success= / =:on-error= callbacks, and
   =anvil-pkg-import-async-installer= migration utility — Phase 4-B
+- =:no-auto-deps= keyword on =pkg-install= (opt-out of pre-fetch),
+  =pkg-list-generations= / =pkg-rollback= / =pkg-history= — Phase 4-C
+- =anvil-pkg-compat-make-process-async= /
+  =anvil-pkg-compat-http-get= portability primitives (Emacs path
+  shipped; NeLisp signals until Phase 5) — Phase 4-C
 
 Long-form aliases (=anvil-pkg-install= etc.) are provided via
 =defalias= for Emacs-prefix purists.
 
-Phase 4-B's =:depends-on= auto-derive from =Package-Requires= (L15)
-was deferred to Phase 4-C — the source archive is not local at
-flake render time, so a proper pre-fetch design is needed.  Until
-then declare =(depends-on (list ...))= explicitly.  Phase 4-C also
-covers profile / generation rollback and the Nix 2.34
-=install=→=add= deprecation follow-up.
+Phase 4-D candidates: =melpaBuild= recipe synthesis (Phase 4-B OQ7),
+url-fetch / git-fetch coverage of the L18 pre-fetch path,
+per-package rollback granularity (Phase 4-C OQ13), and
+=anvil-pkg-state= integration so the deps cache + Nix-version cache
++ generations mirror persist across Emacs sessions.  Phase 5
+focuses on the NeLisp async backend that makes
+=anvil-pkg-compat-make-process-async= work outside Emacs.
 
 * Why?
 
@@ -121,8 +132,9 @@ your config should not require learning a new macro language.
 | 3     | =github-fetch= / =git-fetch= sources + =rust= / =python= / =go= bs     | *SHIPPED*      |
 | 4-A   | =emacs-package= build-system + post-install =load-path= + =:require=   | *SHIPPED*      |
 | 4-B   | =:format= / =:native-comp= / =:async= callbacks + importer (L15 def'd) | *SHIPPED*      |
-| 4-C   | =Package-Requires= auto-derive (L15) + profile rollback + Nix 2.34 fix | next           |
-| 5+    | =anvil-pkg-compat= async primitive + NeLisp async backend              | research       |
+| 4-C   | L18 pre-fetch + L19 rollback + L20 Nix 2.34 + L22 compat async         | *SHIPPED*      |
+| 4-D   | melpaBuild recipe synthesis + url/git L18 + per-pkg rollback + state   | next           |
+| 5+    | NeLisp async backend (replaces Phase 4-C compat-async stub)            | research       |
 
 See =docs/design/01-overview.org= for the full Phase 1 contract.
 
@@ -210,6 +222,33 @@ In your Emacs init:
  :var 'async-installer-git-list
  :emit (expand-file-name "imported-pkgs.el" user-emacs-directory))
 ;; → writes pkg-define forms; load the file from your init when ready.
+
+;; Phase 4-C — auto-derive depends-on (L18 pre-fetch from
+;; raw.githubusercontent.com).  No explicit (depends-on ...) needed
+;; for github-fetch sources; result cached for 30 days per session.
+(pkg-define magit
+  (version "3.3.0")
+  (source (github-fetch :owner "magit" :repo "magit"
+                        :rev "v3.3.0" :sha256 "sha256-..."))
+  (build-system (emacs-package :format "melpa")))
+(pkg-install 'magit)
+;; → pre-fetches magit-pkg.el, derives (dash transient with-editor compat),
+;;   renders flake.nix, installs.  Use :no-auto-deps t to opt out.
+
+;; Phase 4-C — profile generation rollback
+(pkg-list-generations)
+;; → ((:id 5 :date "..." :packages (ripgrep magit) :active t)
+;;    (:id 4 :date "..." :packages (ripgrep) :active nil))
+(pkg-rollback)         ; pop one generation
+(pkg-rollback 3)       ; jump to generation 3
+(pkg-history 'magit)   ; → events for magit only
+
+;; Phase 4-C — importer auto-populates depends-on from local clones
+(anvil-pkg-import-async-installer
+ :var 'async-installer-git-list
+ :emit (expand-file-name "imported-pkgs.el" user-emacs-directory)
+ :scrape-deps t)       ; default; reads ~/.emacs.d/external-packages/<pkg>
+                       ; or falls through to L18's HTTP path.
 #+end_src
 
 CLI sub-command (=anvil pkg install ...=) lands in =anvil.el= via a
@@ -218,7 +257,7 @@ separate PR; until then call the Elisp API directly.
 ** Run the test suite
 
 #+begin_src shell
-make test       # 40 ERT tests, no nix binary required (all mocked)
+make test       # 55 ERT tests, no nix binary required (all mocked)
 make compile    # byte-compile, warnings-as-errors
 #+end_src
 
