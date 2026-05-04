@@ -53,6 +53,7 @@
 (declare-function anvil-pkg--ensure-nix "anvil-pkg")
 (declare-function anvil-pkg--call-nix "anvil-pkg")
 (declare-function anvil-pkg--profile-args "anvil-pkg")
+(declare-function anvil-pkg--nix-install-subcommand "anvil-pkg")
 
 ;;;; --- error symbols ---------------------------------------------------------
 
@@ -582,7 +583,8 @@ install path:STATE_DIR#SYM."
   (let* ((flake-path (funcall anvil-pkg--write-flake-fn))
          (flake-dir (directory-file-name (file-name-directory flake-path)))
          (flakeref (format "path:%s#%s" flake-dir sym))
-         (args (append (list "profile" "install")
+         (subcmd (anvil-pkg--nix-install-subcommand))
+         (args (append (list "profile" subcmd)
                        (anvil-pkg--profile-args)
                        (list flakeref)))
          (res (anvil-pkg--call-nix args)))
