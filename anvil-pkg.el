@@ -223,6 +223,39 @@ keyed by package name."
   (let ((ir (anvil-pkg--registry-get name)))
     (plist-get (plist-get ir :build-system) :type)))
 
+(defvar anvil-pkg--registry) ; defined in anvil-pkg-dsl.el
+(declare-function anvil-pkg-emacs-derive-deps "anvil-pkg-emacs")
+
+(defun anvil-pkg--maybe-derive-deps (name no-auto-deps)
+  "Phase 4-C L18 hook: pre-fetch `:depends-on' for NAME's IR.
+
+When NAME's registered IR is an `emacs-package' build-system with
+no explicit `:depends-on' and NO-AUTO-DEPS is nil, run
+`anvil-pkg-emacs-derive-deps' against the IR and `puthash' the
+augmented IR back into `anvil-pkg--registry'.  No-op otherwise.
+
+The L8 invariant — explicit `(depends-on ...)` always wins — is
+preserved by the `:depends-on' check below: if the user wrote
+`(depends-on (list ...))` in their `pkg-define', we never
+overwrite it.
+
+Returns the (possibly augmented) IR for caller convenience."
+  (require 'anvil-pkg-dsl)
+  (let* ((ir (anvil-pkg--registry-get name))
+         (build-type (plist-get (plist-get ir :build-system) :type))
+         (existing-deps (plist-get ir :depends-on)))
+    (when (and (eq build-type 'emacs-package)
+               (null existing-deps)
+               (not no-auto-deps))
+      (require 'anvil-pkg-emacs)
+      (let ((derived (anvil-pkg-emacs-derive-deps ir)))
+        (when derived
+          (let ((augmented (plist-put (copy-sequence ir)
+                                      :depends-on derived)))
+            (puthash name augmented anvil-pkg--registry)
+            (setq ir augmented)))))
+    ir))
+
 (defun anvil-pkg--emacs-package-after-install (name)
   "Augment `load-path' for installed Emacs package NAME.
 
@@ -456,6 +489,15 @@ Recognised PLIST keys:
     failure surfaces via `lwarn' on a 0-delay timer (sentinels
     must not call `signal' directly).  Ignored — with a one-shot
     warning — when :async is not supplied.
+  :no-auto-deps BOOL
+    Phase 4-C L18 opt-out.  When non-nil, skip the
+    `Package-Requires' pre-fetch for `emacs-package' symbol installs
+    that have no explicit `:depends-on'.  Default nil: a single
+    HTTP GET against raw.githubusercontent.com derives deps from
+    `<pname>-pkg.el' or the `Package-Requires' header (only for
+    `github-fetch' sources).  Explicit `:depends-on' on the
+    `pkg-define' form ALWAYS wins regardless of this flag (L8
+    invariant).
 
 Synchronous return value: t on success.  Async return value: the
 process object.  Signals `anvil-pkg-nix-failed' /
@@ -481,6 +523,10 @@ process object.  Signals `anvil-pkg-nix-failed' /
         (require 'anvil-pkg-dsl)
         (anvil-pkg--ensure-nix)
         (anvil-pkg--registry-get name)
+        ;; Phase 4-C L18: derive :depends-on from the upstream
+        ;; `Package-Requires' header before flake render so the
+        ;; resulting derivation has the correct `packageRequires'.
+        (anvil-pkg--maybe-derive-deps name (plist-get plist :no-auto-deps))
         (let* ((flake-path (funcall anvil-pkg--write-flake-fn))
                (flake-dir  (directory-file-name (file-name-directory flake-path)))
                (flakeref   (format "path:%s#%s" flake-dir name))
@@ -497,6 +543,10 @@ process object.  Signals `anvil-pkg-nix-failed' /
        ((stringp name) (anvil-pkg--install-nixpkgs name))
        ((symbolp name)
         (require 'anvil-pkg-dsl)
+        ;; Phase 4-C L18: pre-fetch + IR augmentation BEFORE
+        ;; `anvil-pkg--install-symbol' so the rendered flake.nix
+        ;; carries the derived `packageRequires'.
+        (anvil-pkg--maybe-derive-deps name (plist-get plist :no-auto-deps))
         (let* ((require-supplied (anvil-pkg--plist-has-key-p plist :require))
                (require-sym (plist-get plist :require))
                (build-system-type (anvil-pkg--registry-build-system-type name))

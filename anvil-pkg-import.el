@@ -252,6 +252,14 @@ Returns a string."
       "  (build-system (emacs-package :native-comp t))"
     "  (build-system emacs-package)"))
 
+(defun anvil-pkg-import--render-depends-on (deps)
+  "Render the (depends-on (list ...)) sub-form for DEPS list of SYMS.
+Returns a string with leading two spaces, no trailing newline.
+Returns nil when DEPS is empty."
+  (when (and deps (listp deps))
+    (format "  (depends-on (list %s))"
+            (mapconcat #'symbol-name deps " "))))
+
 (defun anvil-pkg-import--render-comments (opts needs-rev-fixme needs-version-fixme)
   "Build a list of leading-comment lines for an entry.
 Each element is a string starting with `;; '."
@@ -280,10 +288,77 @@ Each element is a string starting with `;; '."
             lines))
     (nreverse lines)))
 
+;; Phase 4-C L21: per-call config threaded into the per-entry renderer.
+;; `anvil-pkg-import-async-installer' binds these dynamically before
+;; mapping over the entry list so the existing
+;; `anvil-pkg-import--render-entry' signature stays single-arg.
+(defvar anvil-pkg-import--scrape-deps nil
+  "When non-nil, attempt `:depends-on' scrape per entry.
+Bound dynamically by `anvil-pkg-import-async-installer'.")
+
+(defvar anvil-pkg-import--clone-dir-fn nil
+  "Function returning the local clone directory for an entry plist.
+Bound dynamically by `anvil-pkg-import-async-installer' when
+`:scrape-deps' is non-nil.  See
+`anvil-pkg-import-default-clone-dir' for the default heuristic.")
+
+(defun anvil-pkg-import-default-clone-dir (entry-info)
+  "Return the default async-installer clone path for ENTRY-INFO.
+
+ENTRY-INFO is a plist carrying :name (package basename string).
+Returns the conventional async-installer location:
+
+  ~/.emacs.d/external-packages/<basename>
+
+Caller can override via the `:clone-dir-fn' keyword to
+`anvil-pkg-import-async-installer'."
+  (let ((basename (plist-get entry-info :name)))
+    (when (and (stringp basename) (> (length basename) 0))
+      (expand-file-name (format "external-packages/%s" basename)
+                        (or (anvil-pkg-compat-getenv "HOME") "~/.emacs.d/..")))))
+
+(declare-function anvil-pkg-emacs-derive-deps-from-dir "anvil-pkg-emacs")
+(declare-function anvil-pkg-emacs-derive-deps "anvil-pkg-emacs")
+
+(defun anvil-pkg-import--scrape-deps-for (sym-name repo-info rev)
+  "Phase 4-C L21 per-entry deps lookup.
+
+Tries the local clone first (via `anvil-pkg-import--clone-dir-fn')
+then falls back to L18's HTTP path.  Returns list of SYMBOLS or
+nil.  No-op + nil when `anvil-pkg-import--scrape-deps' is nil
+(= caller passed `:scrape-deps nil')."
+  (when anvil-pkg-import--scrape-deps
+    (require 'anvil-pkg-emacs)
+    (let* ((entry-info (list :name sym-name))
+           (clone-dir (and anvil-pkg-import--clone-dir-fn
+                           (funcall anvil-pkg-import--clone-dir-fn
+                                    entry-info)))
+           (local (and clone-dir
+                       (anvil-pkg-emacs-derive-deps-from-dir
+                        clone-dir sym-name))))
+      (cond
+       (local local)
+       ;; HTTP fallback uses a synthetic IR carrying just the source
+       ;; metadata `anvil-pkg-emacs-derive-deps' needs.  Only attempt
+       ;; the HTTP path for github-fetch entries.
+       ((eq (plist-get repo-info :host) 'github)
+        (let ((synthetic-ir
+               (list :name (intern sym-name)
+                     :source (list :type 'github-fetch
+                                   :owner (plist-get repo-info :owner)
+                                   :repo (plist-get repo-info :repo)
+                                   :rev rev))))
+          (anvil-pkg-emacs-derive-deps synthetic-ir)))
+       (t nil)))))
+
 (defun anvil-pkg-import--render-entry (entry)
   "Render ENTRY into a string containing comments + one pkg-define form.
 The returned string ends with a single newline (no trailing blank
-line; the caller joins entries with `\\n\\n')."
+line; the caller joins entries with `\\n\\n').
+
+When `anvil-pkg-import--scrape-deps' is non-nil, attempt to derive
+`:depends-on' via local clone or HTTP (Phase 4-C L21) and emit
+`(depends-on (list ...))' as an extra sub-form."
   (let* ((repo-raw (anvil-pkg-import--repo-string entry))
          (opts (anvil-pkg-import--options entry))
          (repo-info (anvil-pkg-import--parse-repo repo-raw))
@@ -297,12 +372,16 @@ line; the caller joins entries with `\\n\\n')."
          (needs-version-fixme (cdr ver-pair))
          (comments (anvil-pkg-import--render-comments
                     opts needs-rev-fixme needs-version-fixme))
+         (deps (anvil-pkg-import--scrape-deps-for sym-name repo-info rev))
+         (deps-line (anvil-pkg-import--render-depends-on deps))
          (form-lines
-          (list (format "(pkg-define %s" sym-name)
-                (format "  (version %S)" version)
-                (anvil-pkg-import--render-source repo-info rev)
-                (anvil-pkg-import--render-build-system opts)
-                "  (description \"Imported from async-installer-git-list\"))")))
+          (delq nil
+                (list (format "(pkg-define %s" sym-name)
+                      (format "  (version %S)" version)
+                      (anvil-pkg-import--render-source repo-info rev)
+                      (anvil-pkg-import--render-build-system opts)
+                      deps-line
+                      "  (description \"Imported from async-installer-git-list\"))"))))
     (concat (mapconcat #'identity comments "\n")
             (when comments "\n")
             (mapconcat #'identity form-lines "\n")
@@ -353,23 +432,52 @@ touching the call sites."
   count)
 
 ;;;###autoload
-(cl-defun anvil-pkg-import-async-installer (&key (var 'async-installer-git-list) emit)
+(cl-defun anvil-pkg-import-async-installer
+    (&key (var 'async-installer-git-list)
+          emit
+          (scrape-deps t)
+          clone-dir-fn)
   "Convert ASYNC-INSTALLER-GIT-LIST entries to pkg-define forms.
 
 VAR is the symbol whose value supplies the alist (default
 `async-installer-git-list').  EMIT is the absolute path of the
 output file (required).
 
+SCRAPE-DEPS (default t, Phase 4-C L21) controls whether each entry
+should be augmented with `(depends-on (list ...))' derived from
+the package's `Package-Requires' header.  Lookup order:
+
+  1. Local async-installer clone (read `<pname>-pkg.el' or
+     `<pname>.el' from disk).  Default location:
+     `~/.emacs.d/external-packages/<basename>'.  Override with
+     CLONE-DIR-FN — a function that takes a plist
+     `(:name BASENAME)' and returns an absolute path (or nil).
+  2. HTTP fallback to raw.githubusercontent.com (L18 path) when
+     the local read returns nil and the entry is a GitHub repo.
+
+Failure to derive deps is silent: the entry simply has no
+`depends-on' sub-form and the user is expected to fill it in
+manually if needed.  The L8 invariant (explicit deps win) is not
+relevant here — the importer never sees explicit deps, it always
+emits fresh forms.
+
 Returns the count of pkg-define forms emitted.  Read-only: the
-source variable is never mutated.  Idempotent: re-running with
-the same input produces byte-identical output (deterministic
-ordering + formatting)."
+source variable is never mutated.  Idempotent (when SCRAPE-DEPS
+inputs are stable): re-running with the same input + same local
+clone state produces byte-identical output."
   (unless (and emit (stringp emit) (> (length emit) 0))
     (signal 'anvil-pkg-import-error
             (list ":emit absolute file path is required")))
+  (when scrape-deps
+    ;; Lazy require: the importer remains loadable without
+    ;; anvil-pkg-emacs when the user passes :scrape-deps nil.
+    (require 'anvil-pkg-emacs))
   (let* ((basename (file-name-nondirectory emit))
          (provide-sym (file-name-sans-extension basename))
-         (entries (and (boundp var) (symbol-value var))))
+         (entries (and (boundp var) (symbol-value var)))
+         (anvil-pkg-import--scrape-deps scrape-deps)
+         (anvil-pkg-import--clone-dir-fn
+          (or clone-dir-fn #'anvil-pkg-import-default-clone-dir)))
     (cond
      ;; Empty / unbound — write header-only file, lwarn, return 0.
      ((or (null entries) (not (boundp var)))

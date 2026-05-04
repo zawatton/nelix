@@ -27,6 +27,7 @@
 ;;   file-exists-p           - existence probe
 ;;   executable-find         - PATH lookup
 ;;   getenv                  - environment variable
+;;   http-get                - synchronous HTTP GET (Emacs only in Phase 4-C)
 ;;   json-parse              - JSON string -> alist tree (Phase 1 schema)
 ;;   string-trim             - trim ASCII whitespace
 ;;   define-error-symbol     - install (sym 'error-conditions . msg) properties
@@ -273,6 +274,78 @@ Object -> alist, array -> list, null/false -> nil."
         (setq s (substring s 0 (1- (length s)))))
       s))))
 
+;;;; --- HTTP -----------------------------------------------------------------
+
+;; `url-retrieve-synchronously' is autoloaded from the built-in `url'
+;; package; declare it so byte-compile does not complain when this
+;; file is compiled without `url' having been loaded yet.
+(declare-function url-retrieve-synchronously "url" t t)
+
+(defun anvil-pkg-compat-http-get (url &optional timeout)
+  "Synchronously fetch URL.  TIMEOUT defaults to 5 seconds.
+
+Returns plist (:status INT :body STRING).  Signals
+`anvil-pkg-http-not-supported' on NeLisp until Phase 5 lands an
+HTTP backend.  Network errors / non-2xx responses return :status
+N (the actual code or 0 on connection failure) with :body empty.
+
+Phase 4-C: Emacs implementation uses `url-retrieve-synchronously'
+and parses the HTTP status line out of the response buffer's first
+line (we do not rely on `url-http-response-status' because the
+buffer may not have full HTTP metadata in some Emacs versions)."
+  (pcase (anvil-pkg-compat-runtime)
+    ('emacs
+     (anvil-pkg-compat--http-get-emacs url (or timeout 5)))
+    ('nelisp
+     (signal 'anvil-pkg-http-not-supported
+             (list (format "anvil-pkg-compat-http-get: NeLisp HTTP backend not yet implemented (url=%s)"
+                           url))))
+    (_
+     (signal 'anvil-pkg-http-not-supported
+             (list (format "anvil-pkg-compat-http-get: no backend for runtime %S"
+                           (anvil-pkg-compat-runtime)))))))
+
+(defun anvil-pkg-compat--http-get-emacs (url timeout)
+  "Emacs backend for `anvil-pkg-compat-http-get'.
+
+Wraps `url-retrieve-synchronously' with a TIMEOUT override and
+parses the HTTP status line from the buffer's first line.  Returns
+plist (:status INT :body STRING).  On any error returns (:status 0
+:body \"\") so callers do not need to wrap in `condition-case'."
+  (require 'url)
+  (defvar url-show-status)
+  (let ((url-show-status nil)
+        (status 0)
+        (body ""))
+    ;; Reference url-show-status so the binding is not flagged as
+    ;; unused — `url' reads it dynamically inside
+    ;; `url-retrieve-synchronously'.
+    (ignore url-show-status)
+    (condition-case _err
+        (let ((buf (url-retrieve-synchronously url t t timeout)))
+          (when (and buf (buffer-live-p buf))
+            (unwind-protect
+                (with-current-buffer buf
+                  (goto-char (point-min))
+                  ;; Parse "HTTP/1.x NNN ..." status line from first
+                  ;; line of the buffer.
+                  (let ((line-end (line-end-position)))
+                    (when (re-search-forward
+                           "\\`HTTP/[0-9.]+ \\([0-9]+\\)" line-end t)
+                      (setq status (string-to-number (match-string 1)))))
+                  ;; Body is everything after the blank line that
+                  ;; terminates HTTP headers (CRLF CRLF or LF LF).
+                  (goto-char (point-min))
+                  (when (re-search-forward "\r?\n\r?\n" nil t)
+                    (setq body (buffer-substring-no-properties
+                                (point) (point-max)))))
+              (kill-buffer buf))))
+      (error
+       ;; Connection failure / timeout / DNS — degrade to status 0.
+       (setq status 0
+             body "")))
+    (list :status status :body body)))
+
 ;;;; --- error symbols --------------------------------------------------------
 
 (defun anvil-pkg-compat-define-error-symbol (sym message &optional parent)
@@ -300,6 +373,12 @@ Functional equivalent of `define-error', but works without it
 ;; should-error against the symbol on NeLisp.
 (anvil-pkg-compat-define-error-symbol 'anvil-pkg-async-not-supported
                                       "asynchronous install not supported on this runtime")
+
+;; Phase 4-C L18 error symbol installed at load time: callers
+;; (anvil-pkg-emacs.el) can `signal' it without first requiring
+;; anvil-pkg.
+(anvil-pkg-compat-define-error-symbol 'anvil-pkg-http-not-supported
+                                      "HTTP not supported on this runtime")
 
 (defun anvil-pkg-compat-make-process-async (&rest plist)
   "Spawn an asynchronous process portably across Emacs and NeLisp.
