@@ -1,0 +1,456 @@
+#+title: anvil-pkg — Phase 4-C: pre-fetch, rollback, Nix 2.34, compat async
+#+author: zawatton
+#+date: 2026-05-04
+#+property: status PHASE-4C-DESIGN
+
+* STATUS
+
+Phase 4-C — DESIGN.  Builds on Phase 4-B (commits =40067ff= /
+=239141f= / =91dde54= / integration =ee93113=) which shipped the
+=:format= / =:native-comp= / =:async= keywords plus the
+=anvil-pkg-import-async-installer= migration utility.
+
+Phase 4-C closes Phase 4-B's deferred L15 (=:depends-on=
+auto-derive) with a proper pre-fetch design, ships the Nix 2.34
+=install=→=add= migration that has been pending since Phase 1,
+adds profile generation rollback that was always slated for "Phase
+4", extends sub-task D's importer to auto-populate =:depends-on=
+from local =async-installer= clones (sub-task E), and refactors
+sub-task C's =:async= dispatch into an =anvil-pkg-compat= async
+primitive so NeLisp standalone can grow its own backend.
+
+* Goal
+
+Make =pkg-install= "just work" for typical Emacs packages without
+hand-typed =:depends-on= and give users a rollback story when an
+install regresses their profile:
+
+#+begin_src elisp
+;; Phase 4-B required:
+(pkg-define magit
+  (version "3.3.0")
+  (source (github-fetch :owner "magit" :repo "magit"
+                        :rev "v3.3.0" :sha256 "sha256-..."))
+  (build-system (emacs-package :format "melpa"))
+  (depends-on (list dash transient with-editor)))
+
+;; Phase 4-C: same install, no manual depends-on:
+(pkg-define magit
+  (version "3.3.0")
+  (source (github-fetch :owner "magit" :repo "magit"
+                        :rev "v3.3.0" :sha256 "sha256-..."))
+  (build-system (emacs-package :format "melpa")))
+;; depends-on auto-derived from
+;; raw.githubusercontent.com/magit/magit/v3.3.0/magit-pkg.el at
+;; render time, cached by source SHA256 in anvil-pkg-state.
+
+;; Plus rollback when an install breaks the profile:
+(pkg-list-generations)
+;; → ((:id 5 :date "2026-05-04T18:00:00" :packages (ripgrep magit))
+;;    (:id 4 :date "2026-05-04T17:30:00" :packages (ripgrep)))
+(pkg-rollback)                  ; pop to generation 4
+(pkg-rollback 3)                ; jump to a specific generation
+(pkg-history 'magit)
+;; → ((5 :installed) (6 :removed))
+#+end_src
+
+* Non-goals
+
+- Replacing the L8 invariant.  Explicit
+  =(depends-on (list ...))= STILL wins over auto-derive — the
+  scraper is opt-out (=:no-auto-deps t= on =pkg-install=) but
+  defaults on for =emacs-package= with =github-fetch= sources.
+- Auto-derive for non-=github-fetch= sources.  Phase 4-C scope is
+  =github-fetch= only.  =url-fetch= / =git-fetch= continue to
+  require manual =:depends-on= until Phase 4-D adds tarball-header
+  reads + shallow-clone scrape (or a builder-side hook).
+- Bidirectional rollback sync with the user's Nix profile.
+  =pkg-rollback= shells out to =nix profile rollback= and refreshes
+  the local mirror; we do NOT track edits the user made via
+  =nix= directly outside anvil-pkg's API.
+- Full NeLisp async backend.  Phase 4-C ships only the
+  =anvil-pkg-compat-make-process-async= primitive abstraction +
+  Emacs implementation; NeLisp gets a stub that signals
+  =anvil-pkg-async-not-supported= until Phase 5's research lands.
+- Migration of existing user profiles from pre-2.34 syntax.  Phase
+  4-C's Nix 2.34 fix only changes which subcommand /new/ installs
+  use; existing profile state is untouched.
+
+* Locked decisions (continuing L13-L17 from doc 05)
+
+** L18. Pre-fetch stage for =Package-Requires= auto-derive (closes L15)
+
+When =build-system= is =emacs-package=, =:depends-on= is NOT
+explicit, and =:source= is =github-fetch=: render time fetches
+the package's =Package-Requires= header via a single HTTP GET
+against raw.githubusercontent.com and injects the result as the
+flake's =packageRequires=.
+
+Behaviour:
+
+- Lookup order (each is a single GET):
+  1. =https://raw.githubusercontent.com/<owner>/<repo>/<rev>/<pname>-pkg.el=
+     → parse the =define-package= sexp's deps argument.
+  2. =https://raw.githubusercontent.com/<owner>/<repo>/<rev>/<pname>.el=
+     → read first 4 KiB, regex match =;; Package-Requires:= header.
+  3. Miss → =lwarn= + render with empty =packageRequires=.
+- Each lookup is a 5-second-timeout =anvil-http-get= via
+  =anvil-pkg-compat-http-get= (new compat helper).  On timeout /
+  network error / 4xx / 5xx: log warning and try the next step.
+- Cache: =anvil-pkg-state= KV namespace
+  =anvil-pkg:emacs-deps=, key = =<owner>/<repo>@<rev>=, value =
+  =(:deps (SYM ...) :cached-at TIME :status SYM)= where status is
+  =:hit= / =:miss= / =:error=.  TTL 30 days; manual override via
+  =pkg-clear-cache=.
+- =:no-auto-deps t= on =pkg-install= forces opt-out.  =:depends-on
+  (list ...)= explicit ALWAYS wins (= L8 invariant).
+
+The pre-fetch runs synchronously inside =pkg-install= before
+flake render.  =:async t= installs delay their =make-process=
+spawn until the fetch completes, so the sync HTTP call sits at
+the front of the async chain.
+
+Implementation lives in =anvil-pkg-emacs.el= (new file — the
+filename Phase 4-B reserved for the deferred L15).
+=anvil-pkg-dsl.el= remains pure: the renderer takes the resolved
+=:depends-on= as an argument and never calls HTTP itself.
+
+** L19. Profile generation rollback API
+
+Three new public functions in =anvil-pkg.el=:
+
+#+begin_src elisp
+(pkg-list-generations)
+;; → list of plists (:id INT :date "ISO" :packages (SYM ...) :active BOOL)
+(pkg-rollback &optional generation-id)
+;; → t on success.  Default = previous generation.
+(pkg-history pkg-name)
+;; → list of (:generation INT :event SYM :date "ISO")
+;;   where event ∈ (:installed :removed :upgraded :downgraded)
+#+end_src
+
+Backend uses =nix profile history --json= and =nix profile
+rollback= (Nix 2.18+).  Output mirror lives in =anvil-pkg-state=
+under namespace =anvil-pkg:generations= so =pkg-history= does not
+re-shell-out for every query.  Mirror is refreshed on every
+=pkg-list= call and on every install/rollback.
+
+Rollback semantics: =nix profile rollback= already handles the
+generation switch atomically; we just wrap it.  After rollback we
+re-run =anvil-pkg--emacs-package-after-install= for every
+=emacs-package= in the now-active generation so =load-path= is
+correct (= the post-install hook is idempotent — re-adding a dir
+to =load-path= is a no-op via =add-to-list=).
+
+** L20. Nix 2.34 =install=→=add= migration
+
+Nix 2.34 deprecated =nix profile install= in favour of =nix
+profile add=.  The two are functionally equivalent for our use
+but 2.34 emits a stderr deprecation warning when =install= is
+called.
+
+Phase 4-C detects the Nix version on first call via =nix
+--version= (cached in =anvil-pkg-state= under key
+=anvil-pkg:nix-version=, refreshed if older than 1 day) and
+dispatches:
+
+| Nix version | Subcommand used                              |
+|-------------+----------------------------------------------|
+| < 2.34      | =nix profile install <flakeref>=             |
+| ≥ 2.34      | =nix profile add <flakeref>=                 |
+
+Implementation: single dispatch in =anvil-pkg--install-nixpkgs=
+and =anvil-pkg--install-symbol=.  Same args, same exit
+semantics.  No user-visible API change.
+
+** L21. Importer auto-derive integration (sub-task E continuation)
+
+Once L18 ships, =anvil-pkg-import-async-installer= grows a new
+keyword =:scrape-deps= (default =t=) that pre-populates
+=(depends-on ...)= in the emitted forms.
+
+Lookup order for the importer:
+1. Local =async-installer= clone (= the directory async-installer
+   maintains for the package; default
+   =~/.emacs.d/external-packages/<basename>=).  Read =<pname>-pkg.el=
+   or =<pname>.el= directly from disk.
+2. Fall through to L18's HTTP path if no local clone exists.
+
+This is where L15's "real value" lands: users with an existing
+=async-installer-git-list= get a converted file with =depends-on=
+already filled in, no manual fix-up.  The placeholder =:sha256=
+warning still applies (sha256 must come from upstream).
+
+Implementation: small extension to =anvil-pkg-import.el= that
+requires =anvil-pkg-emacs= dynamically (not at top of file —
+keeps the importer loadable without anvil-pkg if the user only
+wants conversion).
+
+** L22. =anvil-pkg-compat= async primitive (refactor + Emacs impl + NeLisp stub)
+
+Sub-task C left a Phase 5 follow-up note: =make-process= is
+called directly inside =anvil-pkg.el= because no compat primitive
+exists.  Phase 4-C lifts that.
+
+New compat API:
+
+#+begin_src elisp
+(anvil-pkg-compat-make-process-async
+ &key name command sentinel stderr connection-type noquery)
+;; → process-like handle; sentinel and stderr semantics match
+;;   Emacs `make-process'.
+#+end_src
+
+- Emacs runtime: thin wrapper around =make-process= (= no
+  semantic change).
+- NeLisp runtime: stub that signals
+  =anvil-pkg-async-not-supported= until Phase 5 research lands a
+  real backend.  The signal already exists from sub-task C.
+
+=anvil-pkg.el='s sub-task C dispatch refactors to use the
+primitive.  =anvil-pkg-compat-runtime= keeps its current role
+(branch authority) but the call-site moves into the primitive
+itself, removing the per-callsite runtime check.
+
+Phase 5 will replace the NeLisp stub with a real backend (likely
+spawning via NeLisp's native FFI if it exposes process control,
+or via a small daemon-helper otherwise — that design call is
+deferred).
+
+* Phase 4-C implementation contract
+
+** Files touched / added
+
+| File                                | Change                                                            |
+|-------------------------------------+-------------------------------------------------------------------|
+| =anvil-pkg-emacs.el= (new)          | =anvil-pkg-emacs-derive-deps= entry point; HTTP lookup + cache    |
+| =anvil-pkg-emacs.el= (new)          | =Package-Requires= header parser + =define-package= sexp parser   |
+| =anvil-pkg-dsl.el=                  | renderer takes resolved =:depends-on= via injection point          |
+| =anvil-pkg.el=                      | =pkg-install :no-auto-deps= keyword + pre-fetch dispatch           |
+| =anvil-pkg.el=                      | =pkg-list-generations= / =pkg-rollback= / =pkg-history=            |
+| =anvil-pkg.el=                      | =anvil-pkg--nix-version= detect + cache + install/add dispatch     |
+| =anvil-pkg-import.el=               | =:scrape-deps= keyword + local clone lookup + L18 fallback         |
+| =anvil-pkg-compat.el=               | =anvil-pkg-compat-make-process-async= + =anvil-pkg-compat-http-get=|
+| =anvil-pkg-compat.el=               | NeLisp stub that signals =anvil-pkg-async-not-supported=           |
+| =test/anvil-pkg-emacs-test.el= (new)| L18 happy / 404 / network-fail / cache-hit / explicit-wins         |
+| =test/anvil-pkg-test.el=            | =pkg-list-generations= / =pkg-rollback= / Nix 2.34 dispatch tests  |
+| =test/anvil-pkg-import-test.el=     | =:scrape-deps= happy + local-clone preferred over HTTP             |
+| =test/anvil-pkg-compat-test.el= (new)| =compat-make-process-async= Emacs passthrough + NeLisp stub error |
+| =docs/design/02-dsl.org=            | =:no-auto-deps= mention + emacs-package row update                 |
+| =docs/smoke-test.org=               | new step: install magit without depends-on; rollback round-trip   |
+| =README.org=                        | examples for L18-L22; Phase plan +4-C SHIPPED row                  |
+| =Makefile=                          | =SRC= += =anvil-pkg-emacs.el=; =TEST_SRC= += new test files       |
+
+** Public surface diff
+
+#+begin_src elisp
+;; L18 — auto-derive (no DSL change; new keyword on pkg-install)
+(pkg-install 'magit :no-auto-deps t)   ; opt-out
+;; (default behaviour: github-fetch sources auto-derive at install)
+
+;; L19 — rollback API
+(pkg-list-generations)                 ; list of plists
+(pkg-rollback)                         ; → previous generation
+(pkg-rollback 3)                       ; → specific generation id
+(pkg-history 'magit)                   ; → install/remove history
+(pkg-clear-cache)                      ; → drop emacs-deps cache
+
+;; L20 — Nix 2.34 (no API change; transparent dispatch)
+
+;; L21 — importer auto-derive
+(anvil-pkg-import-async-installer
+ :var 'async-installer-git-list
+ :emit "/path/to/imported.el"
+ :scrape-deps t)                       ; new keyword (default t)
+
+;; L22 — compat async (internal refactor; new public primitive)
+(anvil-pkg-compat-make-process-async
+ :name "x"
+ :command '("true")
+ :sentinel #'ignore)                   ; → process or signals on NeLisp
+#+end_src
+
+** Mappings (additions to doc 05)
+
+| DSL / call                                     | IR                                                        | Behaviour                                              |
+|------------------------------------------------+-----------------------------------------------------------+--------------------------------------------------------|
+| =github-fetch= source + emacs-package + no =depends-on= | =:depends-on (SYM ...)= injected post-prefetch | Render uses derived deps; cache hit avoids HTTP        |
+| =:no-auto-deps t= on =pkg-install=             | =:no-auto-deps t= passed through call                     | Skip pre-fetch entirely; render with empty packageRequires |
+| =pkg-rollback ID=                              | none (direct nix shell-out)                                | =nix profile rollback ID= + post-install hook re-run    |
+| Nix ≥ 2.34                                     | none                                                      | Use =nix profile add=, suppress 2.34 warnings          |
+
+** ERT plan (≈14 new tests)
+
+L18 — pre-fetch & cache (anvil-pkg-emacs):
+
+1. =emacs-derive-deps-from-github-pkg-el= — mock HTTP returns a
+   =define-package= sexp; expect parsed symbol list.
+2. =emacs-derive-deps-from-package-requires-header= — mock returns
+   404 for =-pkg.el= and a 200 for =.el= with header; expect
+   parsed deps.
+3. =emacs-derive-deps-explicit-wins= — explicit =:depends-on=
+   passed; mock HTTP NOT called (counter assertion).
+4. =emacs-derive-deps-cache-hit= — second call within TTL;
+   mock HTTP NOT called.
+5. =emacs-derive-deps-cache-expired= — second call after TTL;
+   mock HTTP called again.
+6. =emacs-derive-deps-network-error-degrades= — mock raises
+   timeout; lwarn + empty list + status =:error= cached.
+7. =emacs-derive-deps-non-github-skips= — =url-fetch= source;
+   no HTTP, return nil.
+
+L19 — rollback (anvil-pkg):
+
+8. =list-generations-parses-history-json= — mock =nix profile
+   history --json=; expect plist shape.
+9. =rollback-runs-nix-profile-rollback= — mock =--call-nix-fn=;
+   expect =rollback= subcommand with the right id.
+10. =history-filters-by-package-name= — fixture with 3
+    generations involving 2 packages; query for one returns its
+    events only.
+
+L20 — Nix 2.34 (anvil-pkg):
+
+11. =install-uses-add-on-nix-2-34= — mock =nix --version=
+    returning 2.34.0; expect =add= in args.
+12. =install-uses-install-on-pre-2-34= — mock returning 2.18.5;
+    expect =install= in args.
+
+L21 — importer integration (anvil-pkg-import):
+
+13. =import-scrape-deps-from-local-clone= — fixture clone dir
+    with =foo-pkg.el=; expect emitted form contains
+    =(depends-on ...)= populated; no HTTP called.
+
+L22 — compat async (anvil-pkg-compat):
+
+14. =compat-make-process-async-on-nelisp-rejects= — runtime forced
+    to NeLisp; expect =anvil-pkg-async-not-supported=.
+
+** Reject list (Phase 4-C errors)
+
+- =:no-auto-deps t= passed alongside explicit =(depends-on ...)=
+  → parse warning ("redundant; explicit always wins").  No error.
+- =pkg-rollback= with an =id= not in the local generations mirror
+  → refresh mirror first, then signal =anvil-pkg-error= if still
+  absent.
+- =anvil-pkg-compat-make-process-async= called on NeLisp →
+  =anvil-pkg-async-not-supported=.
+
+** Smoke test additions
+
+#+begin_src elisp
+;; L18 round-trip — no manual depends-on
+(pkg-define magit-test
+  (version "3.3.0")
+  (source (github-fetch :owner "magit" :repo "magit"
+                        :rev "v3.3.0"
+                        :sha256 "sha256-..."))
+  (build-system (emacs-package :format "melpa")))
+(pkg-install 'magit-test :require 'magit)
+;; expect: pre-fetch hits magit-pkg.el on github, derives
+;; (dash transient with-editor compat ...), nix builds, magit loads.
+
+;; L19 rollback round-trip
+(let ((before (pkg-list-generations)))
+  (pkg-install "ripgrep")
+  (let ((after (pkg-list-generations)))
+    (should (> (length after) (length before))))
+  (pkg-rollback)                ; back to "before"
+  (let ((restored (pkg-list-generations)))
+    ;; nix counts the rollback as a NEW generation, not removal
+    (should (= (length restored) (1+ (length after))))))
+#+end_src
+
+* Open questions
+
+** OQ11. raw.githubusercontent.com rate limits
+
+raw.githubusercontent.com is unauthenticated and has soft rate
+limits.  Phase 4-C bets that the per-package cache (TTL 30 days)
++ the small request size keeps us well under any threshold.  If
+real-world usage flushes a 429, OQ11's resolution is to add a
+=PKG_AUTH_TOKEN= env var that anvil-pkg-compat-http-get attaches
+as a bearer token.
+
+** OQ12. =melpaBuild= without a recipe
+
+Sub-task A (Phase 4-B) shipped =:format "melpa"= but =melpaBuild=
+in nixpkgs requires a MELPA recipe file.  When no recipe is
+present in the upstream repo, the Nix build fails.  Phase 4-B
+filed this as OQ7 with a "synthesise minimal recipe via
+postUnpack" sketch; Phase 4-C does NOT take this on (separate
+sub-task in 4-D).  =:format "melpa"= remains caveat emptor for
+non-MELPA-shaped repos.
+
+** OQ13. Rollback granularity
+
+=nix profile rollback= rolls the WHOLE profile, not per-package.
+=pkg-history= can show per-package events but =pkg-rollback= is
+profile-wide.  Phase 4-C accepts this; per-package rollback would
+require synthesising a new generation that drops one entry, which
+is a separate design pass.
+
+** OQ14. =anvil-pkg-compat-http-get= scope
+
+The compat layer needs a tiny HTTP GET primitive for L18 / OQ11.
+Options:
+1. Wrap =anvil-http= (already a sub-module of anvil.el) — but
+   anvil-pkg avoids requiring =anvil-http= today.
+2. Use =url-retrieve-synchronously= directly — Emacs-only, no
+   NeLisp port.
+3. Shell out to =curl= — universal but adds an external dep.
+
+Phase 4-C picks option 2 (=url-retrieve-synchronously=) for the
+Emacs path and a NeLisp stub that signals
+=anvil-pkg-http-not-supported= until Phase 5 grows a NeLisp HTTP
+backend.  Same pattern as =compat-make-process-async=.
+
+* Sub-task decomposition (parallel worktrees, planned)
+
+Sub-task A: L18 + L21 (=anvil-pkg-emacs.el= new + importer
+extension + compat HTTP primitive) + ERT 1-7 + 13.
+
+Sub-task B: L19 (rollback API in =anvil-pkg.el= + state
+namespace) + ERT 8-10.  Independent of A.
+
+Sub-task C: L20 (Nix 2.34 dispatch) + ERT 11-12.  Trivial; bundle
+with B at integration.
+
+Sub-task D: L22 (=compat-make-process-async= refactor + Emacs
+impl + NeLisp stub) + ERT 14.  Touches compat layer only;
+independent of A/B/C but landing it BEFORE A means A's HTTP
+primitive can also use the same compat-runtime branching pattern.
+
+Recommended landing order: D → A → B/C (parallel).
+
+* Effort estimate (planning)
+
+| Sub-task | LOC (src+test, est) | Risk    | Reason                                          |
+|----------+---------------------+---------+-------------------------------------------------|
+| A        | ~250                | medium  | OQ11 rate limits + cache TTL semantics + L21    |
+| B        | ~180                | medium  | OQ13 rollback granularity + state mirror sync   |
+| C        | ~50                 | low     | trivial dispatch fork                           |
+| D        | ~120                | low     | refactor; NeLisp stub already designed in 4-B   |
+| Total    | ~600                | medium  |                                                 |
+
+** Cumulative test count
+
+Phase 4-B baseline: 40.  Phase 4-C target: 54 (+14 new ERTs;
+A=8, B=3, C=2, D=1).
+
+* References
+
+- =04-emacs-packages.org= (Phase 4-A locked decisions L7-L12).
+- =05-phase4b.org= (Phase 4-B L13-L17 + L15 deferral rationale).
+- =anvil-pkg-state= (KV store used for cache + generations
+  mirror).
+- =anvil-pkg-import.el= (Phase 4-B sub-task D — the importer
+  this phase extends).
+- nixpkgs MELPA recipes:
+  https://github.com/NixOS/nixpkgs/tree/master/pkgs/applications/editors/emacs/elisp-packages
+- Nix 2.34 release notes:
+  https://nixos.org/manual/nix/stable/release-notes/rl-2.34.html
+- =async-installer= clone layout:
+  =/home/madblack-21/.emacs.d/external-packages/= (one dir per
+  package by default — sub-task E uses this as primary lookup).
