@@ -10,12 +10,18 @@ Phase 4-B — DESIGN.  Builds on Phase 4-A (commits =089a966= →
 =emacs-package= build-system on top of =pkgs.emacsPackages.trivialBuild=
 plus a 3-layer post-install =load-path= search.
 
-Phase 4-B closes the three open questions Phase 4-A deferred (OQ4
-async, OQ5 melpaBuild, OQ6 native-comp) and adds the migration
-utility for users moving off =async-installer=.
+Phase 4-B closes the open questions Phase 4-A deferred for melpaBuild
+(OQ5), native-comp (OQ6), and async install (OQ4) and adds the
+migration utility for users moving off =async-installer=.
 
-Implementation will again be split into parallel codex sub-tasks
-under =anvil-orchestrator=; claude judges + integrates.
+L15 (auto-derive =:depends-on= from =Package-Requires=) was scoped
+out during integration: the source archive is not local at flake
+render time so the originally specified scraper had nothing to read.
+See L15 below for the deferral rationale.
+
+Implementation was split into parallel sub-tasks; A/C/D shipped on
+=main= (commits =40067ff= / =239141f= / =91dde54=).  Sub-task B is
+DEFERRED to Phase 4-C.
 
 * Goal
 
@@ -37,10 +43,11 @@ replacement for =async-installer= for Nix-having users:
   (version "3.3.0")
   (source (github-fetch :owner "magit" :repo "magit"
                         :rev "v3.3.0" :sha256 "sha256-..."))
-  ;; melpaBuild + Package-Requires header scrape:
+  ;; melpaBuild + native-compiled wrapped Emacs:
   (build-system (emacs-package :format "melpa"
-                               :native-comp t)))
-;; depends-on derived from the package's own Package-Requires header.
+                               :native-comp t))
+  (depends-on (list dash transient with-editor)))
+;; depends-on remains explicit (auto-derive deferred — see L15).
 
 ;; And async installs with a sentinel callback:
 (pkg-install 'magit
@@ -109,32 +116,34 @@ the store, and (c) opt-in matches user preference for slim
 profiles.  Phase 4-C may flip the default once we have measured
 real-world build times.
 
-** L15. =:depends-on= auto-derivation from =Package-Requires=
+** L15. =:depends-on= auto-derivation — DEFERRED TO PHASE 4-C
 
-When the user does NOT supply =(depends-on ...)= and the
-build-system is =(emacs-package ...)=, render time tries to read
-=Package-Requires= from the source tarball / cloned repo and emit
-the corresponding =packageRequires= attr automatically.
+The original Phase 4-B plan called for auto-deriving =:depends-on=
+from the =Package-Requires= header at flake.nix render time.
+Surfaced during sub-task A integration (2026-05-04): /the source
+archive does not exist locally at render time/ — nix has not yet
+been invoked, so there is no .el file to read.  The plan was
+unimplementable as written.
 
-Behaviour:
+Three resolutions were considered:
 
-- Explicit =(depends-on (list ...))= always wins.  No merging.
-- Auto-derive only fires for =emacs-package=, never for stdenv /
-  rust / python / go.
-- Lookup tries (in order): =<pname>-pkg.el= → =<pname>.el= header
-  → =melpaRecipes/<pname>= (last-resort, only when source =:type=
-  is a github recipe).
-- On miss: render with empty =packageRequires=, log a warning,
-  proceed.  The Nix builder will still succeed for self-contained
-  packages.
-- Non-Elisp build-systems with =depends-on= raise at parse time
-  (existing Phase 4-A invariant — unchanged).
+1. /Pure helper ship/ (scraper as a building block, no auto-wire).
+   Rejected as dead code — no caller has a local source dir
+   available at the right point in the flow.
+2. /github-fetch-only HTTP pre-fetch via raw.githubusercontent.com/.
+   Rejected for Phase 4-B scope creep (HTTP error handling, rate
+   limits, sync-vs-async timing with sub-task C, URL parsing for
+   the real =async-installer= =:repo= shape, cache by source sha256).
+3. /Defer L15 entirely to Phase 4-C/, where a dedicated design pass
+   addresses where pre-fetch sits in the install flow (sync block,
+   async stage, or Nix builder-side =postUnpack= hook).
 
-The derivation runs at flake.nix render time (= during
-=pkg-install=, before nix is invoked), not at =pkg-define= time,
-because the source archive may not yet exist when =pkg-define=
-runs.  Implementation lives in =anvil-pkg-emacs.el= (new file) so
-=anvil-pkg-dsl.el= stays pure.
+Resolution 3 chosen.  Phase 4-B ships A/C/D only; the L8 invariant
+(explicit =(depends-on (list ...))= required for =emacs-package=
+deps) remains in force.  Phase 4-C will revisit with a proper
+pre-fetch design and may also extend sub-task D's importer to
+populate =:depends-on= from the local =async-installer= clone (= the
+one realistic path to a local source dir at the right time).
 
 ** L16. =:async= keyword on =pkg-install=
 
@@ -186,21 +195,20 @@ the scraper require.
 
 ** Files touched / added
 
-| File                                | Change                                                             |
-|-------------------------------------+--------------------------------------------------------------------|
-| =anvil-pkg-dsl.el=                  | parser: accept =(emacs-package :format ... :native-comp ...)=      |
-| =anvil-pkg-dsl.el=                  | renderer: dispatch =trivialBuild= vs =melpaBuild= on =:format=    |
-| =anvil-pkg-emacs.el= (new)          | =Package-Requires= header scraper + auto-=:depends-on= injection   |
-| =anvil-pkg.el=                      | =pkg-install :async= keyword + sentinel chain                     |
-| =anvil-pkg-import.el= (new)         | =anvil-pkg-import-async-installer= converter                       |
-| =test/anvil-pkg-dsl-test.el=        | golden tests for melpaBuild + native-comp + format error           |
-| =test/anvil-pkg-emacs-test.el= (new)| header-scrape happy / miss / explicit-wins tests                   |
-| =test/anvil-pkg-test.el=            | =:async= happy / error / NeLisp-unsupported tests (mocked)         |
-| =test/anvil-pkg-import-test.el= (new)| importer round-trip + idempotent re-run tests                      |
-| =docs/design/02-dsl.org=            | sub-form keyword table: =:format=, =:native-comp= rows             |
-| =docs/smoke-test.org=               | new step: install magit via =:format "melpa"= + verify         |
-| =README.org=                        | example: =:async= callback usage + importer one-liner              |
-| =Makefile=                          | =TEST_SRC= picks up the two new test files automatically           |
+| File                                  | Change                                                            |
+|---------------------------------------+-------------------------------------------------------------------|
+| =anvil-pkg-dsl.el=                    | parser: accept =(emacs-package :format ... :native-comp ...)=     |
+| =anvil-pkg-dsl.el=                    | renderer: dispatch =trivialBuild= vs =melpaBuild= on =:format=    |
+| =anvil-pkg.el=                        | =pkg-install :async= keyword + sentinel chain                     |
+| =anvil-pkg-compat.el=                 | =anvil-pkg-compat-runtime= accessor (mockable in tests)           |
+| =anvil-pkg-import.el= (new)           | =anvil-pkg-import-async-installer= converter                      |
+| =test/anvil-pkg-dsl-test.el=          | golden tests for melpaBuild + native-comp + format error          |
+| =test/anvil-pkg-test.el=              | =:async= happy / error / NeLisp-unsupported tests (mocked)        |
+| =test/anvil-pkg-import-test.el= (new) | importer round-trip + idempotent re-run tests                     |
+| =docs/design/02-dsl.org=              | sub-form keyword table: =:format=, =:native-comp= rows            |
+| =docs/smoke-test.org=                 | new step: install via =:format "melpa"= + async path              |
+| =README.org=                          | example: =:async= callback usage + importer one-liner             |
+| =Makefile=                            | =SRC= / =TEST_SRC= pick up =anvil-pkg-import.el= + new tests      |
 
 ** Public surface diff
 
@@ -233,11 +241,10 @@ the scraper require.
 | =(build-system (emacs-package :format "trivial"))= | =(:type emacs-package :format "trivial")=     | =pkgs.emacsPackages.trivialBuild { ... }=        |
 | =(build-system (emacs-package :format "melpa"))=   | =(:type emacs-package :format "melpa")=       | =pkgs.emacsPackages.melpaBuild { ... }=          |
 | =:native-comp t= on emacs-package                  | =:native-comp t= in IR                         | wrapped =emacsPackagesNg= variant (per-render)   |
-| (no =depends-on=, header has =Package-Requires=)   | =:depends-on (SYM ...)= injected at render time | =packageRequires = with pkgs.emacsPackages; [...]= |
 
-** ERT plan (≈10 new tests)
+** ERT plan (12 new tests, all SHIPPED)
 
-DSL parser/renderer:
+DSL parser/renderer (sub-task A, commit =40067ff=, 7 ERTs):
 
 1. =define-build-system-emacs-package-format-trivial= — explicit
    =:format "trivial"= parses to =(:type emacs-package :format "trivial")=.
@@ -247,42 +254,29 @@ DSL parser/renderer:
    =anvil-pkg-dsl-error=.
 4. =define-build-system-emacs-package-native-comp= — =:native-comp t=
    round-trips into IR.
-5. =render-emacs-package-melpa-golden= — full pipeline IR →
+5. =define-rejects-native-comp-on-non-emacs-package= — =:native-comp=
+   on rust/python raises (L13 reject, added during sub-task A).
+6. =render-emacs-package-melpa-golden= — full pipeline IR →
    =melpaBuild { ... }= Nix string.
-6. =render-emacs-package-native-comp-golden= — wrapped variant
-   string.
+7. =render-emacs-package-native-comp-golden= — wrapped variant
+   =(pkgs.emacsPackagesFor pkgs.emacs).<builder>= string.
 
-Header scraper:
+Async install (sub-task C, commit =239141f=, 3 ERTs):
 
-7. =emacs-scrape-package-requires-from-pkg-el= — reads
-   =foo-pkg.el= with a =Package-Requires= sexp, returns symbol
-   list.
-8. =emacs-scrape-package-requires-from-header= — falls back to
-   =;; Package-Requires:= header in =foo.el= when =foo-pkg.el=
-   is absent.
-9. =emacs-scrape-explicit-wins= — when =(depends-on (list ...))=
-   is present, scraper does NOT fire (verified via mock that
-   counts calls).
-10. =emacs-scrape-miss-warns-not-errors= — empty source dir → nil
-    return + warning, install path still succeeds in mock.
-
-Async install:
-
-11. =install-async-happy-runs-on-success= — mocked sentinel chain
-    delivers result to =:on-success= callback.
-12. =install-async-error-routes-to-on-error= — non-zero exit
-    invokes =:on-error= with the error plist (no implicit
-    =signal=).
-13. =install-async-on-nelisp-rejects= — =anvil-pkg-compat-runtime=
+8. =install-async-happy-runs-on-success= — mocked sentinel chain
+   delivers result to =:on-success= callback.
+9. =install-async-error-routes-to-on-error= — non-zero exit
+   invokes =:on-error= with the error plist (no implicit =signal=).
+10. =install-async-on-nelisp-rejects= — =(anvil-pkg-compat-runtime)=
     forced to ='nelisp= raises =anvil-pkg-async-not-supported=.
 
-Importer:
+Importer (sub-task D, commit =91dde54=, 2 ERTs):
 
-14. =import-async-installer-emits-pkg-define-forms= — given a
-    fixture =async-installer-git-list= alist, writes file whose
-    sexps round-trip back through =read=.
-15. =import-async-installer-idempotent= — second run with same
-    input produces identical bytes.
+11. =import-async-installer-emits-pkg-define-forms= — given a
+    fixture =async-installer= entry list, writes file whose sexps
+    round-trip back through =read=.
+12. =import-async-installer-idempotent= — second run with same
+    input produces byte-identical output.
 
 ** Reject list (Phase 4-B errors)
 
@@ -297,13 +291,14 @@ Importer:
 ** Smoke test additions
 
 #+begin_src elisp
-;; melpaBuild path
+;; melpaBuild path (depends-on stays explicit until L15 ships in 4-C)
 (pkg-define magit-test
   (version "3.3.0")
   (source (github-fetch :owner "magit" :repo "magit"
                         :rev "v3.3.0"
                         :sha256 "sha256-..."))
-  (build-system (emacs-package :format "melpa")))
+  (build-system (emacs-package :format "melpa"))
+  (depends-on (list dash transient with-editor)))
 (pkg-install 'magit-test :require 'magit)
 ;; expect: melpaBuild succeeds; magit-autoloads.el on load-path;
 ;; (require 'magit) returns 'magit.
@@ -329,14 +324,6 @@ is found, synthesize a minimal one (=(<pname> :fetcher git :url
 =postUnpack= hook.  Risky?  Maybe.  Phase 4-C may add a
 =:recipe= keyword for explicit override.
 
-** OQ8. Header scraper byte budget
-
-=Package-Requires:= can sit anywhere in the first ~20 lines of a
-.el file.  Reading the whole file is wasteful for large libraries.
-Phase 4-B reads the first 4 KiB only; if the marker is not in
-those bytes, treat as miss.  4 KiB matches what =package.el=
-itself uses.
-
 ** OQ9. Async install on Windows (msys / native)
 
 =make-process= on Windows native Emacs has known stderr buffering
@@ -344,48 +331,41 @@ quirks.  Phase 4-B implements assuming Linux/macOS semantics; a
 Windows fix lands in Phase 4-C if real-world usage flushes the
 issue out.  Smoke test runs on Linux only for now.
 
-** OQ10. Caching the scrape result
-
-Successive =pkg-install= of the same package re-scrapes the
-header.  We could cache by =:source= sha256, but the cost is
-negligible (≪ 1 ms) and the cache invalidation logic is a
-bug-magnet.  Phase 4-B does NOT cache; revisit if profile builds
-become I/O bound.
-
-* Codex parallel decomposition (anvil-orchestrator)
+* Sub-task decomposition (parallel worktrees, all SHIPPED)
 
 Sub-task A: =:format= + =:native-comp= parser/renderer in
-=anvil-pkg-dsl.el= + ERT 1-6.
+=anvil-pkg-dsl.el= + ERT 1-7 (commit =40067ff=, claude direct).
 
-Sub-task B: =anvil-pkg-emacs.el= (header scraper + auto-derive
-hook) + ERT 7-10.  Independent of A — operates on the IR plist
-that A produces.
+Sub-task B: DEFERRED to Phase 4-C — see L15.
 
 Sub-task C: =:async= install + sentinel + callbacks in
-=anvil-pkg.el= + ERT 11-13.  Touches =pkg-install= signature only,
-no DSL surface.
+=anvil-pkg.el= + ERT 8-10 (commit =239141f=, parallel worktree).
+Promoted =anvil-pkg-compat--nelisp-runtime-p= from =defconst= to
+=defvar= and added =anvil-pkg-compat-runtime= accessor function so
+the runtime branch is mockable.
 
-Sub-task D: =anvil-pkg-import.el= + ERT 14-15 + README example.
-Read-only converter, fully independent of A/B/C.
+Sub-task D: =anvil-pkg-import.el= + ERT 11-12 (commit =91dde54=,
+parallel worktree).  Auto-detects two =async-installer-git-list=
+shapes (the design-doc =("owner/repo" :commit X)= form and the
+real =(:repo URL :commit X :branch Y :tag Z :subdir D :main M
+:pre-build CMD)= plist form).
 
-Claude integrates, runs =make test=, runs the smoke-test addition
-(with =NIX_REQUIRED=1=), commits one squashed result per sub-task
-on a Phase 4-B feature branch.  Single integration commit on top
-ties them together with =Co-Authored-By: codex= trailers.
+* Effort estimate (actuals)
 
-* Effort estimate
-
-| Sub-task | LOC (src+test) | Risk    | Reason                                        |
-|----------+----------------+---------+-----------------------------------------------|
-| A        | ~120           | low     | parser extension matches doc 04 pattern        |
-| B        | ~180           | medium  | OQ7 melpa recipe synthesis is the main gotcha |
-| C        | ~150           | medium  | sentinel error routing needs mocked process    |
-| D        | ~100           | low     | =async-installer= shape is well-known          |
-| Total    | ~550           | medium  |                                               |
+| Sub-task | LOC (src+test, actual) | Status                                          |
+|----------+------------------------+-------------------------------------------------|
+| A        | ~180                   | SHIPPED 40067ff (claude direct, ERT +7)          |
+| B        | —                      | DEFERRED to Phase 4-C (see L15)                  |
+| C        | ~210                   | SHIPPED 239141f (worktree, ERT +3 + compat fix)  |
+| D        | ~330                   | SHIPPED 91dde54 (worktree, ERT +2 standalone)    |
+| Total    | ~720                   |                                                  |
 
 ** Cumulative test count
 
-Phase 4-A baseline: 28.  Phase 4-B target: 38 (+10 new ERTs).
+Phase 4-A baseline: 28.  Phase 4-B actual: 40 (+12 new ERTs;
+A=7, C=3, D=2 standalone).  Test budget exceeded the design
+estimate (38) because sub-task A added the cross-type
+=:native-comp= reject (ERT 5) on top of the spec'd 6.
 
 * References
 

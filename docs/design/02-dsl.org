@@ -108,6 +108,10 @@ build system can carry its own fields:
 (build-system (rust :cargo-sha256 "sha256-..."))
 (build-system (python :format "pyproject"))   ; format optional
 (build-system (go :vendor-sha256 "sha256-...")); vendor-sha256 optional
+(build-system emacs-package)                   ; Phase 4-A trivialBuild
+(build-system (emacs-package :format "melpa")) ; Phase 4-B melpaBuild
+(build-system (emacs-package :format "trivial" :native-comp t))
+                                               ; Phase 4-B wrapped Emacs
 #+end_src
 
 Generated derivations:
@@ -118,7 +122,7 @@ Generated derivations:
 | =rust=       | =pkgs.rustPlatform.buildRustPackage=         | =:cargo-sha256=      |
 | =python=     | =pkgs.python3Packages.buildPythonPackage=    | (none)               |
 | =go=         | =pkgs.buildGoModule=                         | (none, defaults to vendorHash = null) |
-| =emacs-package= | =pkgs.emacsPackages.trivialBuild=         | (none) -- Phase 4-A; =:depends-on= for elisp deps |
+| =emacs-package= | =pkgs.emacsPackages.trivialBuild= (default) / =.melpaBuild= (=:format "melpa"=) / wrapped via =(pkgs.emacsPackagesFor pkgs.emacs).<builder>= when =:native-comp t= | (none) -- =:depends-on= for elisp deps; Phase 4-A added the build-system, Phase 4-B added =:format= / =:native-comp= keywords |
 
 * Implementation outline
 
