@@ -143,16 +143,6 @@ will introduce an async variant gated by `:async'."
   "Invoke `nix' with ARGS via `anvil-pkg--call-nix-fn'."
   (funcall anvil-pkg--call-nix-fn args))
 
-(defvar anvil-pkg--make-process-fn #'make-process
-  "Function used to spawn the async `nix' process.  Override in tests.
-
-Mirrors the test-mock pattern of `anvil-pkg--call-nix-fn'.  Called
-with the exact keyword arguments accepted by `make-process' and
-must return a process object (or a fake object whose sentinel can
-be invoked by the test).  Only consulted from the `:async t'
-branch of `pkg-install'; the synchronous path continues to use
-`anvil-pkg-compat-call-process'.")
-
 (defun anvil-pkg--ensure-nix ()
   "Signal `anvil-pkg-nix-not-found' if the nix binary is missing.
 Q1 in design doc 01: loud failure at call site, not at load time.
@@ -315,9 +305,10 @@ Internal helper called by `pkg-install' when NAME is a string."
 (defvar anvil-pkg--write-flake-fn) ; defined in anvil-pkg-dsl.el
 
 ;;;; --- async install -------------------------------------------------------
-;; Phase 4-B sub-task C (design doc 05 L16).  Spawns `nix profile install'
-;; via `make-process' (Emacs only — NeLisp standalone gets a clear error)
-;; and routes the post-install hook + user callbacks through a sentinel.
+;; Phase 4-B sub-task C (design doc 05 L16) introduced the :async path.
+;; Phase 4-C sub-task D (design doc 06 L22) refactored the spawn through
+;; `anvil-pkg-compat-make-process-async' so the runtime branch lives in
+;; the compat layer; this file no longer touches `make-process' directly.
 
 (defun anvil-pkg--async-stderr-string (proc)
   "Return the accumulated stderr string for PROC, or empty string."
@@ -409,23 +400,22 @@ NAME, PLIST and BUILD-SYSTEM-TYPE are stashed on the process via
 callbacks without a closure (closures over PLIST are awkward to
 mock)."
   (anvil-pkg--ensure-nix)
-  (unless (eq (anvil-pkg-compat-runtime) 'emacs)
-    (signal 'anvil-pkg-async-not-supported
-            (list (format "pkg-install :async t requires Emacs runtime; got %S"
-                          (anvil-pkg-compat-runtime)))))
   (let* ((stderr-buf (generate-new-buffer " *anvil-pkg-async-stderr*"))
          (require-supplied (anvil-pkg--plist-has-key-p plist :require))
          (require-sym      (plist-get plist :require))
          (on-success       (plist-get plist :on-success))
          (on-error         (plist-get plist :on-error))
-         (proc (funcall anvil-pkg--make-process-fn
-                        :name (format "anvil-pkg-install-%s" name)
-                        :buffer nil
-                        :command (cons anvil-pkg-nix-program args)
-                        :connection-type 'pipe
-                        :noquery t
-                        :stderr stderr-buf
-                        :sentinel #'anvil-pkg--async-sentinel)))
+         ;; compat-make-process-async signals
+         ;; `anvil-pkg-async-not-supported' on NeLisp; Emacs gets a real
+         ;; process object back from `make-process'.
+         (proc (anvil-pkg-compat-make-process-async
+                :name (format "anvil-pkg-install-%s" name)
+                :buffer nil
+                :command (cons anvil-pkg-nix-program args)
+                :connection-type 'pipe
+                :noquery t
+                :stderr stderr-buf
+                :sentinel #'anvil-pkg--async-sentinel)))
     (process-put proc 'anvil-pkg--stderr-buf       stderr-buf)
     (process-put proc 'anvil-pkg--name             name)
     (process-put proc 'anvil-pkg--build-system-type build-system-type)

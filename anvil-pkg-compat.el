@@ -291,5 +291,37 @@ Functional equivalent of `define-error', but works without it
       (put sym 'error-message message)))
   sym)
 
+;;;; --- async subprocess (Phase 4-C L22) ------------------------------------
+
+;; The error symbol is also redefined in `anvil-pkg.el' (with
+;; `anvil-pkg-error' as parent) so the conditions chain routes
+;; correctly when both files are loaded.  Defining it here too lets
+;; callers that loaded only `anvil-pkg-compat' still signal /
+;; should-error against the symbol on NeLisp.
+(anvil-pkg-compat-define-error-symbol 'anvil-pkg-async-not-supported
+                                      "asynchronous install not supported on this runtime")
+
+(defun anvil-pkg-compat-make-process-async (&rest plist)
+  "Spawn an asynchronous process portably across Emacs and NeLisp.
+
+PLIST mirrors the keyword arguments accepted by Emacs `make-process'
+\(:name :command :sentinel :stderr :connection-type :noquery :buffer\).
+Returns a process object on Emacs.  Signals
+`anvil-pkg-async-not-supported' on the NeLisp standalone runtime —
+Phase 5 will land a real NeLisp backend.
+
+This is the sole runtime-aware async-spawn entry point for
+anvil-pkg sub-modules; consult `anvil-pkg-compat-runtime' for the
+underlying decision."
+  (pcase (anvil-pkg-compat-runtime)
+    ('emacs
+     (apply #'make-process plist))
+    ('nelisp
+     (signal 'anvil-pkg-async-not-supported
+             (list "anvil-pkg-compat-make-process-async: NeLisp runtime has no async backend (Phase 5)")))
+    (other
+     (signal 'anvil-pkg-async-not-supported
+             (list (format "anvil-pkg-compat-make-process-async: unknown runtime %S" other))))))
+
 (provide 'anvil-pkg-compat)
 ;;; anvil-pkg-compat.el ends here

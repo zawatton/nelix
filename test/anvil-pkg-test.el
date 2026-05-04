@@ -336,39 +336,39 @@ TIMEOUT defaults to 5 seconds; raises an ERT failure on overrun."
 (ert-deftest anvil-pkg-test-install-async-happy-runs-on-success ()
   "pkg-install :async t routes a clean exit through :on-success.
 
-Mocks `anvil-pkg--make-process-fn' to spawn `true' (exit 0) while
-preserving the production sentinel + stderr-buffer plumbing.  The
-real process gives us correct `process-status' / `process-get'
-behaviour; the test waits via `accept-process-output' until the
-sentinel has set a captured-flag."
+Mocks `anvil-pkg-compat-make-process-async' (Phase 4-C L22 seam)
+to spawn `true' (exit 0) while preserving the production sentinel
++ stderr-buffer plumbing.  The real process gives us correct
+`process-status' / `process-get' behaviour; the test waits via
+`accept-process-output' until the sentinel has set a captured flag."
   (let* ((captured nil)
-         (make-process-orig (symbol-function 'make-process))
-         (anvil-pkg--make-process-fn
-          (lambda (&rest plist)
-            ;; Replace :command with `true' so the real process exits 0
-            ;; immediately; keep :sentinel / :stderr / :name / :noquery
-            ;; / :connection-type as supplied by production code.
-            (let ((replaced (copy-sequence plist)))
-              (setq replaced (plist-put replaced :command (list "true")))
-              (apply make-process-orig replaced)))))
-    (anvil-pkg-test--with-mock
-        (lambda (_args)
-          ;; :ensure-nix path bypasses executable-find when the mock
-          ;; is installed; this branch should not be hit on :async,
-          ;; but supply a benign return for safety.
-          (list :exit 0 :stdout "" :stderr ""))
-      (let ((proc (pkg-install "ripgrep"
-                               :async t
-                               :on-success
-                               (lambda (result) (setq captured result))
-                               :on-error
-                               (lambda (err)
-                                 (ert-fail
-                                  (format ":on-error fired unexpectedly: %S" err))))))
-        (should (processp proc))
-        (anvil-pkg-test--wait-until (lambda () captured))
-        (should (eq :installed (plist-get captured :status)))
-        (should (equal "ripgrep" (plist-get captured :name)))))))
+         (make-process-orig (symbol-function 'make-process)))
+    (cl-letf (((symbol-function 'anvil-pkg-compat-make-process-async)
+               (lambda (&rest plist)
+                 ;; Replace :command with `true' so the real process exits 0
+                 ;; immediately; keep :sentinel / :stderr / :name / :noquery
+                 ;; / :connection-type as supplied by production code.
+                 (let ((replaced (copy-sequence plist)))
+                   (setq replaced (plist-put replaced :command (list "true")))
+                   (apply make-process-orig replaced)))))
+      (anvil-pkg-test--with-mock
+          (lambda (_args)
+            ;; :ensure-nix path bypasses executable-find when the mock
+            ;; is installed; this branch should not be hit on :async,
+            ;; but supply a benign return for safety.
+            (list :exit 0 :stdout "" :stderr ""))
+        (let ((proc (pkg-install "ripgrep"
+                                 :async t
+                                 :on-success
+                                 (lambda (result) (setq captured result))
+                                 :on-error
+                                 (lambda (err)
+                                   (ert-fail
+                                    (format ":on-error fired unexpectedly: %S" err))))))
+          (should (processp proc))
+          (anvil-pkg-test--wait-until (lambda () captured))
+          (should (eq :installed (plist-get captured :status)))
+          (should (equal "ripgrep" (plist-get captured :name))))))))
 
 (ert-deftest anvil-pkg-test-install-async-error-routes-to-on-error ()
   "pkg-install :async t routes a non-zero exit through :on-error.
@@ -377,45 +377,42 @@ visible in the error plist's :stderr field.  :on-success must NOT
 fire."
   (let* ((captured-err nil)
          (success-fired nil)
-         (make-process-orig (symbol-function 'make-process))
-         (anvil-pkg--make-process-fn
-          (lambda (&rest plist)
-            (let ((replaced (copy-sequence plist)))
-              (setq replaced
-                    (plist-put replaced :command
-                               (list "sh" "-c"
-                                     "printf 'error: cannot resolve flake reference' >&2; exit 1")))
-              (apply make-process-orig replaced)))))
-    (anvil-pkg-test--with-mock
-        (lambda (_args)
-          (list :exit 0 :stdout "" :stderr ""))
-      (let ((proc (pkg-install "nope"
-                               :async t
-                               :on-success
-                               (lambda (_r) (setq success-fired t))
-                               :on-error
-                               (lambda (err) (setq captured-err err)))))
-        (should (processp proc))
-        (anvil-pkg-test--wait-until (lambda () captured-err))
-        (should (null success-fired))
-        (should (numberp (plist-get captured-err :exit)))
-        (should (not (eq 0 (plist-get captured-err :exit))))
-        (should (equal "nope" (plist-get captured-err :name)))
-        (should (eq 'anvil-pkg-nix-failed (plist-get captured-err :error)))
-        (should (string-match-p "cannot resolve"
-                                (or (plist-get captured-err :stderr) "")))))))
+         (make-process-orig (symbol-function 'make-process)))
+    (cl-letf (((symbol-function 'anvil-pkg-compat-make-process-async)
+               (lambda (&rest plist)
+                 (let ((replaced (copy-sequence plist)))
+                   (setq replaced
+                         (plist-put replaced :command
+                                    (list "sh" "-c"
+                                          "printf 'error: cannot resolve flake reference' >&2; exit 1")))
+                   (apply make-process-orig replaced)))))
+      (anvil-pkg-test--with-mock
+          (lambda (_args)
+            (list :exit 0 :stdout "" :stderr ""))
+        (let ((proc (pkg-install "nope"
+                                 :async t
+                                 :on-success
+                                 (lambda (_r) (setq success-fired t))
+                                 :on-error
+                                 (lambda (err) (setq captured-err err)))))
+          (should (processp proc))
+          (anvil-pkg-test--wait-until (lambda () captured-err))
+          (should (null success-fired))
+          (should (numberp (plist-get captured-err :exit)))
+          (should (not (eq 0 (plist-get captured-err :exit))))
+          (should (equal "nope" (plist-get captured-err :name)))
+          (should (eq 'anvil-pkg-nix-failed (plist-get captured-err :error)))
+          (should (string-match-p "cannot resolve"
+                                  (or (plist-get captured-err :stderr) ""))))))))
 
 (ert-deftest anvil-pkg-test-install-async-on-nelisp-rejects ()
   "pkg-install :async t signals on the NeLisp runtime.
-`anvil-pkg-compat-runtime' is the sole branching authority; this
-test forces it to return `nelisp' and verifies the spawn helper
-refuses to call `make-process'."
+`anvil-pkg-compat-runtime' is the sole branching authority and is
+consulted inside `anvil-pkg-compat-make-process-async'; this test
+forces it to return `nelisp' and verifies the spawn helper refuses
+to invoke the underlying `make-process'."
   (cl-letf (((symbol-function 'anvil-pkg-compat-runtime)
-             (lambda () 'nelisp))
-            ;; Should never be consulted, but stub for safety.
-            (anvil-pkg--make-process-fn
-             (lambda (&rest _)
-               (ert-fail ":make-process-fn invoked under NeLisp runtime"))))
+             (lambda () 'nelisp)))
     (anvil-pkg-test--with-mock
         (lambda (_args)
           (list :exit 0 :stdout "" :stderr ""))
