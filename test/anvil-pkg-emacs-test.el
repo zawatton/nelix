@@ -437,5 +437,84 @@ read.  Non-clone shell-outs (e.g. `tar' if reused) return success
             (should (equal '(dash) (anvil-pkg-emacs-derive-deps ir)))
             (should (= first-calls proc-calls))))))))
 
+;;;; --- Phase 4-E L27: MELPA upstream recipe fetch + cache -----------------
+
+(defmacro anvil-pkg-emacs-test--with-melpa-mock (mock-fn &rest body)
+  "Mock `anvil-pkg-emacs--http-fetch' (the inner http call used by
+`anvil-pkg-emacs-fetch-melpa-recipe') with MOCK-FN (1-arg URL → resp
+plist).  Also resets the recipe cache namespace by binding a tmp
+state file."
+  (declare (indent 1))
+  `(let* ((tmp (make-temp-file "anvil-pkg-melpa-test-" nil ".json"))
+          (anvil-pkg-state-file tmp)
+          (anvil-pkg-state--cache 'unloaded)
+          (anvil-pkg-state--loaded-from nil))
+     (unwind-protect
+         (progn
+           (delete-file tmp)
+           (cl-letf (((symbol-function 'anvil-pkg-emacs--http-fetch)
+                      ,mock-fn))
+             ,@body))
+       (when (file-exists-p tmp) (delete-file tmp)))))
+
+(ert-deftest anvil-pkg-emacs-test-fetch-melpa-recipe-hit-caches ()
+  "200 from raw.githubusercontent.com → trimmed body, cache `:hit'."
+  (anvil-pkg-emacs-test--with-melpa-mock
+      (lambda (url)
+        (should (string-prefix-p
+                 "https://raw.githubusercontent.com/melpa/melpa/master/recipes/helm"
+                 url))
+        (list :status 200
+              :body "  (helm :fetcher git :url \"https://github.com/emacs-helm/helm\")\n  "))
+    (let ((recipe (anvil-pkg-emacs-fetch-melpa-recipe "helm")))
+      (should (equal recipe
+                     "(helm :fetcher git :url \"https://github.com/emacs-helm/helm\")"))
+      ;; Cache stores the trimmed body + :hit status.
+      (let ((cached (anvil-pkg-state-get
+                     anvil-pkg-emacs--melpa-recipe-namespace "helm")))
+        (should (equal :hit (plist-get cached :status)))
+        (should (equal recipe (plist-get cached :recipe)))))))
+
+(ert-deftest anvil-pkg-emacs-test-fetch-melpa-recipe-miss-caches ()
+  "404 → returns nil, cache stores `:miss' (negative cache)."
+  (anvil-pkg-emacs-test--with-melpa-mock
+      (lambda (_url) (list :status 404 :body ""))
+    (should (null (anvil-pkg-emacs-fetch-melpa-recipe "no-such-pkg")))
+    (let ((cached (anvil-pkg-state-get
+                   anvil-pkg-emacs--melpa-recipe-namespace "no-such-pkg")))
+      (should (equal :miss (plist-get cached :status)))
+      (should (null (plist-get cached :recipe))))))
+
+(ert-deftest anvil-pkg-emacs-test-fetch-melpa-recipe-error-caches ()
+  "Network error → returns nil, cache stores `:error'."
+  (anvil-pkg-emacs-test--with-melpa-mock
+      (lambda (_url) (list :status 500 :body "internal"))
+    (should (null (anvil-pkg-emacs-fetch-melpa-recipe "transient")))
+    (let ((cached (anvil-pkg-state-get
+                   anvil-pkg-emacs--melpa-recipe-namespace "transient")))
+      (should (equal :error (plist-get cached :status))))))
+
+(ert-deftest anvil-pkg-emacs-test-fetch-melpa-recipe-cache-hit-skips-http ()
+  "Second call within TTL → no HTTP round-trip."
+  (let ((http-calls 0))
+    (anvil-pkg-emacs-test--with-melpa-mock
+        (lambda (_url)
+          (cl-incf http-calls)
+          (list :status 200 :body "(magit :fetcher github :repo \"magit/magit\")"))
+      (let ((first (anvil-pkg-emacs-fetch-melpa-recipe "magit")))
+        (should (equal first "(magit :fetcher github :repo \"magit/magit\")"))
+        (should (= 1 http-calls))
+        (let ((second (anvil-pkg-emacs-fetch-melpa-recipe "magit")))
+          (should (equal first second))
+          ;; No additional HTTP call.
+          (should (= 1 http-calls)))))))
+
+(ert-deftest anvil-pkg-emacs-test-render-fetch-fn-respects-defcustom ()
+  "Default `anvil-pkg-emacs--render-fetch-fn' returns nil when the
+upstream-fetch defcustom is off (Phase 4-D parity)."
+  (let ((anvil-pkg-emacs-melpa-upstream-fetch nil))
+    ;; Even if cache happens to have a value, the lambda short-circuits.
+    (should (null (funcall anvil-pkg-emacs--render-fetch-fn "anything")))))
+
 (provide 'anvil-pkg-emacs-test)
 ;;; anvil-pkg-emacs-test.el ends here

@@ -56,6 +56,11 @@
 (declare-function anvil-pkg--profile-args "anvil-pkg")
 (declare-function anvil-pkg--nix-install-subcommand "anvil-pkg")
 
+;; Phase 4-E L27: render-time MELPA upstream fetch fluid lives in
+;; anvil-pkg-emacs (loaded lazily when emacs-package backend fires).
+;; Declare for byte-compile; runtime guards via `boundp' / `functionp'.
+(defvar anvil-pkg-emacs--render-fetch-fn)
+
 ;;;; --- error symbols ---------------------------------------------------------
 
 (anvil-pkg-compat-define-error-symbol 'anvil-pkg-dsl-error
@@ -506,6 +511,24 @@ auto-synthesis of a postUnpack block writing recipes/<pname>.
              (when post-unpack (list post-unpack))
              (anvil-pkg--render-post-bs-fields ir)))))
 
+(defconst anvil-pkg--default-melpa-files
+  '("*.el" "*.el.in" "dir"
+    "*.info" "*.texi" "*.texinfo"
+    "doc/dir" "doc/*.info" "doc/*.texi" "doc/*.texinfo"
+    "lisp/*.el" "lisp/*.el.in" "lisp/dir"
+    "lisp/*.info" "lisp/*.texi" "lisp/*.texinfo"
+    (:exclude ".dir-locals.el" "lisp/.dir-locals.el"
+              "test.el" "tests.el" "*-test.el" "*-tests.el"
+              "lisp/test.el" "lisp/tests.el"
+              "lisp/*-test.el" "lisp/*-tests.el"))
+  "Default :files glob spec applied when :melpa-files is omitted.
+
+Mirrors `package-build-default-files-spec' from MELPA's
+package-build.  Phase 4-E L28 promoted this from the previous
+=(\"*.el\")= default so subdir / .el.in / .info layouts work
+without explicit :melpa-files.  Users still override by supplying
+their own list.")
+
 (defun anvil-pkg--render-melpa-post-unpack (ir)
   "Return a `postUnpack' Nix field for IR or nil if no synth applies.
 
@@ -514,10 +537,17 @@ Phase 4-D L23 logic, evaluated only for :format \"melpa\":
 - If :melpa-recipe is supplied, use it verbatim (synth skipped).
 - Else dispatch on :melpa-synth (default `auto'):
   - `never'                         → return nil (no synth).
-  - `auto' / `force' on github-fetch → synth recipe, :url is the
-                                       https://github.com/<owner>/<repo> URL.
-  - `auto' / `force' on git-fetch    → synth recipe, :url is the
-                                       upstream URL.
+  - `auto' (default) on github-fetch / git-fetch:
+    - Phase 4-E L27: when
+      `anvil-pkg-emacs-melpa-upstream-fetch' is non-nil, consult
+      MELPA upstream via `anvil-pkg-emacs--render-fetch-fn'; on
+      hit emit the canonical recipe verbatim, on miss fall back
+      to local synth.
+    - When the defcustom is nil (default), behave like Phase 4-D
+      = synth directly.
+  - `force' on github-fetch / git-fetch:
+    - Always synth, never consult upstream.  This is the user's
+      explicit \"do not consult MELPA\" signal.
   - `auto' on url-fetch              → return nil (silently skip;
                                        tarball cannot be re-pinned).
   - `force' on url-fetch             → already rejected at parse time
@@ -527,7 +557,8 @@ Phase 4-D L23 logic, evaluated only for :format \"melpa\":
          (pname (symbol-name name))
          (explicit (plist-get bs :melpa-recipe))
          (synth (or (plist-get bs :melpa-synth) 'auto))
-         (files (or (plist-get bs :melpa-files) '("*.el"))))
+         (files (or (plist-get bs :melpa-files)
+                    anvil-pkg--default-melpa-files)))
     (cond
      ;; Explicit recipe wins, unconditionally.
      ((and (stringp explicit) (> (length explicit) 0))
@@ -547,9 +578,33 @@ Phase 4-D L23 logic, evaluated only for :format \"melpa\":
                     ('url-fetch nil)
                     (_ nil))))
         (when url
-          (let ((recipe (anvil-pkg--synth-melpa-recipe pname url files)))
+          ;; L27: auto + git-style source → optionally consult upstream.
+          (let* ((upstream
+                  (and (eq synth 'auto)
+                       (memq src-type '(github-fetch git-fetch))
+                       (anvil-pkg--fetch-upstream-melpa-recipe pname)))
+                 (recipe
+                  (or (and (stringp upstream) (> (length upstream) 0)
+                           upstream)
+                      (anvil-pkg--synth-melpa-recipe pname url files))))
             (anvil-pkg--render-post-unpack-block pname recipe)))))
      (t nil))))
+
+(defun anvil-pkg--fetch-upstream-melpa-recipe (pname)
+  "Indirect through `anvil-pkg-emacs--render-fetch-fn' for upstream lookup.
+
+Returns STRING (the recipe body) or nil.  Wraps the fluid in a
+`condition-case' so a defective stub during render does not abort
+the flake render — failure → nil → synth fallback.  Phase 4-E L27."
+  (condition-case err
+      (and (boundp 'anvil-pkg-emacs--render-fetch-fn)
+           (functionp anvil-pkg-emacs--render-fetch-fn)
+           (funcall anvil-pkg-emacs--render-fetch-fn pname))
+    (error
+     (lwarn 'anvil-pkg :warning
+            "anvil-pkg: melpa upstream fetch fluid raised %S for %s; falling back to synth"
+            err pname)
+     nil)))
 
 (defun anvil-pkg--synth-melpa-recipe (pname url files)
   "Return synthesised MELPA recipe string for PNAME / URL / FILES.

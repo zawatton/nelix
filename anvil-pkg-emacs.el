@@ -124,6 +124,35 @@ a per-call timeout; tests rely on mocking instead."
   :type 'integer
   :group 'anvil-pkg-emacs)
 
+(defcustom anvil-pkg-emacs-melpa-upstream-fetch nil
+  "Whether `:melpa-synth `auto'' consults the MELPA upstream recipe.
+
+When non-nil, `anvil-pkg--render-melpa-post-unpack' (called at
+flake render / install time) GETs
+\"https://raw.githubusercontent.com/melpa/melpa/master/recipes/<pname>\"
+and emits the upstream body verbatim when present, falling back to
+the local synth on miss / error.
+
+Default nil to preserve Phase 4-D behaviour (pure local synth, no
+network calls during render).  Opt-in via:
+
+  (setq anvil-pkg-emacs-melpa-upstream-fetch t)
+
+`:melpa-synth `force'' explicitly bypasses this lookup even when
+the defcustom is non-nil — it is the user's \"synth, do not consult
+upstream\" signal.  Phase 4-E L27."
+  :type 'boolean
+  :group 'anvil-pkg-emacs)
+
+(defcustom anvil-pkg-emacs-melpa-recipe-ttl-seconds (* 7 24 60 60)
+  "TTL (seconds) for cached MELPA upstream recipe lookups.
+
+Default 7 days.  Persisted to `anvil-pkg-state' namespace
+`anvil-pkg:melpa-recipe', shared with `anvil-pkg-emacs--deps-namespace'
+in storage but distinct in key prefix.  Phase 4-E L27."
+  :type 'integer
+  :group 'anvil-pkg-emacs)
+
 (defconst anvil-pkg-emacs--deps-namespace "anvil-pkg:emacs-deps"
   "`anvil-pkg-state' namespace for Package-Requires lookup cache.
 
@@ -135,6 +164,18 @@ Key shapes (one per source type):
 Value = plist (:deps (SYM ...) :status SYM) where status ∈
 (:hit-pkg-el :hit-header :miss :error).  TTL is supplied via
 `anvil-pkg-emacs-cache-ttl-seconds' on every put.")
+
+(defconst anvil-pkg-emacs--melpa-recipe-namespace "anvil-pkg:melpa-recipe"
+  "`anvil-pkg-state' namespace for MELPA upstream recipe lookups.
+
+Key = bare PNAME string.  Value plist
+=(:status SYM :recipe STRING-or-nil)= where status ∈
+=(:hit :miss :error)=.  TTL =anvil-pkg-emacs-melpa-recipe-ttl-seconds=
+(default 7 days).  Phase 4-E L27.")
+
+(defconst anvil-pkg-emacs--melpa-recipe-base-url
+  "https://raw.githubusercontent.com/melpa/melpa/master/recipes/"
+  "Base URL for raw MELPA recipe files; PNAME is appended verbatim.")
 
 ;;;; --- parsers --------------------------------------------------------------
 
@@ -259,6 +300,95 @@ dereferences the namespaced KV."
                        key
                        (list :deps deps :status status)
                        anvil-pkg-emacs-cache-ttl-seconds))
+
+;;;; --- MELPA upstream recipe lookup (Phase 4-E L27) ------------------------
+
+(defun anvil-pkg-emacs--melpa-recipe-cache-get (pname)
+  "Return cached upstream recipe entry for PNAME or nil if missing/expired.
+
+TTL enforcement happens inside `anvil-pkg-state'."
+  (anvil-pkg-state-get anvil-pkg-emacs--melpa-recipe-namespace pname))
+
+(defun anvil-pkg-emacs--melpa-recipe-cache-put (pname recipe status)
+  "Store RECIPE / STATUS under PNAME in the upstream-recipe namespace."
+  (anvil-pkg-state-put anvil-pkg-emacs--melpa-recipe-namespace
+                       pname
+                       (list :recipe recipe :status status)
+                       anvil-pkg-emacs-melpa-recipe-ttl-seconds))
+
+(defun anvil-pkg-emacs-fetch-melpa-recipe (pname)
+  "Return the canonical MELPA upstream recipe body for PNAME, or nil.
+
+Hits =https://raw.githubusercontent.com/melpa/melpa/master/recipes/PNAME=
+on first call within TTL; subsequent calls within
+`anvil-pkg-emacs-melpa-recipe-ttl-seconds' return the cached body
+without an HTTP round-trip.  Returns the body as a single trimmed
+string (no surrounding newlines / whitespace).
+
+Failure semantics — never signals:
+  - Network error / non-200 → cache `:miss' / `:error', return nil.
+  - Empty body              → cache `:miss', return nil.
+  - Cache hit               → return stored recipe (may be nil for
+                              negative cache).
+
+This helper is used by `anvil-pkg--render-melpa-post-unpack' via
+the indirection `anvil-pkg-emacs--render-fetch-fn'.  Phase 4-E L27."
+  (when (and (stringp pname) (> (length pname) 0))
+    (let ((cached (anvil-pkg-emacs--melpa-recipe-cache-get pname)))
+      (cond
+       (cached (plist-get cached :recipe))
+       (t (anvil-pkg-emacs--melpa-recipe-fetch-and-cache pname))))))
+
+(defun anvil-pkg-emacs--melpa-recipe-fetch-and-cache (pname)
+  "Run the upstream recipe HTTP, cache the outcome, return body or nil."
+  (let ((url (concat anvil-pkg-emacs--melpa-recipe-base-url pname)))
+    (condition-case err
+        (let* ((resp (anvil-pkg-emacs--http-fetch url))
+               (status (plist-get resp :status))
+               (body   (plist-get resp :body)))
+          (cond
+           ((and (eq status 200)
+                 (stringp body)
+                 (> (length (string-trim body)) 0))
+            (let ((trimmed (string-trim body)))
+              (anvil-pkg-emacs--melpa-recipe-cache-put pname trimmed :hit)
+              trimmed))
+           ((eq status 200)
+            (anvil-pkg-emacs--melpa-recipe-cache-put pname nil :miss)
+            nil)
+           ((eq status 404)
+            (anvil-pkg-emacs--melpa-recipe-cache-put pname nil :miss)
+            nil)
+           (t
+            (lwarn 'anvil-pkg :warning
+                   "anvil-pkg-emacs: melpa recipe fetch %s returned status %S"
+                   url status)
+            (anvil-pkg-emacs--melpa-recipe-cache-put pname nil :error)
+            nil)))
+      (error
+       (lwarn 'anvil-pkg :warning
+              "anvil-pkg-emacs: melpa recipe fetch failed for %s: %S"
+              pname err)
+       (anvil-pkg-emacs--melpa-recipe-cache-put pname nil :error)
+       nil))))
+
+(defun anvil-pkg-emacs-clear-melpa-recipe-cache ()
+  "Clear the persistent MELPA upstream recipe cache namespace."
+  (interactive)
+  (anvil-pkg-state-clear anvil-pkg-emacs--melpa-recipe-namespace))
+
+(defvar anvil-pkg-emacs--render-fetch-fn
+  (lambda (pname)
+    (when anvil-pkg-emacs-melpa-upstream-fetch
+      (anvil-pkg-emacs-fetch-melpa-recipe pname)))
+  "Render-time MELPA upstream fetch indirection.
+
+A 1-arg lambda PNAME → STRING-or-nil.  The default consults the
+defcustom `anvil-pkg-emacs-melpa-upstream-fetch'; when nil, returns
+nil immediately (preserving Phase 4-D pure-render semantics).
+
+Tests rebind via `cl-letf' / `let' to inject deterministic stub
+recipes without touching the network or the cache.")
 
 ;;;; --- public API ----------------------------------------------------------
 

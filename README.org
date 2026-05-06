@@ -17,7 +17,7 @@ agents can install anything by writing one Lisp form.
 
 * Status
 
-*Phase 1+2+3+4-A+4-B+4-C+4-D SHIPPED + REAL-NIX VERIFIED* (2026-05-06) —
+*Phase 1+2+3+4-A+4-B+4-C+4-D+4-E SHIPPED + REAL-NIX VERIFIED* (2026-05-06) —
 Full DSL stack on top of the Nix store with multiple fetcher /
 build-system support, an =emacs-package= backend that round-trips
 Elisp libraries through =trivialBuild= / =melpaBuild= with optional
@@ -26,11 +26,11 @@ Elisp libraries through =trivialBuild= / =melpaBuild= with optional
 git sources with cross-session caching in =anvil-pkg-state=, profile
 generation rollback (=pkg-list-generations= / =pkg-rollback= /
 =pkg-rollback-package= / =pkg-history=), Nix 2.34 =install=→=add=
-dispatch, MELPA recipe auto-synthesis via =postUnpack=, and a
-one-shot =async-installer= importer that auto-populates =:depends-on=
-from local clones.
+dispatch, MELPA recipe auto-synthesis via =postUnpack= with optional
+upstream MELPA recipe lookup, and a one-shot =async-installer=
+importer that auto-populates =:depends-on= from local clones.
 
-- ERT 75/75 PASS (mocked, runs without a nix binary).
+- ERT 84/84 PASS (mocked, runs without a nix binary).
 - /Real-nix smoke test/ executed end-to-end in a =nixos/nix:2.34=
   rootless podman container with Emacs 30.2:
   - =(pkg-install "hello")= installed GNU Hello into an isolated
@@ -65,6 +65,14 @@ Public Elisp API uses the short =pkg-= prefix:
   extended to =url-fetch= (tarball header scrape) and =git-fetch=
   (shallow clone scrape), =pkg-rollback-package= per-package
   rollback — Phase 4-D
+- =anvil-pkg-emacs-fetch-melpa-recipe= public helper +
+  =anvil-pkg-emacs-melpa-upstream-fetch= defcustom for opt-in
+  upstream MELPA recipe lookup (canonical recipe wins over local
+  synth when the defcustom is non-nil and a recipe exists at
+  =melpa/melpa@master/recipes/<pname>=); upgraded =:melpa-files=
+  default from =("*.el")= to MELPA's full
+  =package-build-default-files-spec= so subdir / .el.in / .info
+  layouts work without manual configuration — Phase 4-E
 
 Long-form aliases (=anvil-pkg-install= etc.) are provided via
 =defalias= for Emacs-prefix purists.
@@ -139,6 +147,7 @@ your config should not require learning a new macro language.
 | 4-B   | =:format= / =:native-comp= / =:async= callbacks + importer (L15 def'd) | *SHIPPED*      |
 | 4-C   | L18 pre-fetch + L19 rollback + L20 Nix 2.34 + L22 compat async         | *SHIPPED*      |
 | 4-D   | melpaBuild recipe synthesis + url/git L18 + per-pkg rollback + state   | *SHIPPED*      |
+| 4-E   | MELPA upstream recipe fetch (opt-in) + better :melpa-files default     | *SHIPPED*      |
 | 5+    | NeLisp async backend + HTTP backend (replaces Phase 4-C/4-D stubs)     | research       |
 
 See =docs/design/01-overview.org= for the full Phase 1 contract.
@@ -301,6 +310,31 @@ In your Emacs init:
 (pkg-clear-cache 'deps)        ; just the Package-Requires lookup cache
 (pkg-clear-cache 'nix-version) ; just the Nix-version detection cache
 (pkg-clear-cache 'generations) ; just the profile generations mirror
+
+;; Phase 4-E — opt-in MELPA upstream recipe fetch.  When enabled,
+;; :melpa-synth 'auto first tries
+;; raw.githubusercontent.com/melpa/melpa/master/recipes/<pname>;
+;; on hit it emits the canonical recipe verbatim instead of the local
+;; synth fallback.  Cached per package for 7 days in anvil-pkg-state.
+(setq anvil-pkg-emacs-melpa-upstream-fetch t)
+(pkg-define magit
+  (version "3.3.0")
+  (source (github-fetch :owner "magit" :repo "magit"
+                        :rev "v3.3.0" :sha256 "sha256-..."))
+  (build-system (emacs-package :format "melpa")))
+;; → upstream MELPA recipe used when present; falls back to synth on miss.
+
+;; Phase 4-E — :melpa-files default upgraded to MELPA's canonical
+;; package-build-default-files-spec.  When :melpa-files is omitted, the
+;; synth carries ("*.el" "*.el.in" "dir" "*.info" "*.texi" "*.texinfo"
+;; "doc/dir" "doc/*.info" ... "lisp/*.el" "lisp/*.el.in" ... :exclude
+;; tests / .dir-locals.el).  Override only when you need a tighter list.
+(pkg-define dash
+  (version "2.20.0")
+  (source (github-fetch :owner "magnars" :repo "dash.el"
+                        :rev "2.20.0" :sha256 "sha256-..."))
+  (build-system (emacs-package :format "melpa")))
+;; → synth recipe now covers lisp/ subdir + .el.in + .info layouts.
 #+end_src
 
 CLI sub-command (=anvil pkg install ...=) lands in =anvil.el= via a
@@ -309,7 +343,7 @@ separate PR; until then call the Elisp API directly.
 ** Run the test suite
 
 #+begin_src shell
-make test       # 75 ERT tests, no nix binary required (all mocked)
+make test       # 84 ERT tests, no nix binary required (all mocked)
 make compile    # byte-compile, warnings-as-errors
 #+end_src
 

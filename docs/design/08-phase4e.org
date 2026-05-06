@@ -1,11 +1,19 @@
 #+title: anvil-pkg — Phase 4-E: MELPA upstream recipe fetch + better :files default
 #+author: zawatton
 #+date: 2026-05-06
-#+property: status DRAFT
+#+property: status PHASE-4E-SHIPPED
 
 * STATUS
 
-Phase 4-E — DRAFT 2026-05-06.  Picks up two of the three deferred
+Phase 4-E — SHIPPED 2026-05-06.  Single-commit landing on canonical
+=main= (no parallel sub-tasks; scope was small enough that worktree
+isolation overhead would dwarf the implementation work).
+
+ERT 75 → 84 (+9, design target +6 was conservative — added one extra
+defcustom-respect ERT plus three L27 fluid-binding ERTs that
+proved cheaper to write inline than fold together).
+
+Picks up two of the three deferred
 micro-phases enumerated in Phase 4-D's residual list:
 
 - =anvil-pkg-emacs-has-recipe-p= upstream check (lifted to the more

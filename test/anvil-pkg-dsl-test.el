@@ -441,34 +441,44 @@
 (ert-deftest anvil-pkg-dsl-test-render-emacs-package-melpa-golden ()
   "Renderer emits melpaBuild when :format is \"melpa\".
 Phase 4-D L23: github-fetch + default :melpa-synth `auto' adds a
-postUnpack block synthesising recipes/<pname>."
-  (let ((ir '(:name magit
-              :version "3.3.0"
-              :source (:type github-fetch
-                       :owner "magit"
-                       :repo "magit"
-                       :rev "v3.3.0"
-                       :sha256 "sha256-magit")
-              :build-system (:type emacs-package :format "melpa")
-              :depends-on (dash transient)))
-        (expected (concat
-                   "pkgs.emacsPackages.melpaBuild {\n"
-                   "  pname = \"magit\";\n"
-                   "  version = \"3.3.0\";\n"
-                   "  src = pkgs.fetchFromGitHub {\n"
-                   "    owner = \"magit\";\n"
-                   "    repo = \"magit\";\n"
-                   "    rev = \"v3.3.0\";\n"
-                   "    sha256 = \"sha256-magit\";\n"
-                   "  };\n"
-                   "  packageRequires = with pkgs.emacsPackages; [ dash transient ];\n"
-                   "  postUnpack = ''\n"
-                   "    mkdir -p $sourceRoot/recipes\n"
-                   "    cat > $sourceRoot/recipes/magit <<'ANVIL_PKG_RECIPE_EOF'\n"
-                   "    (magit :fetcher git :url \"https://github.com/magit/magit\" :files (\"*.el\"))\n"
-                   "    ANVIL_PKG_RECIPE_EOF\n"
-                   "  '';\n"
-                   "}")))
+postUnpack block synthesising recipes/<pname>.
+Phase 4-E L28: default :files comes from
+`anvil-pkg--default-melpa-files' (full package-build spec)."
+  (let* ((ir '(:name magit
+               :version "3.3.0"
+               :source (:type github-fetch
+                        :owner "magit"
+                        :repo "magit"
+                        :rev "v3.3.0"
+                        :sha256 "sha256-magit")
+               :build-system (:type emacs-package :format "melpa")
+               :depends-on (dash transient)))
+         (recipe-line
+          (concat "    (magit :fetcher git :url "
+                  "\"https://github.com/magit/magit\" :files "
+                  (format "(%s)"
+                          (mapconcat (lambda (f) (format "%S" f))
+                                     anvil-pkg--default-melpa-files
+                                     " "))
+                  ")\n"))
+         (expected (concat
+                    "pkgs.emacsPackages.melpaBuild {\n"
+                    "  pname = \"magit\";\n"
+                    "  version = \"3.3.0\";\n"
+                    "  src = pkgs.fetchFromGitHub {\n"
+                    "    owner = \"magit\";\n"
+                    "    repo = \"magit\";\n"
+                    "    rev = \"v3.3.0\";\n"
+                    "    sha256 = \"sha256-magit\";\n"
+                    "  };\n"
+                    "  packageRequires = with pkgs.emacsPackages; [ dash transient ];\n"
+                    "  postUnpack = ''\n"
+                    "    mkdir -p $sourceRoot/recipes\n"
+                    "    cat > $sourceRoot/recipes/magit <<'ANVIL_PKG_RECIPE_EOF'\n"
+                    recipe-line
+                    "    ANVIL_PKG_RECIPE_EOF\n"
+                    "  '';\n"
+                    "}")))
     (should (equal expected (anvil-pkg-render-nix ir)))))
 
 (ert-deftest anvil-pkg-dsl-test-render-emacs-package-native-comp-golden ()
@@ -498,7 +508,9 @@ postUnpack block synthesising recipes/<pname>."
 
 (ert-deftest anvil-pkg-dsl-test-melpa-synth-auto-with-github-fetch ()
   "L23: :format \"melpa\" + github-fetch + default `:melpa-synth auto'
-emits a postUnpack block carrying the github URL."
+emits a postUnpack block carrying the github URL.
+Phase 4-E L28: synth uses the full default :files spec when
+:melpa-files is omitted."
   (let* ((ir '(:name helm
                :version "3.9.7"
                :source (:type github-fetch
@@ -512,11 +524,16 @@ emits a postUnpack block carrying the github URL."
     (should (string-match-p "mkdir -p \\$sourceRoot/recipes" out))
     (should (string-match-p "cat > \\$sourceRoot/recipes/helm" out))
     (should (string-match-p
-             "(helm :fetcher git :url \"https://github\\.com/emacs-helm/helm\" :files (\"\\*\\.el\"))"
-             out))))
+             "(helm :fetcher git :url \"https://github\\.com/emacs-helm/helm\" :files ("
+             out))
+    ;; L28: new default expands to lisp/*.el etc., so the synth carries
+    ;; more than the bare ("*.el") glob.
+    (should (string-match-p "\"lisp/\\*\\.el\"" out))
+    (should (string-match-p ":exclude" out))))
 
 (ert-deftest anvil-pkg-dsl-test-melpa-synth-auto-with-git-fetch ()
-  "L23: :format \"melpa\" + git-fetch + default `auto' uses the upstream URL."
+  "L23: :format \"melpa\" + git-fetch + default `auto' uses the upstream URL.
+Phase 4-E L28: default :files spec is the full package-build glob."
   (let* ((ir '(:name myelp
                :version "0.1.0"
                :source (:type git-fetch
@@ -527,8 +544,10 @@ emits a postUnpack block carrying the github URL."
          (out (anvil-pkg-render-nix ir)))
     (should (string-match-p "postUnpack = ''" out))
     (should (string-match-p
-             "(myelp :fetcher git :url \"https://example\\.com/myelp\\.git\" :files (\"\\*\\.el\"))"
-             out))))
+             "(myelp :fetcher git :url \"https://example\\.com/myelp\\.git\" :files ("
+             out))
+    (should (string-match-p "\"lisp/\\*\\.el\"" out))
+    (should (string-match-p ":exclude" out))))
 
 (ert-deftest anvil-pkg-dsl-test-melpa-synth-auto-skipped-for-url-fetch ()
   "L23: :format \"melpa\" + url-fetch + `auto' silently skips synth
@@ -613,6 +632,107 @@ synthesised recipe."
     (should (string-match-p
              "(helm :fetcher git :url \"https://github\\.com/emacs-helm/helm\" :files (\"\\*\\.el\" \"lisp/\\*\\.el\"))"
              out-files))))
+
+;;;; --- Phase 4-E sub-task: L27 upstream MELPA recipe fetch + L28 default ----
+
+(ert-deftest anvil-pkg-dsl-test-l28-default-files-uses-package-build-spec ()
+  "L28: default :melpa-files spec is `anvil-pkg--default-melpa-files'.
+
+When :melpa-files is omitted, the synth carries the full
+`package-build-default-files-spec' equivalent so subdir / .el.in /
+.info layouts match without manual configuration."
+  (let* ((ir '(:name dash
+               :version "2.20.0"
+               :source (:type github-fetch
+                        :owner "magnars"
+                        :repo "dash.el"
+                        :rev "2.20.0"
+                        :sha256 "sha256-dash")
+               :build-system (:type emacs-package :format "melpa")))
+         (out (anvil-pkg-render-nix ir)))
+    ;; Top-level patterns
+    (should (string-match-p "\"\\*\\.el\"" out))
+    (should (string-match-p "\"\\*\\.el\\.in\"" out))
+    ;; Subdir patterns
+    (should (string-match-p "\"lisp/\\*\\.el\"" out))
+    ;; Doc patterns
+    (should (string-match-p "\"\\*\\.info\"" out))
+    ;; Exclusion clause
+    (should (string-match-p ":exclude" out))
+    (should (string-match-p "\"\\*-test\\.el\"" out))))
+
+(ert-deftest anvil-pkg-dsl-test-l27-auto-uses-upstream-recipe-when-fluid-hits ()
+  "L27: :melpa-synth `auto' + render-fetch fluid returning recipe →
+upstream body is emitted verbatim (no local synth).
+
+The fluid is normally consulted only when
+`anvil-pkg-emacs-melpa-upstream-fetch' is non-nil (it short-circuits
+to nil otherwise), but the dsl render delegates entirely to the
+fluid value, so re-binding it directly with a stub bypasses the
+defcustom gate for test purposes."
+  (let* ((upstream-recipe
+          "(magit :fetcher github :repo \"magit/magit\" :files (\"lisp/*.el\" \"*.texi\"))")
+         (anvil-pkg-emacs--render-fetch-fn
+          (lambda (pname) (when (equal pname "magit") upstream-recipe)))
+         (ir '(:name magit
+               :version "3.3.0"
+               :source (:type github-fetch
+                        :owner "magit"
+                        :repo "magit"
+                        :rev "v3.3.0"
+                        :sha256 "sha256-magit")
+               :build-system (:type emacs-package :format "melpa")))
+         (out (anvil-pkg-render-nix ir)))
+    (should (string-match-p "postUnpack = ''" out))
+    ;; The upstream body landed verbatim.
+    (should (string-match-p
+             ":fetcher github :repo \"magit/magit\" :files (\"lisp/\\*\\.el\" \"\\*\\.texi\")"
+             out))
+    ;; The local synth's :fetcher-git URL did NOT.
+    (should-not (string-match-p "fetcher git :url \"https://github\\.com/magit/magit\""
+                                out))))
+
+(ert-deftest anvil-pkg-dsl-test-l27-auto-falls-back-to-synth-on-miss ()
+  "L27: :melpa-synth `auto' + render-fetch fluid returning nil →
+synth proceeds normally (Phase 4-D behaviour)."
+  (let* ((anvil-pkg-emacs--render-fetch-fn (lambda (_pname) nil))
+         (ir '(:name magit
+               :version "3.3.0"
+               :source (:type github-fetch
+                        :owner "magit"
+                        :repo "magit"
+                        :rev "v3.3.0"
+                        :sha256 "sha256-magit")
+               :build-system (:type emacs-package :format "melpa")))
+         (out (anvil-pkg-render-nix ir)))
+    (should (string-match-p "postUnpack = ''" out))
+    ;; Synth always uses :fetcher git.
+    (should (string-match-p
+             "(magit :fetcher git :url \"https://github\\.com/magit/magit\""
+             out))))
+
+(ert-deftest anvil-pkg-dsl-test-l27-force-skips-upstream-fetch ()
+  "L27: :melpa-synth `force' bypasses the upstream fetch fluid even
+when it would have hit.  This is the user's explicit \"do not consult
+MELPA\" signal."
+  (let* ((calls 0)
+         (anvil-pkg-emacs--render-fetch-fn
+          (lambda (_pname) (cl-incf calls) "(magit :fetcher upstream)"))
+         (ir '(:name magit
+               :version "3.3.0"
+               :source (:type github-fetch
+                        :owner "magit"
+                        :repo "magit"
+                        :rev "v3.3.0"
+                        :sha256 "sha256-magit")
+               :build-system (:type emacs-package
+                              :format "melpa"
+                              :melpa-synth force)))
+         (out (anvil-pkg-render-nix ir)))
+    (should (= 0 calls))
+    (should (string-match-p
+             "(magit :fetcher git :url \"https://github\\.com/magit/magit\""
+             out))))
 
 (provide 'anvil-pkg-dsl-test)
 ;;; anvil-pkg-dsl-test.el ends here
