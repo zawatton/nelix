@@ -340,6 +340,26 @@ In your Emacs init:
 CLI sub-command (=anvil pkg install ...=) lands in =anvil.el= via a
 separate PR; until then call the Elisp API directly.
 
+** Examples directory
+
+=examples/= ships copy-pasteable =pkg-define= recipes for every
+supported source + build-system combination:
+
+| File                          | Source       | Build system          |
+|-------------------------------+--------------+-----------------------|
+| =examples/stdenv-hello.el=    | url-fetch    | stdenv                |
+| =examples/rust-ripgrep.el=    | github-fetch | rust                  |
+| =examples/python-black.el=    | github-fetch | python (pyproject)    |
+| =examples/go-hugo.el=         | github-fetch | go                    |
+| =examples/emacs-trivial-dash.el= | github-fetch | emacs-package trivial |
+| =examples/emacs-melpa-magit.el=  | github-fetch | emacs-package melpa   |
+| =examples/multi-install.el=   | (mixed)      | rust × 3              |
+
+Each file is self-contained; load with =M-x load-file= (or
+=(load-file ...)= from your init) and invoke =(pkg-install
+'<name>)=.  Replace the =sha256-PLACEHOLDER= literals before
+installing — see =examples/README.org= for the workflow.
+
 ** Run the test suite
 
 #+begin_src shell

@@ -1,0 +1,62 @@
+#+title: anvil-pkg — Examples
+#+author: zawatton
+
+* What this is
+
+Copy-pasteable =pkg-define= recipes for every supported source +
+build-system combination.  Use as a starting point for your own
+=anvil-pkg= package definitions.
+
+Each file is a self-contained Elisp library.  Load it from your
+Emacs config (or =M-x load-file=), then call =(pkg-install
+'<package>)= to actually build / install through Nix.
+
+* How to use a placeholder sha256
+
+The =sha256-...= and =sha256-cargo...= literals in these examples
+are *placeholders*.  When you copy a recipe, run =pkg-install=
+once with a placeholder; Nix will fail with a hash-mismatch error
+that prints the *real* hash.  Paste that back into the recipe and
+re-install.
+
+For deterministic CI you can also pre-compute hashes:
+
+#+begin_src shell
+nix-prefetch-url --type sha256 https://example.com/foo.tar.gz
+nix-prefetch-git --rev <sha> https://github.com/owner/repo
+#+end_src
+
+* Index
+
+| File                       | Source         | Build system          | Highlights                              |
+|----------------------------+----------------+-----------------------+-----------------------------------------|
+| =stdenv-hello.el=          | url-fetch      | stdenv (Phase 2)      | smallest possible recipe                |
+| =rust-ripgrep.el=          | github-fetch   | rust                  | =:cargo-sha256= + native binary CLI     |
+| =python-black.el=          | github-fetch   | python (pyproject)    | =:format "pyproject"=                   |
+| =go-hugo.el=               | github-fetch   | go                    | =:vendor-sha256= or =vendorHash = null= |
+| =emacs-trivial-dash.el=    | github-fetch   | emacs-package trivial | =:require= post-install hook            |
+| =emacs-melpa-magit.el=     | github-fetch   | emacs-package melpa   | =:native-comp= + upstream recipe fetch  |
+| =multi-install.el=         | (mixed)        | (mixed)               | composing multiple =pkg-define= forms   |
+
+Files are numbered by complexity, not by recommended reading
+order — the headline example is whichever language you came for.
+
+* Caveats
+
+- *Hashes:* every example uses placeholder hashes.  Replace before
+  installing to a real profile.
+- *Nix daemon:* =pkg-install= shells out to =nix profile install= /
+  =nix profile add= via the Phase 1 wrapper.  Make sure flakes are
+  enabled and the daemon is running.
+- *Source pinning:* the examples pin to a specific =:rev= /
+  =:version=.  Bumping the version usually means bumping the hashes
+  too.
+- *Cargo / vendor hashes:* =rust= and =go= recipes need a *second*
+  hash on top of the source hash (=:cargo-sha256= /
+  =:vendor-sha256=) — these come from the dependency lock files,
+  not the upstream tarball.
+- *License field:* =:license= takes a *symbol*, not a string.
+  Recognised: =mit=, =gpl2=, =gpl3=, =bsd2=, =bsd3=, =apache2=
+  (mapped to =pkgs.lib.licenses.*= internally).  Unknown symbols
+  fall back to a quoted string literal, which Nix accepts but does
+  not link to its license metadata.
