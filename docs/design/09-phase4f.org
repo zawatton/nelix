@@ -1,0 +1,158 @@
+#+title: anvil-pkg — Phase 4-F: pkg-install multi-package dispatch
+#+author: zawatton
+#+date: 2026-05-06
+#+property: status DRAFT
+
+* STATUS
+
+Phase 4-F — DRAFT 2026-05-06.  Single-commit landing planned.
+
+Adds list-of-names dispatch to =pkg-install= so callers can install
+many packages in a single Nix invocation:
+
+#+begin_src elisp
+(pkg-install '(magit dash transient))         ; symbols → registry
+(pkg-install '("ripgrep" "fd" "hyperfine"))   ; strings → nixpkgs
+(pkg-install '(magit "ripgrep"))              ; mixed
+#+end_src
+
+Backward-compatible: single string / single symbol still work via
+the existing dispatch arms.
+
+* Goal
+
+| Today                                                            | After Phase 4-F                                              |
+|------------------------------------------------------------------+--------------------------------------------------------------|
+| =(mapc #'pkg-install '(magit dash transient))=                   | =(pkg-install '(magit dash transient))=                      |
+| 3 separate flake renders + 3 nix profile generations              | 1 flake render + 1 nix profile add (atomic across all 3)     |
+| Failure of #2 leaves #1 installed                                 | Failure aborts the whole bulk (Nix profile atomicity)        |
+| 3 deps pre-fetches sequentially                                   | Same 3 (per-package), but rolled into a single render pass   |
+| =examples/multi-install.el= heads-up: =mapc= "watch issue tracker for ..." | API ships, the heads-up note becomes the canonical recipe    |
+
+* Locked decisions
+
+** L29 — list dispatch on =pkg-install=
+
+- New arm: when NAME is =consp= AND not =stringp= AND non-empty,
+  treat as a list of names.  Each element must be string or symbol;
+  any other element raises =anvil-pkg-error= before nix is touched.
+- Empty list raises =anvil-pkg-error= (=pkg-install: NAMES list
+  must be non-empty=).  No silent no-op.
+- Order preserved on the nix command line.
+
+** L30 — atomicity inherited from =nix profile install/add=
+
+Nix's =profile install= command accepts multiple flakerefs and
+applies them as a single transaction — either all install (one new
+generation) or none install (failure keeps the profile pristine).
+We do not add our own rollback layer; callers can use Phase 4-C
+=pkg-rollback= to undo the bulk transaction or Phase 4-D
+=pkg-rollback-package= to drop one of them after the fact.
+
+** L31 — flake.nix render still walks the entire registry
+
+=anvil-pkg--render-flake= already emits every registered IR; we
+do not change that.  Multi-install simply targets multiple
+=path:STATE_DIR#sym= attributes on the same generated flake.
+String entries (=nixpkgs#name=) bypass the flake entirely.
+
+** L32 — plist semantics under list NAME
+
+| key                  | single name | list name              |
+|----------------------+-------------+------------------------|
+| =:require SYMBOL=    | unchanged   | *raises =anvil-pkg-error=*|
+| =:async BOOL=        | unchanged   | one process for the bulk |
+| =:on-success FN=     | fired once  | fired once with NAMES list as a plist key (=:names (...)=) |
+| =:on-error FN=       | fired once  | fired once with NAMES list (single error covers the whole bulk) |
+| =:no-auto-deps BOOL= | unchanged   | applied to every symbol entry uniformly |
+
+=:require= rejection:  picking which feature to =require= is
+ambiguous when N packages are involved (could be all of them, the
+first one, or a different symbol entirely).  Force the user to
+either drop =:require= and call =require= manually, or call
+=pkg-install= per-package (=mapc=) when fine-grained =:require=
+control matters.
+
+** L33 — deps derivation runs per-symbol before the bulk render
+
+Phase 4-C / 4-D L18 pre-fetch is unchanged: each registered symbol
+gets =anvil-pkg--maybe-derive-deps= invoked individually before the
+single =anvil-pkg--write-flake-fn= call.  String entries skip
+derivation (no IR to augment).
+
+** L34 — async path: single =make-process= for the bulk
+
+The existing =anvil-pkg--spawn-nix-async= helper already takes a
+flat args list and a single =NAME= string.  For the bulk we pass
+NAMES as a list; the helper's existing =:on-success= /
+=:on-error= callbacks receive a plist with =:names NAMES= instead
+of =:name NAME=.  Single-name calls keep emitting =:name= for
+backward compatibility.
+
+* Open questions / non-goals
+
+- *OQ22.* Do we want a new public name (=pkg-install-many=) or
+  overload =pkg-install=?  Decision: *overload*.  Backward-compat
+  is preserved by the dispatch shape (string / symbol vs list);
+  one entry point is friendlier for users who don't read changelogs.
+- *OQ23.* Should the async sentinel run =:require= after a
+  successful single-name install?  This is unchanged from Phase 4-B —
+  the existing post-install hook still fires =require= on the
+  emacs-package symbol when supplied.
+- *Non-goal.* Per-package error isolation ("install B and C even if
+  A fails").  Nix's profile install is atomic; faking partial
+  success would mean N separate nix invocations and forfeit the
+  speed-up that justifies this phase.
+- *Non-goal.* Parallel build dispatch.  Nix already builds
+  derivations in parallel up to =--max-jobs=; we do not add an
+  Elisp-side parallel layer.
+- *Non-goal.* Re-exporting =pkg-install-many= as an alias.  If the
+  ergonomic experiment fails we re-evaluate; a deprecation alias
+  would lock us into supporting the wider API forever.
+
+* Sub-task decomposition
+
+Single sub-task; scope is well below the parallel-worktree
+threshold.  Touches =anvil-pkg.el= (dispatch arm + helper), no
+changes to =anvil-pkg-dsl.el= (flake render is reused),
+=test/anvil-pkg-test.el= (ERTs + mock).
+
+** Implementation order
+
+1. =anvil-pkg.el= — extract a private helper
+   =anvil-pkg--build-multi-flakerefs NAMES STATE-DIR= that returns
+   the flakeref strings (validating shape).
+2. =anvil-pkg.el= — list arm in =pkg-install=:
+   - validate (non-empty, every element string/symbol).
+   - reject =:require= with =anvil-pkg-error=.
+   - sync path: derive deps for each symbol → render flake → call
+     =anvil-pkg--call-nix= once.
+   - async path: same prologue + single =anvil-pkg--spawn-nix-async=
+     with =:names= in the callback plist.
+3. =anvil-pkg.el= — sentinel callback shape: when NAMES list,
+   surface =:names NAMES= instead of =:name NAME= so callers can
+   distinguish.
+4. =test/anvil-pkg-test.el= — ERT bundle.
+
+ERT delta target: +6 (sync × 4, async × 2).
+
+* Test plan
+
+| ERT                                                              | Expectation                                         |
+|------------------------------------------------------------------+-----------------------------------------------------|
+| =multi-install-symbols-single-nix-call=                          | 3 symbols → 1 nix invocation, 3 flakerefs in args   |
+| =multi-install-strings-uses-nixpkgs-flakerefs=                   | 2 strings → nixpkgs#A, nixpkgs#B                    |
+| =multi-install-mixed-symbols-strings=                            | mixed list preserves order                          |
+| =multi-install-empty-list-errors=                                | =()= → =anvil-pkg-error=                            |
+| =multi-install-with-require-errors-as-ambiguous=                 | =:require sym= with list → =anvil-pkg-error=         |
+| =multi-install-undefined-symbol-errors-before-nix=               | unknown sym → registry-get error, nix never called  |
+| =multi-install-async-happy=                                      | async path: single process, on-success gets =:names=|
+
+* Acceptance
+
+- All Phase 4-E ERTs pass unchanged (84 → 84+ depending on bundle).
+- New ERTs pass.  ERT total ≥ 90.
+- Byte-compile clean (warnings-as-errors).
+- =examples/multi-install.el= updated: replace the =mapc= heads-up
+  comment with the canonical bulk form.
+- README.org gains a one-line bullet under Phase 4-F status.
