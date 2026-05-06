@@ -1,11 +1,15 @@
 #+title: anvil-pkg — Phase 4-F: pkg-install multi-package dispatch
 #+author: zawatton
 #+date: 2026-05-06
-#+property: status DRAFT
+#+property: status PHASE-4F-SHIPPED
 
 * STATUS
 
-Phase 4-F — DRAFT 2026-05-06.  Single-commit landing planned.
+Phase 4-F — SHIPPED 2026-05-06.  Single-commit landing on canonical
+=main=.
+
+ERT 84 → 91 (+7, design target +6 — added bonus =async-happy= test
+that exercises the =:names= callback shape end-to-end).
 
 Adds list-of-names dispatch to =pkg-install= so callers can install
 many packages in a single Nix invocation:

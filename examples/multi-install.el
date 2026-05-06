@@ -7,20 +7,25 @@
 
 ;; Many users want to declare a bundle of packages in one place
 ;; (the "Brewfile" / "Packages.dhall" pattern).  anvil-pkg supports
-;; this directly: each `pkg-define' is independent, and each
-;; `pkg-install' renders a flake fresh for that one package.
+;; this directly with Phase 4-F's multi-install dispatch:
 ;;
-;; Heads-up: until Phase 4-F lands a multi-package install API,
-;; calling `pkg-install' once per symbol means N flake renders +
-;; N nix profile add invocations.  Each invocation is a separate
-;; profile generation, so `pkg-rollback' / `pkg-history' record
-;; them individually.  For a single batched install across many
-;; packages, watch the issue tracker for the upcoming
-;; `(pkg-install '(a b c))' bulk form.
+;;   (pkg-install '(ripgrep fd hyperfine))
+;;
+;; renders the flake once and invokes `nix profile install' once
+;; with all three flakerefs.  Atomic — Nix either installs every
+;; package as one new generation or none.
+;;
+;; Mixed lists work too:
+;;
+;;   (pkg-install '(ripgrep "jq"))   ; rust pkg-define + nixpkgs string
+;;
+;; To roll back the bulk: `pkg-rollback' (the entire generation
+;; goes away).  To drop one of them while keeping the rest:
+;; `(pkg-rollback-package 'fd)' (Phase 4-D).
 ;;
 ;; Usage:
 ;;   M-: (load-file "/path/to/anvil-pkg/examples/multi-install.el")
-;;   M-: (mapc #'pkg-install '(ripgrep fd hyperfine))
+;;   M-: (pkg-install '(ripgrep fd hyperfine))
 
 ;;; Code:
 
@@ -56,8 +61,8 @@
   (description "A command-line benchmarking tool.")
   (homepage "https://github.com/sharkdp/hyperfine"))
 
-;; To install all three:
-;;   (mapc #'pkg-install '(ripgrep fd hyperfine))
+;; To install all three in one shot (Phase 4-F):
+;;   (pkg-install '(ripgrep fd hyperfine))
 ;;
 ;; To roll back one package without losing the others (Phase 4-D):
 ;;   (pkg-rollback-package 'fd)

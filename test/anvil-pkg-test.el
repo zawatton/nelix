@@ -754,5 +754,181 @@ shelling out to nix."
                              :type 'anvil-pkg-error)))
       (should (string-match-p "not currently installed" (cadr err))))))
 
+;;;; --- Phase 4-F: pkg-install multi-package dispatch -----------------------
+
+(ert-deftest anvil-pkg-test-multi-install-symbols-single-nix-call ()
+  "pkg-install with a list of symbols renders the flake once and
+invokes nix once with all flakerefs."
+  (require 'anvil-pkg-dsl)
+  (let* ((install-args nil)
+         (render-count 0)
+         (flake-path "/tmp/anvil-pkg-test-multi/flake.nix")
+         (anvil-pkg--registry (make-hash-table :test 'eq)))
+    (puthash 'magit
+             '(:name magit :version "3.3.0"
+               :source (:type url-fetch :url "https://example.invalid/magit.tar.gz"
+                        :sha256 "sha256-magit")
+               :build-system (:type emacs-package))
+             anvil-pkg--registry)
+    (puthash 'dash
+             '(:name dash :version "2.20.0"
+               :source (:type url-fetch :url "https://example.invalid/dash.tar.gz"
+                        :sha256 "sha256-dash")
+               :build-system (:type emacs-package))
+             anvil-pkg--registry)
+    (puthash 'transient
+             '(:name transient :version "0.7.0"
+               :source (:type url-fetch :url "https://example.invalid/transient.tar.gz"
+                        :sha256 "sha256-transient")
+               :build-system (:type emacs-package))
+             anvil-pkg--registry)
+    (let ((anvil-pkg--write-flake-fn
+           (lambda () (cl-incf render-count) flake-path)))
+      (anvil-pkg-test--with-mock
+          (lambda (args)
+            ;; Capture only the install/add invocation; subsequent
+            ;; `profile list --json' calls from the after-install hook
+            ;; should not clobber it.
+            (when (and (null install-args)
+                       (or (member "install" args) (member "add" args)))
+              (setq install-args args))
+            (list :exit 0 :stdout "[]" :stderr ""))
+        (should (eq t (pkg-install '(magit dash transient)
+                                   :no-auto-deps t)))
+        (should (= 1 render-count))
+        (should (member "profile" install-args))
+        (should (or (member "install" install-args)
+                    (member "add" install-args)))
+        ;; All three flakerefs in argv, in order.
+        (let* ((flake-dir (directory-file-name
+                           (file-name-directory flake-path)))
+               (expected-flakerefs
+                (list (format "path:%s#magit" flake-dir)
+                      (format "path:%s#dash" flake-dir)
+                      (format "path:%s#transient" flake-dir))))
+          (dolist (ref expected-flakerefs)
+            (should (member ref install-args))))))))
+
+(ert-deftest anvil-pkg-test-multi-install-strings-uses-nixpkgs-flakerefs ()
+  "pkg-install with a list of strings emits nixpkgs#NAME flakerefs and
+skips the flake render entirely (no IR to render)."
+  (let* ((captured-args nil)
+         (render-fired nil))
+    (let ((anvil-pkg--write-flake-fn
+           (lambda () (setq render-fired t) "/tmp/should-not-render/flake.nix")))
+      (anvil-pkg-test--with-mock
+          (lambda (args)
+            (setq captured-args args)
+            (list :exit 0 :stdout "" :stderr ""))
+        (should (eq t (pkg-install '("ripgrep" "fd"))))
+        (should (null render-fired))
+        (should (member "nixpkgs#ripgrep" captured-args))
+        (should (member "nixpkgs#fd" captured-args))))))
+
+(ert-deftest anvil-pkg-test-multi-install-mixed-symbols-strings ()
+  "Mixed list installs both registry symbols (path:...#sym) and
+nixpkgs strings (nixpkgs#name) in a single nix invocation."
+  (require 'anvil-pkg-dsl)
+  (let* ((install-args nil)
+         (flake-path "/tmp/anvil-pkg-test-mixed/flake.nix")
+         (anvil-pkg--registry (make-hash-table :test 'eq)))
+    (puthash 'magit
+             '(:name magit :version "3.3.0"
+               :source (:type url-fetch :url "https://example.invalid/magit.tar.gz"
+                        :sha256 "sha256-magit")
+               :build-system (:type emacs-package))
+             anvil-pkg--registry)
+    (let ((anvil-pkg--write-flake-fn (lambda () flake-path)))
+      (anvil-pkg-test--with-mock
+          (lambda (args)
+            (when (and (null install-args)
+                       (or (member "install" args) (member "add" args)))
+              (setq install-args args))
+            (list :exit 0 :stdout "[]" :stderr ""))
+        (should (eq t (pkg-install '(magit "ripgrep")
+                                   :no-auto-deps t)))
+        (let ((flake-dir (directory-file-name
+                          (file-name-directory flake-path))))
+          (should (member (format "path:%s#magit" flake-dir) install-args)))
+        (should (member "nixpkgs#ripgrep" install-args))))))
+
+(ert-deftest anvil-pkg-test-multi-install-empty-list-errors ()
+  "pkg-install with an empty list signals `anvil-pkg-error' before nix."
+  (anvil-pkg-test--with-mock
+      (lambda (_args)
+        (ert-fail "pkg-install must not shell out on empty NAMES"))
+    (let ((err (should-error (pkg-install '()) :type 'anvil-pkg-error)))
+      ;; nil is dispatched as a non-list (not consp), so message complains
+      ;; about the type, not emptiness — both are acceptable user-facing
+      ;; signals.  Just assert the signal type.
+      (should (consp err)))))
+
+(ert-deftest anvil-pkg-test-multi-install-with-require-errors ()
+  ":require is rejected with a list NAME (ambiguous semantics)."
+  (anvil-pkg-test--with-mock
+      (lambda (_args)
+        (ert-fail "pkg-install must not shell out when :require is rejected"))
+    (let ((err (should-error
+                (pkg-install '("ripgrep" "fd") :require 'ripgrep)
+                :type 'anvil-pkg-error)))
+      (should (string-match-p ":require" (cadr err))))))
+
+(ert-deftest anvil-pkg-test-multi-install-undefined-symbol-errors-before-nix ()
+  "An undefined symbol in the NAMES list fails registry-get before nix."
+  (require 'anvil-pkg-dsl)
+  (let ((anvil-pkg--registry (make-hash-table :test 'eq)))
+    ;; magit registered, nope is missing.
+    (puthash 'magit
+             '(:name magit :version "1.0"
+               :source (:type url-fetch :url "https://example.invalid/magit.tar.gz"
+                        :sha256 "sha256-magit")
+               :build-system (:type emacs-package))
+             anvil-pkg--registry)
+    (anvil-pkg-test--with-mock
+        (lambda (_args)
+          (ert-fail "pkg-install must not shell out on undefined symbol"))
+      (should-error (pkg-install '(magit nope) :no-auto-deps t)
+                    :type 'anvil-pkg-undefined-package))))
+
+(ert-deftest anvil-pkg-test-multi-install-async-happy-runs-on-success ()
+  "Async multi-install fires :on-success once with :names NAMES (not :name)."
+  (require 'anvil-pkg-dsl)
+  (let* ((captured nil)
+         (make-process-orig (symbol-function 'make-process))
+         (anvil-pkg--registry (make-hash-table :test 'eq)))
+    (puthash 'magit
+             '(:name magit :version "3.3.0"
+               :source (:type url-fetch :url "https://example.invalid/magit.tar.gz"
+                        :sha256 "sha256-magit")
+               :build-system (:type emacs-package))
+             anvil-pkg--registry)
+    (cl-letf (((symbol-function 'anvil-pkg-compat-make-process-async)
+               (lambda (&rest plist)
+                 (let ((replaced (copy-sequence plist)))
+                   (setq replaced (plist-put replaced :command (list "true")))
+                   (apply make-process-orig replaced))))
+              ((symbol-function 'anvil-pkg--write-flake-fn)
+               (lambda () "/tmp/anvil-pkg-test-multi-async/flake.nix")))
+      (let ((anvil-pkg--write-flake-fn
+             (lambda () "/tmp/anvil-pkg-test-multi-async/flake.nix")))
+        (anvil-pkg-test--with-mock
+            (lambda (_args)
+              (list :exit 0 :stdout "" :stderr ""))
+          (let ((proc (pkg-install '(magit "ripgrep")
+                                   :async t
+                                   :no-auto-deps t
+                                   :on-success
+                                   (lambda (result) (setq captured result))
+                                   :on-error
+                                   (lambda (err)
+                                     (ert-fail
+                                      (format ":on-error fired: %S" err))))))
+            (should (processp proc))
+            (anvil-pkg-test--wait-until (lambda () captured))
+            (should (eq :installed (plist-get captured :status)))
+            (should (equal '(magit "ripgrep") (plist-get captured :names)))
+            ;; Single-name :name key MUST NOT appear in the multi case.
+            (should-not (plist-member captured :name))))))))
+
 (provide 'anvil-pkg-test)
 ;;; anvil-pkg-test.el ends here

@@ -17,7 +17,7 @@ agents can install anything by writing one Lisp form.
 
 * Status
 
-*Phase 1+2+3+4-A+4-B+4-C+4-D+4-E SHIPPED + REAL-NIX VERIFIED* (2026-05-06) —
+*Phase 1+2+3+4-A+4-B+4-C+4-D+4-E+4-F SHIPPED + REAL-NIX VERIFIED* (2026-05-06) —
 Full DSL stack on top of the Nix store with multiple fetcher /
 build-system support, an =emacs-package= backend that round-trips
 Elisp libraries through =trivialBuild= / =melpaBuild= with optional
@@ -30,7 +30,7 @@ dispatch, MELPA recipe auto-synthesis via =postUnpack= with optional
 upstream MELPA recipe lookup, and a one-shot =async-installer=
 importer that auto-populates =:depends-on= from local clones.
 
-- ERT 84/84 PASS (mocked, runs without a nix binary).
+- ERT 91/91 PASS (mocked, runs without a nix binary).
 - /Real-nix smoke test/ executed end-to-end in a =nixos/nix:2.34=
   rootless podman container with Emacs 30.2:
   - =(pkg-install "hello")= installed GNU Hello into an isolated
@@ -73,6 +73,13 @@ Public Elisp API uses the short =pkg-= prefix:
   default from =("*.el")= to MELPA's full
   =package-build-default-files-spec= so subdir / .el.in / .info
   layouts work without manual configuration — Phase 4-E
+- =pkg-install= multi-package dispatch: =(pkg-install '(magit dash
+  transient))= or =(pkg-install '(magit "ripgrep"))= renders the
+  flake once and invokes =nix profile install/add= once with all
+  flakerefs (atomic across the bulk via Nix's profile transaction).
+  Mixed registry symbols + nixpkgs strings supported.  Async
+  callbacks receive =:names NAMES= instead of =:name NAME=.
+  =:require= rejected with list NAME (ambiguous) — Phase 4-F
 
 Long-form aliases (=anvil-pkg-install= etc.) are provided via
 =defalias= for Emacs-prefix purists.
@@ -148,6 +155,7 @@ your config should not require learning a new macro language.
 | 4-C   | L18 pre-fetch + L19 rollback + L20 Nix 2.34 + L22 compat async         | *SHIPPED*      |
 | 4-D   | melpaBuild recipe synthesis + url/git L18 + per-pkg rollback + state   | *SHIPPED*      |
 | 4-E   | MELPA upstream recipe fetch (opt-in) + better :melpa-files default     | *SHIPPED*      |
+| 4-F   | pkg-install multi-package dispatch (atomic bulk install)               | *SHIPPED*      |
 | 5+    | NeLisp async backend + HTTP backend (replaces Phase 4-C/4-D stubs)     | research       |
 
 See =docs/design/01-overview.org= for the full Phase 1 contract.
@@ -335,6 +343,20 @@ In your Emacs init:
                         :rev "2.20.0" :sha256 "sha256-..."))
   (build-system (emacs-package :format "melpa")))
 ;; → synth recipe now covers lisp/ subdir + .el.in + .info layouts.
+
+;; Phase 4-F — multi-package install (atomic bulk).
+;; pkg-install dispatches a single nix profile install/add invocation
+;; with all flakerefs.  Atomic: success or none.
+(pkg-install '(magit dash transient))           ; 3 registry symbols
+(pkg-install '("ripgrep" "fd" "hyperfine"))     ; 3 nixpkgs strings
+(pkg-install '(magit "ripgrep"))                ; mixed
+;; Async with multi-install — :on-success receives :names NAMES, not :name:
+(pkg-install '(magit dash) :async t
+             :on-success (lambda (r)
+                           (message "installed %S" (plist-get r :names))))
+;; :require is rejected with a list (which symbol to require?):
+;; (pkg-install '(magit dash) :require 'magit)
+;; → anvil-pkg-error
 #+end_src
 
 CLI sub-command (=anvil pkg install ...=) lands in =anvil.el= via a
@@ -363,7 +385,7 @@ installing — see =examples/README.org= for the workflow.
 ** Run the test suite
 
 #+begin_src shell
-make test       # 84 ERT tests, no nix binary required (all mocked)
+make test       # 91 ERT tests, no nix binary required (all mocked)
 make compile    # byte-compile, warnings-as-errors
 #+end_src
 

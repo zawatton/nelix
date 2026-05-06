@@ -434,22 +434,41 @@ Internal helper called by `pkg-install' when NAME is a string."
       (kill-buffer buf))))
 
 (defun anvil-pkg--async-on-success (proc)
-  "Sentinel happy path: post-install hook + :require + :on-success."
-  (let* ((name        (process-get proc 'anvil-pkg--name))
+  "Sentinel happy path: post-install hook + :require + :on-success.
+
+Phase 4-F: when the process was a multi-install (PROC's
+`anvil-pkg--names' property is a list), iterate the post-install
+load-path augment over every emacs-package symbol and surface
+`:names NAMES' to the callback instead of `:name NAME'.
+`:require' is rejected at dispatch for list NAME so we never need
+to call `require' here in the multi case."
+  (let* ((names       (process-get proc 'anvil-pkg--names))
+         (name        (process-get proc 'anvil-pkg--name))
          (build-type  (process-get proc 'anvil-pkg--build-system-type))
          (require-supplied (process-get proc 'anvil-pkg--require-supplied))
          (require-sym (process-get proc 'anvil-pkg--require-sym))
          (on-success  (process-get proc 'anvil-pkg--on-success)))
-    (when (eq build-type 'emacs-package)
-      (let ((load-path-dir (anvil-pkg--emacs-package-after-install name)))
-        (when (and require-supplied load-path-dir)
-          (require require-sym))))
-    (when on-success
-      (condition-case err
-          (funcall on-success (list :status :installed :name name))
-        (error
-         (lwarn 'anvil-pkg :error
-                "pkg-install :on-success raised: %S" err))))))
+    (cond
+     (names
+      ;; Multi-install: augment load-path for every emacs-package symbol.
+      (anvil-pkg--multi-after-install names)
+      (when on-success
+        (condition-case err
+            (funcall on-success (list :status :installed :names names))
+          (error
+           (lwarn 'anvil-pkg :error
+                  "pkg-install :on-success raised: %S" err)))))
+     (t
+      (when (eq build-type 'emacs-package)
+        (let ((load-path-dir (anvil-pkg--emacs-package-after-install name)))
+          (when (and require-supplied load-path-dir)
+            (require require-sym))))
+      (when on-success
+        (condition-case err
+            (funcall on-success (list :status :installed :name name))
+          (error
+           (lwarn 'anvil-pkg :error
+                  "pkg-install :on-success raised: %S" err))))))))
 
 (defun anvil-pkg--async-on-error (proc exit)
   "Sentinel error path for PROC with non-zero EXIT.
@@ -457,14 +476,24 @@ Internal helper called by `pkg-install' when NAME is a string."
 Routes the failure to the user's :on-error if supplied; otherwise
 defers a `lwarn' via `run-with-timer' so the message reaches
 *Messages* without invoking `signal' from a sentinel (which Emacs
-swallows silently)."
-  (let* ((name      (process-get proc 'anvil-pkg--name))
+swallows silently).
+
+Phase 4-F: multi-install errors surface `:names NAMES' instead of
+`:name NAME'.  The error covers the whole bulk transaction since
+Nix profile install/add is atomic."
+  (let* ((names     (process-get proc 'anvil-pkg--names))
+         (name      (process-get proc 'anvil-pkg--name))
          (stderr    (anvil-pkg--async-stderr-string proc))
          (on-error  (process-get proc 'anvil-pkg--on-error))
-         (err-plist (list :error 'anvil-pkg-nix-failed
-                          :exit  exit
-                          :stderr stderr
-                          :name  name)))
+         (err-plist (cond
+                     (names (list :error 'anvil-pkg-nix-failed
+                                  :exit  exit
+                                  :stderr stderr
+                                  :names names))
+                     (t     (list :error 'anvil-pkg-nix-failed
+                                  :exit  exit
+                                  :stderr stderr
+                                  :name  name)))))
     (cond
      (on-error
       (condition-case err
@@ -480,7 +509,7 @@ swallows silently)."
        (lambda ()
          (lwarn 'anvil-pkg :error
                 "pkg-install %S failed (exit %s): %s"
-                name exit
+                (or names name) exit
                 (anvil-pkg-compat-string-trim (or stderr "")))))))))
 
 (defun anvil-pkg--async-sentinel (proc event)
@@ -508,9 +537,19 @@ live."
 NAME, PLIST and BUILD-SYSTEM-TYPE are stashed on the process via
 `process-put' so the sentinel can route post-install + user
 callbacks without a closure (closures over PLIST are awkward to
-mock)."
+mock).
+
+Phase 4-F: NAME may also be a list of names (multi-install).  When
+NAME is a list, the process records it under the `anvil-pkg--names'
+property and sentinel callbacks surface `:names' instead of `:name'.
+BUILD-SYSTEM-TYPE is unused in the multi case (each symbol's type is
+re-resolved inside `anvil-pkg--multi-after-install')."
   (anvil-pkg--ensure-nix)
-  (let* ((stderr-buf (generate-new-buffer " *anvil-pkg-async-stderr*"))
+  (let* ((multi (and (consp name) (not (stringp name))))
+         (process-label
+          (cond (multi (format "multi-%d" (length name)))
+                (t     (format "%s" name))))
+         (stderr-buf (generate-new-buffer " *anvil-pkg-async-stderr*"))
          (require-supplied (anvil-pkg--plist-has-key-p plist :require))
          (require-sym      (plist-get plist :require))
          (on-success       (plist-get plist :on-success))
@@ -519,7 +558,7 @@ mock)."
          ;; `anvil-pkg-async-not-supported' on NeLisp; Emacs gets a real
          ;; process object back from `make-process'.
          (proc (anvil-pkg-compat-make-process-async
-                :name (format "anvil-pkg-install-%s" name)
+                :name (format "anvil-pkg-install-%s" process-label)
                 :buffer nil
                 :command (cons anvil-pkg-nix-program args)
                 :connection-type 'pipe
@@ -527,13 +566,97 @@ mock)."
                 :stderr stderr-buf
                 :sentinel #'anvil-pkg--async-sentinel)))
     (process-put proc 'anvil-pkg--stderr-buf       stderr-buf)
-    (process-put proc 'anvil-pkg--name             name)
-    (process-put proc 'anvil-pkg--build-system-type build-system-type)
-    (process-put proc 'anvil-pkg--require-supplied require-supplied)
-    (process-put proc 'anvil-pkg--require-sym      require-sym)
+    (cond
+     (multi
+      (process-put proc 'anvil-pkg--names name))
+     (t
+      (process-put proc 'anvil-pkg--name name)
+      (process-put proc 'anvil-pkg--build-system-type build-system-type)
+      (process-put proc 'anvil-pkg--require-supplied require-supplied)
+      (process-put proc 'anvil-pkg--require-sym      require-sym)))
     (process-put proc 'anvil-pkg--on-success       on-success)
     (process-put proc 'anvil-pkg--on-error         on-error)
     proc))
+
+;;;; --- multi-install helpers (Phase 4-F L29-L34) ---------------------------
+
+(defun anvil-pkg--validate-multi-names (names)
+  "Validate a multi-install NAMES list.  Signal `anvil-pkg-error' on bad shape.
+
+NAMES must be a non-empty list of (string | symbol) elements."
+  (unless (and (consp names) (not (stringp names)))
+    (signal 'anvil-pkg-error
+            (list (format "pkg-install: NAMES must be a non-empty list, got %S"
+                          names))))
+  (when (null names)
+    (signal 'anvil-pkg-error
+            (list "pkg-install: NAMES list must be non-empty")))
+  (dolist (n names)
+    (unless (or (stringp n) (symbolp n))
+      (signal 'anvil-pkg-error
+              (list (format "pkg-install: NAMES element must be string or symbol, got %S"
+                            n))))))
+
+(defun anvil-pkg--multi-install-flakerefs (names flake-dir)
+  "Return flakeref strings for NAMES.
+
+Symbols become `path:FLAKE-DIR#sym'; strings become
+`<channel>#name'.  Order in NAMES is preserved."
+  (mapcar (lambda (n)
+            (cond
+             ((stringp n) (format "%s#%s" anvil-pkg-nix-channel n))
+             ((symbolp n) (format "path:%s#%s" flake-dir n))))
+          names))
+
+(defun anvil-pkg--multi-after-install (names)
+  "Iterate `anvil-pkg--emacs-package-after-install' over emacs-package
+symbols in NAMES (skipping strings and non-emacs-package symbols).
+
+Used by the multi-install async sentinel to augment `load-path' for
+every newly-installed Emacs package."
+  (dolist (n names)
+    (when (symbolp n)
+      (let ((build-type (anvil-pkg--registry-build-system-type n)))
+        (when (eq build-type 'emacs-package)
+          (anvil-pkg--emacs-package-after-install n))))))
+
+(defun anvil-pkg--multi-install-prepare (names plist)
+  "Common pre-flight for multi-install: validate, derive deps, render flake.
+
+Signals on bad NAMES, on `:require' supplied, on undefined symbols.
+Returns a plist `(:flakerefs LIST :flake-dir DIR)' suitable for
+both sync and async install paths.  Skips the flake render entirely
+when NAMES contains only strings (no IR to render)."
+  (anvil-pkg--validate-multi-names names)
+  (when (anvil-pkg--plist-has-key-p plist :require)
+    (signal 'anvil-pkg-error
+            (list "pkg-install: :require is not supported with a NAMES list (ambiguous; install one at a time)")))
+  (anvil-pkg--ensure-nix)
+  (let* ((symbols (delq nil (mapcar (lambda (n) (and (symbolp n) n))
+                                    names)))
+         (no-auto-deps (plist-get plist :no-auto-deps)))
+    (when symbols
+      (require 'anvil-pkg-dsl)
+      ;; Validate every symbol exists in the registry up front (so we
+      ;; do not invoke nix on a half-broken bulk).
+      (dolist (sym symbols)
+        (anvil-pkg--registry-get sym))
+      ;; Derive deps per-symbol before the single render pass.
+      (dolist (sym symbols)
+        (anvil-pkg--maybe-derive-deps sym no-auto-deps)))
+    (let* ((flake-path (when symbols (funcall anvil-pkg--write-flake-fn)))
+           (flake-dir  (and flake-path
+                            (directory-file-name
+                             (file-name-directory flake-path))))
+           (flakerefs (anvil-pkg--multi-install-flakerefs names flake-dir)))
+      (list :flakerefs flakerefs :flake-dir flake-dir))))
+
+(defun anvil-pkg--multi-install-args (flakerefs)
+  "Build the `nix profile install/add ...' args for FLAKEREFS."
+  (let ((subcmd (anvil-pkg--nix-install-subcommand)))
+    (append (list "profile" subcmd)
+            (anvil-pkg--profile-args)
+            flakerefs)))
 
 ;;;###autoload
 (defun pkg-install (name &rest plist)
@@ -545,6 +668,11 @@ NAME is one of:
   - a symbol previously declared via `pkg-define' (Phase 2)
     → looks up the local registry, regenerates flake.nix under
     `anvil-pkg-profile-dir's parent, and installs from that flake.
+  - a list of any mix of the above (Phase 4-F L29)
+    → a single `nix profile install/add' invocation with all
+    flakerefs.  Atomic: success or none.  `:require' is rejected
+    in this mode; on-success/on-error callbacks receive `:names
+    NAMES' instead of `:name NAME'.
 
 Recognised PLIST keys:
   :require SYMBOL
@@ -580,7 +708,8 @@ Synchronous return value: t on success.  Async return value: the
 process object.  Signals `anvil-pkg-nix-failed' /
 `anvil-pkg-nix-not-found' / `anvil-pkg-async-not-supported' /
 `anvil-pkg-undefined-package' as appropriate."
-  (let ((async (plist-get plist :async)))
+  (let ((async (plist-get plist :async))
+        (multi (and (consp name) (not (stringp name)))))
     ;; Phase 4-B L16 reject list: warn (don't error) when callbacks
     ;; are supplied without :async — keeps the synchronous path
     ;; backwards-compatible.
@@ -590,6 +719,27 @@ process object.  Signals `anvil-pkg-nix-failed' /
       (lwarn 'anvil-pkg :warning
              "pkg-install: :on-success/:on-error ignored without :async t"))
     (cond
+     ;; Phase 4-F: list dispatch.
+     (multi
+      (let* ((prep (anvil-pkg--multi-install-prepare name plist))
+             (flakerefs (plist-get prep :flakerefs))
+             (args (anvil-pkg--multi-install-args flakerefs)))
+        (cond
+         (async
+          (anvil-pkg--spawn-nix-async args name plist nil))
+         (t
+          (let ((res (anvil-pkg--call-nix args)))
+            (cond
+             ((eq 0 (plist-get res :exit))
+              (anvil-pkg--multi-after-install name)
+              t)
+             (t
+              (signal 'anvil-pkg-nix-failed
+                      (list (format "nix profile install %S failed (exit %s): %s"
+                                    name
+                                    (plist-get res :exit)
+                                    (anvil-pkg-compat-string-trim (or (plist-get res :stderr) "")))
+                            :stderr (plist-get res :stderr))))))))))
      (async
       (cond
        ((stringp name)
@@ -614,7 +764,7 @@ process object.  Signals `anvil-pkg-nix-failed' /
                (build-system-type (anvil-pkg--registry-build-system-type name)))
           (anvil-pkg--spawn-nix-async args name plist build-system-type)))
        (t (signal 'anvil-pkg-error
-                  (list (format "pkg-install: NAME must be string or symbol, got %S"
+                  (list (format "pkg-install: NAME must be string, symbol, or non-empty list, got %S"
                                 name))))))
      (t
       (cond
@@ -639,7 +789,7 @@ process object.  Signals `anvil-pkg-nix-failed' /
                 (require require-sym))))
           installed))
        (t (signal 'anvil-pkg-error
-                  (list (format "pkg-install: NAME must be string or symbol, got %S"
+                  (list (format "pkg-install: NAME must be string, symbol, or non-empty list, got %S"
                                 name)))))))))
 
 ;;;###autoload
