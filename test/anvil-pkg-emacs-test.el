@@ -196,5 +196,246 @@ real wall-clock time elapse, without sleeping in the test."
         (should cached)
         (should (memq (plist-get cached :status) '(:miss :error)))))))
 
+;;;; --- L24a tarball / L24b git mock helpers --------------------------------
+
+(defmacro anvil-pkg-emacs-test--with-state (&rest body)
+  "Run BODY with `anvil-pkg-state-file' bound to a fresh tmp file.
+
+Resets the in-process state cache so namespaces start empty.  No
+HTTP / call-process mocking — callers wrap as needed."
+  (declare (indent 0))
+  `(let* ((tmp (make-temp-file "anvil-pkg-emacs-test-" nil ".json"))
+          (anvil-pkg-state-file tmp)
+          (anvil-pkg-state--cache 'unloaded)
+          (anvil-pkg-state--loaded-from nil))
+     (unwind-protect
+         (progn
+           (delete-file tmp)
+           ,@body)
+       (when (file-exists-p tmp) (delete-file tmp)))))
+
+(defun anvil-pkg-emacs-test--ir-url-fetch (sha256 pname)
+  "Build a synthetic url-fetch IR plist for PNAME with tarball SHA256."
+  (list :name (intern pname)
+        :version "1.0.0"
+        :source (list :type 'url-fetch
+                      :url "https://example.com/foo-1.0.tar.gz"
+                      :sha256 sha256)
+        :build-system (list :type 'emacs-package)))
+
+(defun anvil-pkg-emacs-test--ir-git-fetch (url rev pname)
+  "Build a synthetic git-fetch IR plist for PNAME at URL REV."
+  (list :name (intern pname)
+        :version "1.0.0"
+        :source (list :type 'git-fetch
+                      :url url
+                      :rev rev
+                      :sha256 "sha256-fake")
+        :build-system (list :type 'emacs-package)))
+
+(defun anvil-pkg-emacs-test--build-tarball (top-dir files)
+  "Build a tar.gz at a temp path.
+
+TOP-DIR is the single top-level directory inside the tarball.
+FILES is an alist of (RELATIVE-PATH . CONTENT-STRING).  Returns
+the raw bytes of the tarball as a unibyte string.  Skips with
+`ert-skip' when `tar' / `gzip' is unavailable."
+  (unless (executable-find "tar")
+    (ert-skip "tar binary not available"))
+  (let* ((staging (make-temp-file "anvil-pkg-tar-stage-" t))
+         (tarfile (make-temp-file "anvil-pkg-tar-" nil ".tar.gz"))
+         (root (expand-file-name top-dir staging)))
+    (unwind-protect
+        (progn
+          (make-directory root t)
+          (dolist (f files)
+            (let* ((rel (car f))
+                   (content (cdr f))
+                   (path (expand-file-name rel root)))
+              (make-directory (file-name-directory path) t)
+              (with-temp-file path (insert content))))
+          (let ((default-directory staging))
+            (let ((exit (call-process "tar" nil nil nil
+                                      "-czf" tarfile top-dir)))
+              (unless (eq 0 exit)
+                (error "tar -czf failed: %S" exit))))
+          (with-temp-buffer
+            (set-buffer-multibyte nil)
+            (let ((coding-system-for-read 'binary))
+              (insert-file-contents-literally tarfile))
+            (buffer-string)))
+      (delete-directory staging t)
+      (when (file-exists-p tarfile) (delete-file tarfile)))))
+
+;;;; --- L24a tarball happy + miss ------------------------------------------
+
+(ert-deftest anvil-pkg-emacs-test-derive-deps-tarball-pkg-el-happy ()
+  "L24a: tarball with FOO-pkg.el → parsed deps, cached by sha256."
+  (let* ((bytes (anvil-pkg-emacs-test--build-tarball
+                 "foo-1.0"
+                 '(("foo-pkg.el"
+                    . "(define-package \"foo\" \"1.0\" \"d\" '((dash \"2.0\") (s \"1.0\")))\n"))))
+         (http-calls 0))
+    (anvil-pkg-emacs-test--with-state
+      (cl-letf (((symbol-function 'anvil-pkg-compat-http-get-binary)
+                 (lambda (_url &optional _timeout)
+                   (cl-incf http-calls)
+                   (list :status 200 :body bytes
+                         :content-length (length bytes)))))
+        (let ((ir (anvil-pkg-emacs-test--ir-url-fetch "sha256-aaa" "foo")))
+          (should (equal '(dash s) (anvil-pkg-emacs-derive-deps ir)))
+          (should (= 1 http-calls)))))))
+
+(ert-deftest anvil-pkg-emacs-test-derive-deps-tarball-package-requires-header ()
+  "L24a: tarball with no -pkg.el but FOO.el header → parsed deps."
+  (let* ((bytes (anvil-pkg-emacs-test--build-tarball
+                 "foo-1.0"
+                 '(("foo.el"
+                    . ";;; foo.el --- a thing -*- lexical-binding: t; -*-\n;; Package-Requires: ((dash \"2.0\") (s \"1.0\"))\n;;; Code:\n(provide 'foo)\n")))))
+    (anvil-pkg-emacs-test--with-state
+      (cl-letf (((symbol-function 'anvil-pkg-compat-http-get-binary)
+                 (lambda (_url &optional _timeout)
+                   (list :status 200 :body bytes
+                         :content-length (length bytes)))))
+        (let ((ir (anvil-pkg-emacs-test--ir-url-fetch "sha256-bbb" "foo")))
+          (should (equal '(dash s) (anvil-pkg-emacs-derive-deps ir))))))))
+
+(ert-deftest anvil-pkg-emacs-test-derive-deps-tarball-too-large-refuses ()
+  "L24a: Content-Length > 50 MiB → warn + nil + no extraction.
+
+Mock returns a tiny body but advertises a content-length far in
+excess of the cap so we exercise the refuse branch deterministically.
+The :body slot is irrelevant because the size check happens before
+extraction; we nevertheless verify `tar' is never invoked."
+  (let ((tar-calls 0))
+    (anvil-pkg-emacs-test--with-state
+      (cl-letf (((symbol-function 'anvil-pkg-compat-http-get-binary)
+                 (lambda (_url &optional _timeout)
+                   (list :status 200
+                         :body ""
+                         :content-length (* 100 1024 1024))))
+                ((symbol-function 'anvil-pkg-compat-call-process)
+                 (lambda (_program _args)
+                   (cl-incf tar-calls)
+                   (list :exit 0 :stdout "" :stderr ""))))
+        (let ((ir (anvil-pkg-emacs-test--ir-url-fetch "sha256-big" "foo")))
+          (should (null (anvil-pkg-emacs-derive-deps ir)))
+          (should (= 0 tar-calls))
+          ;; Refusal cached as :error so subsequent installs don't retry.
+          (let ((cached (anvil-pkg-state-get
+                         anvil-pkg-emacs--deps-namespace
+                         "sha256:sha256-big")))
+            (should cached)
+            (should (eq :error (plist-get cached :status)))))))))
+
+(ert-deftest anvil-pkg-emacs-test-derive-deps-tarball-cache-hit-by-sha256 ()
+  "L24a: second call with same sha256 → no http-get-binary call."
+  (let* ((bytes (anvil-pkg-emacs-test--build-tarball
+                 "foo-1.0"
+                 '(("foo-pkg.el"
+                    . "(define-package \"foo\" \"1.0\" \"d\" '((dash \"2.0\")))\n"))))
+         (http-calls 0))
+    (anvil-pkg-emacs-test--with-state
+      (cl-letf (((symbol-function 'anvil-pkg-compat-http-get-binary)
+                 (lambda (_url &optional _timeout)
+                   (cl-incf http-calls)
+                   (list :status 200 :body bytes
+                         :content-length (length bytes)))))
+        (let ((ir (anvil-pkg-emacs-test--ir-url-fetch "sha256-cache" "foo")))
+          (should (equal '(dash) (anvil-pkg-emacs-derive-deps ir)))
+          (should (= 1 http-calls))
+          ;; Same sha256 → cache hit.
+          (should (equal '(dash) (anvil-pkg-emacs-derive-deps ir)))
+          (should (= 1 http-calls)))))))
+
+;;;; --- L24b git-fetch happy + failure + cache ------------------------------
+
+(defun anvil-pkg-emacs-test--git-clone-mock (writer)
+  "Return a `call-process' mock that writes a fixture into the clone tmpdir.
+
+WRITER is called with the tmpdir path on a `git clone' invocation;
+it should populate the directory with the files the scrape will
+read.  Non-clone shell-outs (e.g. `tar' if reused) return success
++ empty stdout."
+  (lambda (program args)
+    (cond
+     ((and (string= program "git")
+           (>= (length args) 1)
+           (string= (car args) "clone"))
+      ;; Last arg is the destination tmpdir.
+      (let ((dest (car (last args))))
+        (make-directory dest t)
+        (funcall writer dest)
+        (list :exit 0 :stdout "" :stderr "")))
+     (t
+      (list :exit 0 :stdout "" :stderr "")))))
+
+(ert-deftest anvil-pkg-emacs-test-derive-deps-git-clone-happy ()
+  "L24b: git clone success + foo-pkg.el in tmpdir → parsed deps + cleanup."
+  (let ((seen-tmpdir nil))
+    (anvil-pkg-emacs-test--with-state
+      (cl-letf (((symbol-function 'anvil-pkg-compat-call-process)
+                 (anvil-pkg-emacs-test--git-clone-mock
+                  (lambda (dest)
+                    (setq seen-tmpdir dest)
+                    (with-temp-file (expand-file-name "foo-pkg.el" dest)
+                      (insert "(define-package \"foo\" \"1.0\" \"d\" '((dash \"2.0\") (s \"1.0\")))\n"))))))
+        (let* ((ir (anvil-pkg-emacs-test--ir-git-fetch
+                    "https://git.example.com/foo.git" "v1.0" "foo"))
+               (deps (anvil-pkg-emacs-derive-deps ir)))
+          (should (equal '(dash s) deps))
+          ;; tmpdir created by the impl, not by the mock — but the
+          ;; mock recorded the path, so post-call it must be gone.
+          (should seen-tmpdir)
+          (should-not (file-exists-p seen-tmpdir)))))))
+
+(ert-deftest anvil-pkg-emacs-test-derive-deps-git-clone-failure-degrades ()
+  "L24b: git clone nonzero exit on every variant → warn + nil + cleanup."
+  (let ((seen-tmpdir nil))
+    (anvil-pkg-emacs-test--with-state
+      (cl-letf (((symbol-function 'anvil-pkg-compat-call-process)
+                 (lambda (program args)
+                   (cond
+                    ((and (string= program "git")
+                          (string= (car args) "clone"))
+                     (setq seen-tmpdir (car (last args)))
+                     (list :exit 128 :stdout ""
+                           :stderr "fatal: ref not found"))
+                    (t (list :exit 1 :stdout "" :stderr ""))))))
+        (let* ((ir (anvil-pkg-emacs-test--ir-git-fetch
+                    "https://git.example.com/foo.git" "deadbeef" "foo"))
+               (deps (anvil-pkg-emacs-derive-deps ir)))
+          (should (null deps))
+          (when seen-tmpdir
+            (should-not (file-exists-p seen-tmpdir)))
+          ;; Failure cached as :error.
+          (let ((cached (anvil-pkg-state-get
+                         anvil-pkg-emacs--deps-namespace
+                         "git:https://git.example.com/foo.git@deadbeef")))
+            (should cached)
+            (should (eq :error (plist-get cached :status)))))))))
+
+(ert-deftest anvil-pkg-emacs-test-derive-deps-git-cache-hit-by-rev ()
+  "L24b: second call with same url@rev → no shell-out."
+  (let ((proc-calls 0))
+    (anvil-pkg-emacs-test--with-state
+      (cl-letf (((symbol-function 'anvil-pkg-compat-call-process)
+                 (let ((git-mock
+                        (anvil-pkg-emacs-test--git-clone-mock
+                         (lambda (dest)
+                           (with-temp-file (expand-file-name "foo-pkg.el" dest)
+                             (insert "(define-package \"foo\" \"1.0\" \"d\" '((dash \"2.0\")))\n"))))))
+                   (lambda (program args)
+                     (cl-incf proc-calls)
+                     (funcall git-mock program args)))))
+        (let ((ir (anvil-pkg-emacs-test--ir-git-fetch
+                   "https://git.example.com/foo.git" "v1.0" "foo")))
+          (should (equal '(dash) (anvil-pkg-emacs-derive-deps ir)))
+          (let ((first-calls proc-calls))
+            (should (> first-calls 0))
+            ;; Second call: cached, no further call-process invocations.
+            (should (equal '(dash) (anvil-pkg-emacs-derive-deps ir)))
+            (should (= first-calls proc-calls))))))))
+
 (provide 'anvil-pkg-emacs-test)
 ;;; anvil-pkg-emacs-test.el ends here

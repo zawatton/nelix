@@ -97,10 +97,41 @@ Per-lookup timeout; the lookup chain (`<pname>-pkg.el' →
   :type 'integer
   :group 'anvil-pkg-emacs)
 
+(defcustom anvil-pkg-emacs-tarball-timeout 30
+  "Seconds before a tarball download (L24a) aborts.
+
+Tarballs are bigger than the raw.githubusercontent.com header
+fetches so the default is higher than `anvil-pkg-emacs-http-timeout'."
+  :type 'integer
+  :group 'anvil-pkg-emacs)
+
+(defcustom anvil-pkg-emacs-tarball-max-bytes (* 50 1024 1024)
+  "Maximum tarball size (bytes) accepted by L24a's deps scrape.
+
+Tarballs whose Content-Length header exceeds this threshold are
+refused with a warning; users with truly huge upstreams should
+declare `:depends-on' explicitly.  Default 50 MiB (OQ16)."
+  :type 'integer
+  :group 'anvil-pkg-emacs)
+
+(defcustom anvil-pkg-emacs-git-clone-timeout 60
+  "Seconds before a git shallow clone (L24b) aborts.
+
+Used as the wall-clock budget for the underlying `git clone' (or
+fetch + checkout fallback).  Currently advisory — the dispatch
+shells out via `anvil-pkg-compat-call-process' which does not honour
+a per-call timeout; tests rely on mocking instead."
+  :type 'integer
+  :group 'anvil-pkg-emacs)
+
 (defconst anvil-pkg-emacs--deps-namespace "anvil-pkg:emacs-deps"
   "`anvil-pkg-state' namespace for Package-Requires lookup cache.
 
-Key = \"<owner>/<repo>@<rev>\" (string).
+Key shapes (one per source type):
+  - github-fetch: \"<owner>/<repo>@<rev>\"
+  - url-fetch:    \"sha256:<hash>\"
+  - git-fetch:    \"git:<url>@<rev>\"
+
 Value = plist (:deps (SYM ...) :status SYM) where status ∈
 (:hit-pkg-el :hit-header :miss :error).  TTL is supplied via
 `anvil-pkg-emacs-cache-ttl-seconds' on every put.")
@@ -203,8 +234,16 @@ Returns plist (:status INT :body STRING).  Wraps
 ;;;; --- cache ---------------------------------------------------------------
 
 (defun anvil-pkg-emacs--cache-key (owner repo rev)
-  "Build the cache key string for OWNER REPO REV."
+  "Build the github-fetch cache key string for OWNER REPO REV."
   (format "%s/%s@%s" owner repo rev))
+
+(defun anvil-pkg-emacs--cache-key-tarball (sha256)
+  "Build the url-fetch cache key string from a tarball SHA256 hash."
+  (format "sha256:%s" sha256))
+
+(defun anvil-pkg-emacs--cache-key-git (url rev)
+  "Build the git-fetch cache key string from URL and REV."
+  (format "git:%s@%s" url rev))
 
 (defun anvil-pkg-emacs--cache-get (key)
   "Return the cache entry for KEY, or nil when missing or expired.
@@ -233,47 +272,63 @@ dereferences the namespaced KV."
 
 IR is the plist registered by `pkg-define' (see anvil-pkg-dsl.el).
 
+Dispatch by `(plist-get source :type)`:
+  - github-fetch  → raw.githubusercontent.com pkg-el / header scrape
+                    (Phase 4-C L18).
+  - url-fetch     → tarball download + `tar -tzf' / `tar -xzOf'
+                    extraction of `<pname>-pkg.el' / `<pname>.el'
+                    (Phase 4-D L24a).
+  - git-fetch     → shallow clone + on-disk read of the same files
+                    (Phase 4-D L24b).
+  - other         → nil.
+
 Returns nil when:
-- :source is not `github-fetch' (only github-fetch supports
-  auto-derive in Phase 4-C);
 - explicit :depends-on is already set on IR (the L8 invariant — the
   caller should check before calling this; we guard defensively too);
-- HTTP lookup fails / package has no Package-Requires header /
-  cache says :miss;
-- the cache says :error within TTL.
+- the source type is unknown / unsupported;
+- the lookup fails / has no Package-Requires header /
+  cache says :miss / :error within TTL.
 
-Cache hit avoids HTTP entirely.  Logs warnings via
-`lwarn' on errors but never signals (failure → empty list, install
+Cache hit avoids HTTP / git / tar entirely.  Logs warnings via
+`lwarn' on errors but never signals (failure → nil, install
 proceeds)."
   (let* ((source (plist-get ir :source))
          (source-type (plist-get source :type))
-         (explicit-deps (plist-get ir :depends-on)))
+         (explicit-deps (plist-get ir :depends-on))
+         (name  (plist-get ir :name))
+         (pname (if (symbolp name) (symbol-name name)
+                  (format "%s" name))))
     (cond
      ;; L8 defensive guard: explicit deps win.
      (explicit-deps nil)
-     ;; Phase 4-C scope: only github-fetch sources.
-     ((not (eq source-type 'github-fetch)) nil)
+     ((eq source-type 'github-fetch)
+      (anvil-pkg-emacs--derive-from-github source pname))
+     ((eq source-type 'url-fetch)
+      (anvil-pkg-emacs--derive-from-tarball source pname))
+     ((eq source-type 'git-fetch)
+      (anvil-pkg-emacs--derive-from-git source pname))
+     (t nil))))
+
+;;;; --- github-fetch dispatch (Phase 4-C L18) -------------------------------
+
+(defun anvil-pkg-emacs--derive-from-github (source pname)
+  "Github-fetch arm of `anvil-pkg-emacs-derive-deps'.
+
+SOURCE is the IR's :source plist (already known to have :type
+`github-fetch').  PNAME is the package symbol name (string)."
+  (let* ((owner (plist-get source :owner))
+         (repo  (plist-get source :repo))
+         (rev   (plist-get source :rev))
+         (key   (anvil-pkg-emacs--cache-key owner repo rev))
+         (cached (anvil-pkg-emacs--cache-get key)))
+    (cond
+     (cached
+      (plist-get cached :deps))
      (t
-      (let* ((owner (plist-get source :owner))
-             (repo  (plist-get source :repo))
-             (rev   (plist-get source :rev))
-             ;; pname for the lookup is the package symbol name.
-             (name  (plist-get ir :name))
-             (pname (if (symbolp name) (symbol-name name)
-                      (format "%s" name)))
-             (key   (anvil-pkg-emacs--cache-key owner repo rev))
-             (cached (anvil-pkg-emacs--cache-get key)))
-        (cond
-         ;; Cache hit (still within TTL — state layer drops expired entries
-         ;; before they reach us): return cached deps (which may be nil
-         ;; for :miss / :error statuses).
-         (cached
-          (plist-get cached :deps))
-         (t
-          (anvil-pkg-emacs--lookup-and-cache owner repo rev pname key))))))))
+      (anvil-pkg-emacs--lookup-and-cache owner repo rev pname key)))))
 
 (defun anvil-pkg-emacs--lookup-and-cache (owner repo rev pname key)
-  "Run the lookup chain, store result under KEY, return deps or nil."
+  "Run the github-fetch lookup chain, store under KEY, return deps or nil."
   (condition-case err
       (let ((pkg-el-deps (anvil-pkg-emacs--lookup-pkg-el
                           owner repo rev pname)))
@@ -301,6 +356,294 @@ proceeds)."
             key err)
      (anvil-pkg-emacs--cache-put key nil :error)
      nil)))
+
+;;;; --- url-fetch dispatch (Phase 4-D L24a) ---------------------------------
+
+(defun anvil-pkg-emacs--derive-from-tarball (source pname)
+  "Url-fetch arm — download tarball, scrape header, return deps or nil.
+
+SOURCE is the IR's :source plist with :type `url-fetch'; PNAME is
+the package symbol name (string).  Cache key is `sha256:<hash>'."
+  (let* ((url    (plist-get source :url))
+         (sha256 (plist-get source :sha256))
+         (key    (anvil-pkg-emacs--cache-key-tarball sha256))
+         (cached (anvil-pkg-emacs--cache-get key)))
+    (cond
+     (cached
+      (plist-get cached :deps))
+     ((or (null url) (null sha256))
+      ;; Malformed source plist; cache :miss so we do not retry.
+      (anvil-pkg-emacs--cache-put key nil :miss)
+      nil)
+     (t
+      (anvil-pkg-emacs--scrape-tarball url pname key)))))
+
+(defun anvil-pkg-emacs--scrape-tarball (url pname key)
+  "Download URL, scrape PNAME-pkg.el / PNAME.el, cache under KEY.
+
+Returns deps list or nil; warns + caches `:error' on any failure.
+Refuses + caches `:error' when Content-Length exceeds
+`anvil-pkg-emacs-tarball-max-bytes'.  Tmp file cleaned via
+`unwind-protect'."
+  (condition-case err
+      (let* ((resp (anvil-pkg-compat-http-get-binary
+                    url anvil-pkg-emacs-tarball-timeout))
+             (status (plist-get resp :status))
+             (clen   (plist-get resp :content-length)))
+        (cond
+         ((and (numberp clen)
+               (> clen anvil-pkg-emacs-tarball-max-bytes))
+          (lwarn 'anvil-pkg :warning
+                 "anvil-pkg-emacs: tarball %s too large (%d bytes > %d cap), skipping deps scrape"
+                 url clen anvil-pkg-emacs-tarball-max-bytes)
+          (anvil-pkg-emacs--cache-put key nil :error)
+          nil)
+         ((not (eq status 200))
+          (lwarn 'anvil-pkg :warning
+                 "anvil-pkg-emacs: tarball %s download failed (status %S)"
+                 url status)
+          (anvil-pkg-emacs--cache-put key nil :error)
+          nil)
+         (t
+          (anvil-pkg-emacs--scrape-tarball-bytes
+           (plist-get resp :body) pname key))))
+    (error
+     (lwarn 'anvil-pkg :warning
+            "anvil-pkg-emacs: tarball lookup failed for %s: %S" key err)
+     (anvil-pkg-emacs--cache-put key nil :error)
+     nil)))
+
+(defun anvil-pkg-emacs--scrape-tarball-bytes (body pname key)
+  "Write BODY bytes to a tmp file and scrape PNAME-pkg.el / PNAME.el.
+
+BODY is the raw tar.gz bytes.  Cleans the tmp file via
+`unwind-protect'.  Caches result under KEY and returns deps or
+nil."
+  (let ((tmpfile (anvil-pkg-compat-make-temp-file "anvil-pkg-tarball-")))
+    (unwind-protect
+        (progn
+          (anvil-pkg-emacs--write-binary tmpfile body)
+          (let* ((entries (anvil-pkg-emacs--tar-list tmpfile))
+                 (top-dir (anvil-pkg-emacs--tar-top-dir entries))
+                 (pkg-el-path
+                  (and top-dir
+                       (anvil-pkg-emacs--tar-find-entry
+                        entries (format "%s/%s-pkg.el" top-dir pname))))
+                 (main-el-path
+                  (and top-dir
+                       (anvil-pkg-emacs--tar-find-entry
+                        entries (format "%s/%s.el" top-dir pname)))))
+            (cond
+             (pkg-el-path
+              (let* ((content (anvil-pkg-emacs--tar-extract
+                               tmpfile pkg-el-path))
+                     (deps (anvil-pkg-emacs--parse-define-package content)))
+                (cond
+                 (deps
+                  (anvil-pkg-emacs--cache-put key deps :hit-pkg-el)
+                  deps)
+                 (main-el-path
+                  (anvil-pkg-emacs--scrape-tarball-main
+                   tmpfile main-el-path key))
+                 (t
+                  (anvil-pkg-emacs--cache-put key nil :miss)
+                  nil))))
+             (main-el-path
+              (anvil-pkg-emacs--scrape-tarball-main
+               tmpfile main-el-path key))
+             (t
+              (anvil-pkg-emacs--cache-put key nil :miss)
+              nil))))
+      (anvil-pkg-compat-delete-file-quietly tmpfile))))
+
+(defun anvil-pkg-emacs--scrape-tarball-main (tmpfile path key)
+  "Extract PATH from TMPFILE and parse Package-Requires header.
+
+Caches result under KEY (`:hit-header' on success, `:miss'
+otherwise) and returns deps or nil."
+  (let* ((content (anvil-pkg-emacs--tar-extract tmpfile path))
+         (deps (anvil-pkg-emacs--parse-package-requires-header content)))
+    (cond
+     (deps
+      (anvil-pkg-emacs--cache-put key deps :hit-header)
+      deps)
+     (t
+      (anvil-pkg-emacs--cache-put key nil :miss)
+      nil))))
+
+(defun anvil-pkg-emacs--write-binary (path bytes)
+  "Write the raw byte string BYTES to PATH (no coding conversion)."
+  (let ((coding-system-for-write 'binary))
+    (anvil-pkg-compat-write-file path bytes)))
+
+(defun anvil-pkg-emacs--tar-list (tarfile)
+  "Run `tar -tzf TARFILE' and return its stdout lines as a list of strings."
+  (let* ((resp (anvil-pkg-compat-call-process
+                "tar" (list "-tzf" tarfile)))
+         (exit (plist-get resp :exit))
+         (stdout (or (plist-get resp :stdout) "")))
+    (cond
+     ((eq exit 0)
+      ;; Drop empty trailing newline entry.
+      (split-string stdout "\n" t))
+     (t
+      (error "tar -tzf failed (exit=%S, stderr=%s)"
+             exit (plist-get resp :stderr))))))
+
+(defun anvil-pkg-emacs--tar-top-dir (entries)
+  "Return the only top-level directory in ENTRIES, or nil if ambiguous.
+
+Top-level = component before the first slash.  If every entry
+shares the same prefix, return it; otherwise nil (caller should
+treat as a tarball without a single top dir)."
+  (let ((dirs (delete-dups
+               (delq nil
+                     (mapcar (lambda (e)
+                               (let ((slash (string-match "/" e)))
+                                 (and slash (substring e 0 slash))))
+                             entries)))))
+    (when (and dirs (= 1 (length dirs)))
+      (car dirs))))
+
+(defun anvil-pkg-emacs--tar-find-entry (entries path)
+  "Return PATH if it appears in ENTRIES, else nil.
+Trailing-slash entries (directories) are ignored."
+  (let ((found nil))
+    (dolist (e entries)
+      (when (and (not found)
+                 (string= e path))
+        (setq found e)))
+    found))
+
+(defun anvil-pkg-emacs--tar-extract (tarfile entry)
+  "Run `tar -xzOf TARFILE ENTRY' and return its stdout as a string."
+  (let* ((resp (anvil-pkg-compat-call-process
+                "tar" (list "-xzOf" tarfile entry)))
+         (exit (plist-get resp :exit)))
+    (cond
+     ((eq exit 0)
+      (or (plist-get resp :stdout) ""))
+     (t
+      (error "tar -xzOf %s failed (exit=%S, stderr=%s)"
+             entry exit (plist-get resp :stderr))))))
+
+;;;; --- git-fetch dispatch (Phase 4-D L24b) ---------------------------------
+
+(defun anvil-pkg-emacs--derive-from-git (source pname)
+  "Git-fetch arm — shallow clone + on-disk scrape, cached by url@rev."
+  (let* ((url (plist-get source :url))
+         (rev (plist-get source :rev))
+         (key (anvil-pkg-emacs--cache-key-git url rev))
+         (cached (anvil-pkg-emacs--cache-get key)))
+    (cond
+     (cached
+      (plist-get cached :deps))
+     ((or (null url) (null rev))
+      (anvil-pkg-emacs--cache-put key nil :miss)
+      nil)
+     (t
+      (anvil-pkg-emacs--scrape-git url rev pname key)))))
+
+(defun anvil-pkg-emacs--scrape-git (url rev pname key)
+  "Shallow-clone URL @ REV into a tmpdir and scrape PNAME-pkg.el / .el.
+
+Cleanup uses `unwind-protect' so a failed clone still removes the
+tmpdir.  Falls back from `git clone --branch <rev>' to
+`git fetch --depth 1 origin <rev>' + `git checkout FETCH_HEAD'
+when the first variant rejects a SHA."
+  (let ((tmpdir (anvil-pkg-emacs--make-temp-dir "anvil-pkg-git-")))
+    (unwind-protect
+        (condition-case err
+            (cond
+             ((anvil-pkg-emacs--git-clone url rev tmpdir)
+              (let ((deps (anvil-pkg-emacs-derive-deps-from-dir
+                           tmpdir pname)))
+                (cond
+                 (deps
+                  (anvil-pkg-emacs--cache-put key deps :hit-pkg-el)
+                  deps)
+                 (t
+                  (anvil-pkg-emacs--cache-put key nil :miss)
+                  nil))))
+             (t
+              (lwarn 'anvil-pkg :warning
+                     "anvil-pkg-emacs: git clone %s @ %s failed"
+                     url rev)
+              (anvil-pkg-emacs--cache-put key nil :error)
+              nil))
+          (error
+           (lwarn 'anvil-pkg :warning
+                  "anvil-pkg-emacs: git lookup failed for %s: %S" key err)
+           (anvil-pkg-emacs--cache-put key nil :error)
+           nil))
+      (anvil-pkg-emacs--delete-directory-quietly tmpdir))))
+
+(defun anvil-pkg-emacs--git-clone (url rev tmpdir)
+  "Shallow-clone URL @ REV into TMPDIR.  Return non-nil on success.
+
+Tries `git clone --depth 1 --branch <rev>' first; falls back to
+`git init' + `git fetch --depth 1' + `git checkout FETCH_HEAD'
+when the branch flag rejects a raw SHA (typical for pinned
+revisions)."
+  (let ((primary
+         (anvil-pkg-compat-call-process
+          "git" (list "clone" "--depth" "1"
+                      "--branch" rev "--single-branch"
+                      url tmpdir))))
+    (cond
+     ((eq 0 (plist-get primary :exit)) t)
+     (t
+      ;; Fallback: init + fetch + checkout (handles SHA refs).
+      ;; Make sure the tmpdir is clean before re-init.
+      (anvil-pkg-emacs--delete-directory-quietly tmpdir)
+      (anvil-pkg-compat-make-directory tmpdir t)
+      (let* ((init (anvil-pkg-compat-call-process
+                    "git" (list "-C" tmpdir "init" "-q")))
+             (remote (and (eq 0 (plist-get init :exit))
+                          (anvil-pkg-compat-call-process
+                           "git" (list "-C" tmpdir
+                                       "remote" "add" "origin" url))))
+             (fetch (and remote
+                         (eq 0 (plist-get remote :exit))
+                         (anvil-pkg-compat-call-process
+                          "git" (list "-C" tmpdir
+                                      "fetch" "--depth" "1"
+                                      "origin" rev))))
+             (checkout (and fetch
+                            (eq 0 (plist-get fetch :exit))
+                            (anvil-pkg-compat-call-process
+                             "git" (list "-C" tmpdir
+                                         "checkout" "FETCH_HEAD")))))
+        (and checkout (eq 0 (plist-get checkout :exit))))))))
+
+(defun anvil-pkg-emacs--make-temp-dir (prefix)
+  "Create + return a fresh directory under TMPDIR with PREFIX.
+
+Wraps Emacs `make-temp-file' with DIR-FLAG so the result is an
+empty directory (vs the file flavour used elsewhere in this
+module)."
+  (cond
+   ((fboundp 'make-temp-file)
+    (make-temp-file prefix t))
+   (t
+    (let* ((path (anvil-pkg-compat-make-temp-file prefix)))
+      (anvil-pkg-compat-delete-file-quietly path)
+      (anvil-pkg-compat-make-directory path t)
+      path))))
+
+(defun anvil-pkg-emacs--delete-directory-quietly (dir)
+  "Recursively delete DIR; ignore errors / missing dir."
+  (when (and (stringp dir)
+             (anvil-pkg-compat-file-exists-p dir))
+    (condition-case _
+        (cond
+         ((fboundp 'delete-directory)
+          (delete-directory dir t))
+         (t
+          ;; Fallback shell-out for environments without
+          ;; `delete-directory'.
+          (anvil-pkg-compat-call-process "rm" (list "-rf" dir))))
+      (error nil))))
 
 (defun anvil-pkg-emacs-derive-deps-from-dir (dir pname)
   "Read deps from local DIR for package PNAME.
