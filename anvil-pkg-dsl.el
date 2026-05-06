@@ -49,6 +49,7 @@
 
 (require 'anvil-pkg)
 (require 'anvil-pkg-compat)
+(require 'cl-lib)
 
 (declare-function anvil-pkg--ensure-nix "anvil-pkg")
 (declare-function anvil-pkg--call-nix "anvil-pkg")
@@ -185,16 +186,21 @@ Accepts:
 
 (defun anvil-pkg--reject-non-emacs-package-args (name type args)
   "Signal when ARGS carry emacs-package-only keys on non-emacs TYPE.
-Currently catches :native-comp (Phase 4-B L13 reject)."
-  (when (anvil-pkg--plist-has-key-p args :native-comp)
-    (signal 'anvil-pkg-dsl-error
-            (list (format "pkg-define %s: :native-comp is only valid on emacs-package build-system, not %S"
-                          name type)))))
+Currently catches :native-comp (Phase 4-B L13 reject) and the
+Phase 4-D melpa keywords :melpa-synth / :melpa-recipe / :melpa-files (L23)."
+  (dolist (key '(:native-comp :melpa-synth :melpa-recipe :melpa-files))
+    (when (anvil-pkg--plist-has-key-p args key)
+      (signal 'anvil-pkg-dsl-error
+              (list (format "pkg-define %s: %s is only valid on emacs-package build-system, not %S"
+                            name key type))))))
 
 (defun anvil-pkg--validate-emacs-package-args (name args)
-  "Validate :format and :native-comp for the emacs-package build-system.
+  "Validate emacs-package build-system ARGS.
 Phase 4-B L13/L14: :format must be \"trivial\" or \"melpa\";
-:native-comp must be t or nil when supplied."
+:native-comp must be t or nil when supplied.
+Phase 4-D L23: :melpa-synth must be one of `auto', `force', `never';
+:melpa-recipe must be a non-empty string when supplied;
+:melpa-files must be a list of non-empty strings when supplied."
   (let ((fmt (plist-get args :format)))
     (when fmt
       (unless (member fmt '("trivial" "melpa"))
@@ -206,11 +212,34 @@ Phase 4-B L13/L14: :format must be \"trivial\" or \"melpa\";
       (unless (booleanp nc)
         (signal 'anvil-pkg-dsl-error
                 (list (format "pkg-define %s: emacs-package :native-comp must be t or nil, got %S"
-                              name nc)))))))
+                              name nc))))))
+  (when (anvil-pkg--plist-has-key-p args :melpa-synth)
+    (let ((synth (plist-get args :melpa-synth)))
+      (unless (memq synth '(auto force never))
+        (signal 'anvil-pkg-dsl-error
+                (list (format "pkg-define %s: emacs-package :melpa-synth must be one of auto / force / never, got %S"
+                              name synth))))))
+  (when (anvil-pkg--plist-has-key-p args :melpa-recipe)
+    (let ((recipe (plist-get args :melpa-recipe)))
+      (unless (or (null recipe)
+                  (and (stringp recipe) (> (length recipe) 0)))
+        (signal 'anvil-pkg-dsl-error
+                (list (format "pkg-define %s: emacs-package :melpa-recipe must be a non-empty string or nil, got %S"
+                              name recipe))))))
+  (when (anvil-pkg--plist-has-key-p args :melpa-files)
+    (let ((files (plist-get args :melpa-files)))
+      (unless (and (listp files)
+                   (cl-every (lambda (f)
+                               (and (stringp f) (> (length f) 0)))
+                             files))
+        (signal 'anvil-pkg-dsl-error
+                (list (format "pkg-define %s: emacs-package :melpa-files must be a list of non-empty strings, got %S"
+                              name files)))))))
 
 (defun anvil-pkg--validate-ir (name ir)
   "Validate cross-field constraints for package NAME and parsed IR."
-  (let ((build-system-type (plist-get (plist-get ir :build-system) :type)))
+  (let* ((bs (plist-get ir :build-system))
+         (build-system-type (plist-get bs :type)))
     (when (eq build-system-type 'emacs-package)
       (when (plist-get ir :install-phase)
         (signal 'anvil-pkg-dsl-error
@@ -219,7 +248,14 @@ Phase 4-B L13/L14: :format must be \"trivial\" or \"melpa\";
       (when (plist-get ir :build-phase)
         (signal 'anvil-pkg-dsl-error
                 (list (format "pkg-define %s: build-phase is not supported with build-system emacs-package"
-                              name)))))))
+                              name))))
+      ;; L23: :melpa-synth 'force is incompatible with url-fetch source.
+      (let ((synth (plist-get bs :melpa-synth))
+            (src-type (plist-get (plist-get ir :source) :type)))
+        (when (and (eq synth 'force) (eq src-type 'url-fetch))
+          (signal 'anvil-pkg-dsl-error
+                  (list (format "pkg-define %s: :melpa-synth 'force is not supported with url-fetch source (tarball cannot be re-pinned via :fetcher git); supply :melpa-recipe explicitly or switch to github-fetch / git-fetch"
+                                name))))))))
 
 (defun anvil-pkg--parse-source (name form)
   "Parse a source-form into source IR plist.
@@ -439,7 +475,11 @@ Optional :vendor-sha256 (defaults to `vendorHash = null')."
 Phase 4-B: :format selects the builder (default \"trivial\");
 :native-comp t wraps via `pkgs.emacsPackagesFor pkgs.emacs' so
 native compilation flows through both the build call and the
-propagated inputs."
+propagated inputs.
+Phase 4-D L23: when :format is \"melpa\", :melpa-synth controls
+auto-synthesis of a postUnpack block writing recipes/<pname>.
+:melpa-recipe overrides synth with a verbatim user string;
+:melpa-files overrides the default \(\"*.el\") glob list."
   (let* ((bs (plist-get ir :build-system))
          (format-str (or (plist-get bs :format) "trivial"))
          (native-comp (plist-get bs :native-comp))
@@ -453,7 +493,9 @@ propagated inputs."
                         "(pkgs.emacsPackagesFor pkgs.emacs)"
                       "pkgs.emacsPackages"))
          (builder (format "%s.%s" epkgs-set builder-suffix))
-         (depends-on (plist-get ir :depends-on)))
+         (depends-on (plist-get ir :depends-on))
+         (post-unpack (and (equal format-str "melpa")
+                           (anvil-pkg--render-melpa-post-unpack ir))))
     (anvil-pkg--render-derivation
      builder
      (append (anvil-pkg--render-pre-bs-fields ir)
@@ -461,7 +503,77 @@ propagated inputs."
                (list (format "  packageRequires = with %s; [ %s ];"
                              epkgs-set
                              (mapconcat #'symbol-name depends-on " "))))
+             (when post-unpack (list post-unpack))
              (anvil-pkg--render-post-bs-fields ir)))))
+
+(defun anvil-pkg--render-melpa-post-unpack (ir)
+  "Return a `postUnpack' Nix field for IR or nil if no synth applies.
+
+Phase 4-D L23 logic, evaluated only for :format \"melpa\":
+
+- If :melpa-recipe is supplied, use it verbatim (synth skipped).
+- Else dispatch on :melpa-synth (default `auto'):
+  - `never'                         → return nil (no synth).
+  - `auto' / `force' on github-fetch → synth recipe, :url is the
+                                       https://github.com/<owner>/<repo> URL.
+  - `auto' / `force' on git-fetch    → synth recipe, :url is the
+                                       upstream URL.
+  - `auto' on url-fetch              → return nil (silently skip;
+                                       tarball cannot be re-pinned).
+  - `force' on url-fetch             → already rejected at parse time
+                                       (`anvil-pkg--validate-ir')."
+  (let* ((bs (plist-get ir :build-system))
+         (name (plist-get ir :name))
+         (pname (symbol-name name))
+         (explicit (plist-get bs :melpa-recipe))
+         (synth (or (plist-get bs :melpa-synth) 'auto))
+         (files (or (plist-get bs :melpa-files) '("*.el"))))
+    (cond
+     ;; Explicit recipe wins, unconditionally.
+     ((and (stringp explicit) (> (length explicit) 0))
+      (anvil-pkg--render-post-unpack-block pname explicit))
+     ;; User opted out.
+     ((eq synth 'never) nil)
+     ;; Auto / force on a re-pinnable git source.
+     ((memq synth '(auto force))
+      (let* ((src (plist-get ir :source))
+             (src-type (plist-get src :type))
+             (url (pcase src-type
+                    ('github-fetch
+                     (format "https://github.com/%s/%s"
+                             (plist-get src :owner)
+                             (plist-get src :repo)))
+                    ('git-fetch (plist-get src :url))
+                    ('url-fetch nil)
+                    (_ nil))))
+        (when url
+          (let ((recipe (anvil-pkg--synth-melpa-recipe pname url files)))
+            (anvil-pkg--render-post-unpack-block pname recipe)))))
+     (t nil))))
+
+(defun anvil-pkg--synth-melpa-recipe (pname url files)
+  "Return synthesised MELPA recipe string for PNAME / URL / FILES.
+
+Shape: `(<pname> :fetcher git :url \"<url>\" :files (\"<f1>\" \"<f2>\"))'.
+PNAME is the Elisp symbol name as a string.  FILES is a list of
+glob strings."
+  (format "(%s :fetcher git :url %S :files (%s))"
+          pname
+          url
+          (mapconcat (lambda (f) (format "%S" f)) files " ")))
+
+(defun anvil-pkg--render-post-unpack-block (pname recipe)
+  "Render a postUnpack Nix field that emits PNAME's RECIPE.
+
+The block writes the verbatim RECIPE string into
+$sourceRoot/recipes/PNAME via a heredoc so any Elisp double-quotes
+in RECIPE survive the shell layer."
+  (concat "  postUnpack = ''\n"
+          "    mkdir -p $sourceRoot/recipes\n"
+          "    cat > $sourceRoot/recipes/" pname " <<'ANVIL_PKG_RECIPE_EOF'\n"
+          "    " recipe "\n"
+          "    ANVIL_PKG_RECIPE_EOF\n"
+          "  '';"))
 
 (defun anvil-pkg--render-source (src)
   "Render a source IR plist into a Nix fetcher expression.
