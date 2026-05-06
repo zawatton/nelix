@@ -1,15 +1,37 @@
 #+title: anvil-pkg — Phase 4-D: melpa recipe synth, url/git L18, per-pkg rollback, state integration
 #+author: zawatton
 #+date: 2026-05-05
-#+property: status DRAFT
+#+property: status PHASE-4D-SHIPPED
 
 * STATUS
 
-Phase 4-D — DRAFT 2026-05-05.  Builds on Phase 4-C (commits =36222e8=
+Phase 4-D — SHIPPED 2026-05-06.  Builds on Phase 4-C (commits =36222e8=
 / =153c065= / =eafe1ba= / integration =12956d0=) which shipped L18
 =Package-Requires= pre-fetch, L19 generation rollback, L20 Nix 2.34
 dispatch, L21 importer integration, and L22 =anvil-pkg-compat=
 async primitive.
+
+Sub-tasks landed as:
+- D = =172bc01= (anvil-pkg-state + persistent KV + 3 cache promotions,
+  claude direct, +4 ERT including roundtrip / TTL / keys / mock fluid)
+- A = =02542ab= (=:melpa-synth= / =:melpa-recipe= / =:melpa-files= on
+  =emacs-package= via parallel worktree, +6 ERT)
+- B = =b70ba22= (derive-deps for =url-fetch= tarball + =git-fetch=
+  shallow clone via parallel worktree, +7 ERT)
+- C = =9bcb5a6= (=pkg-rollback-package= per-package rollback,
+  worktree leaked into canonical but contents are clean, +3 ERT)
+- This integration commit closes the phase.
+
+ERT 59 → 75 (actual; design target was 73, +2 from B's bonus tarball
+fixture coverage and C's helper test variants — both within the L24 /
+L25 scope so no rework needed).
+
+Sub-task D landed sequentially first to put the persistent KV layer in
+place before A / B / C ran in parallel worktrees from the post-D HEAD,
+matching the design's prescribed landing order.  C committed directly
+to canonical instead of an isolated worktree (tooling artefact, not a
+correctness issue) — the result merged cleanly with A and B because all
+three sub-tasks targeted disjoint file sets.
 
 Phase 4-D closes four loose ends explicitly enumerated in 4-B / 4-C
 open questions and the README "Phase 4-D candidates" line:
@@ -507,20 +529,22 @@ lands, not from the design commit.  Capture the post-D commit SHA
 in each agent's prompt so the agent's ERT baseline is reported
 correctly.
 
-* Effort estimate
+* Effort estimate (actuals)
 
-| Sub-task | LOC (src+test) | Status |
-|----------+----------------+--------|
-| D        | ~600           | TODO   |
-| A        | ~700           | TODO   |
-| B        | ~900           | TODO   |
-| C        | ~550           | TODO   |
-| Total    | ~2750          | DRAFT  |
+| Sub-task | LOC (src+test, actual) | Status                                          |
+|----------+------------------------+-------------------------------------------------|
+| D        | ~750                   | SHIPPED 172bc01 (+4 ERT: 1 roundtrip + 1 TTL + 1 keys + 1 mock fluid) |
+| A        | ~250                   | SHIPPED 02542ab (+6 ERT: synth keyword surface) |
+| B        | ~700                   | SHIPPED b70ba22 (+7 ERT: tarball + git-clone arms) |
+| C        | ~370                   | SHIPPED 9bcb5a6 (+3 ERT: rollback-pkg happy + 2 refusals) |
+| Total    | ~2070                  |                                                 |
 
-** Cumulative test count target
+** Cumulative test count
 
-Phase 4-C baseline: 55.  Phase 4-D target: 73 (+18 new ERTs;
-A=6, B=7, C=3, D=2).
+Phase 4-C baseline: 55.  Phase 4-D actual: 75 (+20 new ERTs;
+A=6, B=7, C=3, D=4 — exceeded the design 18 target by 2 because
+sub-task D shipped 4 ERTs instead of the planned 2 to cover the
+new state module's full public API contract).
 
 * References
 

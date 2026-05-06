@@ -17,19 +17,20 @@ agents can install anything by writing one Lisp form.
 
 * Status
 
-*Phase 1+2+3+4-A+4-B+4-C SHIPPED + REAL-NIX VERIFIED* (2026-05-04) —
+*Phase 1+2+3+4-A+4-B+4-C+4-D SHIPPED + REAL-NIX VERIFIED* (2026-05-06) —
 Full DSL stack on top of the Nix store with multiple fetcher /
 build-system support, an =emacs-package= backend that round-trips
 Elisp libraries through =trivialBuild= / =melpaBuild= with optional
 =:native-comp=, an opt-in =:async= install path, automatic
-=:depends-on= derivation from =Package-Requires= via a small
-raw.githubusercontent.com pre-fetch with per-session caching,
-profile generation rollback (=pkg-list-generations= / =pkg-rollback=
-/ =pkg-history=), Nix 2.34 =install=→=add= dispatch, and a one-shot
-=async-installer= importer that auto-populates =:depends-on= from
-local clones.
+=:depends-on= derivation from =Package-Requires= for github / tarball /
+git sources with cross-session caching in =anvil-pkg-state=, profile
+generation rollback (=pkg-list-generations= / =pkg-rollback= /
+=pkg-rollback-package= / =pkg-history=), Nix 2.34 =install=→=add=
+dispatch, MELPA recipe auto-synthesis via =postUnpack=, and a
+one-shot =async-installer= importer that auto-populates =:depends-on=
+from local clones.
 
-- ERT 55/55 PASS (mocked, runs without a nix binary).
+- ERT 75/75 PASS (mocked, runs without a nix binary).
 - /Real-nix smoke test/ executed end-to-end in a =nixos/nix:2.34=
   rootless podman container with Emacs 30.2:
   - =(pkg-install "hello")= installed GNU Hello into an isolated
@@ -57,17 +58,21 @@ Public Elisp API uses the short =pkg-= prefix:
 - =anvil-pkg-compat-make-process-async= /
   =anvil-pkg-compat-http-get= portability primitives (Emacs path
   shipped; NeLisp signals until Phase 5) — Phase 4-C
+- =anvil-pkg-state= namespaced KV with TTL (deps cache + Nix-version
+  cache + generations mirror persist across Emacs sessions),
+  =pkg-clear-cache= scope arg, =:melpa-synth= / =:melpa-recipe= /
+  =:melpa-files= keywords on =emacs-package=, L18 pre-fetch
+  extended to =url-fetch= (tarball header scrape) and =git-fetch=
+  (shallow clone scrape), =pkg-rollback-package= per-package
+  rollback — Phase 4-D
 
 Long-form aliases (=anvil-pkg-install= etc.) are provided via
 =defalias= for Emacs-prefix purists.
 
-Phase 4-D candidates: =melpaBuild= recipe synthesis (Phase 4-B OQ7),
-url-fetch / git-fetch coverage of the L18 pre-fetch path,
-per-package rollback granularity (Phase 4-C OQ13), and
-=anvil-pkg-state= integration so the deps cache + Nix-version cache
-+ generations mirror persist across Emacs sessions.  Phase 5
-focuses on the NeLisp async backend that makes
-=anvil-pkg-compat-make-process-async= work outside Emacs.
+Phase 5 focuses on the NeLisp async backend that makes
+=anvil-pkg-compat-make-process-async= work outside Emacs and a
+NeLisp-native HTTP backend so =anvil-pkg-compat-http-get-binary= no
+longer signals on standalone runtimes.
 
 * Why?
 
@@ -133,8 +138,8 @@ your config should not require learning a new macro language.
 | 4-A   | =emacs-package= build-system + post-install =load-path= + =:require=   | *SHIPPED*      |
 | 4-B   | =:format= / =:native-comp= / =:async= callbacks + importer (L15 def'd) | *SHIPPED*      |
 | 4-C   | L18 pre-fetch + L19 rollback + L20 Nix 2.34 + L22 compat async         | *SHIPPED*      |
-| 4-D   | melpaBuild recipe synthesis + url/git L18 + per-pkg rollback + state   | next           |
-| 5+    | NeLisp async backend (replaces Phase 4-C compat-async stub)            | research       |
+| 4-D   | melpaBuild recipe synthesis + url/git L18 + per-pkg rollback + state   | *SHIPPED*      |
+| 5+    | NeLisp async backend + HTTP backend (replaces Phase 4-C/4-D stubs)     | research       |
 
 See =docs/design/01-overview.org= for the full Phase 1 contract.
 
@@ -249,6 +254,53 @@ In your Emacs init:
  :emit (expand-file-name "imported-pkgs.el" user-emacs-directory)
  :scrape-deps t)       ; default; reads ~/.emacs.d/external-packages/<pkg>
                        ; or falls through to L18's HTTP path.
+
+;; Phase 4-D — :format "melpa" auto-synthesises a recipe via postUnpack
+;; so upstream repos without recipes/<pname> still build under melpaBuild.
+(pkg-define helm
+  (version "3.9.7")
+  (source (github-fetch :owner "emacs-helm" :repo "helm"
+                        :rev "v3.9.7" :sha256 "sha256-..."))
+  (build-system (emacs-package
+                  :format "melpa"
+                  :melpa-synth 'auto                 ; auto / force / never
+                  :melpa-files '("*.el" "lisp/*.el"))))
+;; Override the synth completely with a verbatim recipe:
+(pkg-define helm-custom
+  (version "3.9.7")
+  (source (github-fetch :owner "emacs-helm" :repo "helm"
+                        :rev "v3.9.7" :sha256 "sha256-..."))
+  (build-system (emacs-package
+                  :format "melpa"
+                  :melpa-recipe "(helm :fetcher git :url \"https://github.com/emacs-helm/helm.git\" :files (\"*.el\" \"lisp/*.el\"))")))
+
+;; Phase 4-D — auto-derive depends-on now covers url-fetch + git-fetch
+(pkg-define dash
+  (version "2.20.0")
+  (source (url-fetch :url "https://example.com/dash-2.20.0.tar.gz"
+                     :sha256 "sha256-..."))
+  (build-system (emacs-package :format "trivial")))
+(pkg-install 'dash)
+;; → tarball downloaded, foo-pkg.el extracted, deps cached by sha256.
+
+(pkg-define internal
+  (version "1.0")
+  (source (git-fetch :url "https://git.example.com/internal.el.git"
+                     :rev "v1.0" :sha256 "sha256-..."))
+  (build-system (emacs-package :format "trivial")))
+(pkg-install 'internal)
+;; → shallow git clone, deps scraped, tmpdir cleaned, deps cached by url@rev.
+
+;; Phase 4-D — per-package rollback (drops one entry, keeps the rest)
+(pkg-rollback-package 'magit)
+;; → re-renders flake.nix from the registry minus magit, runs
+;;   `nix profile add'.  Other installed packages stay.
+
+;; Phase 4-D — clear caches by scope (default = all)
+(pkg-clear-cache)              ; all anvil-pkg-state namespaces
+(pkg-clear-cache 'deps)        ; just the Package-Requires lookup cache
+(pkg-clear-cache 'nix-version) ; just the Nix-version detection cache
+(pkg-clear-cache 'generations) ; just the profile generations mirror
 #+end_src
 
 CLI sub-command (=anvil pkg install ...=) lands in =anvil.el= via a
@@ -257,7 +309,7 @@ separate PR; until then call the Elisp API directly.
 ** Run the test suite
 
 #+begin_src shell
-make test       # 55 ERT tests, no nix binary required (all mocked)
+make test       # 75 ERT tests, no nix binary required (all mocked)
 make compile    # byte-compile, warnings-as-errors
 #+end_src
 
