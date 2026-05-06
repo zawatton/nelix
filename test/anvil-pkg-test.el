@@ -20,6 +20,7 @@
 (require 'ert)
 (require 'cl-lib)
 (require 'anvil-pkg)
+(require 'anvil-pkg-state)
 
 (defmacro anvil-pkg-test--with-mock (mock-fn &rest body)
   "Run BODY with `anvil-pkg--call-nix-fn' bound to MOCK-FN.
@@ -28,16 +29,31 @@ The mock is also relied on by `anvil-pkg--ensure-nix' to skip the
 real `executable-find' check (the ensure helper exempts test mode
 when the call-nix fn is not the default).
 
-Also pre-binds `anvil-pkg--nix-version-cache' to a sentinel pre-2.34
-version so install-path tests that don't anticipate a `nix --version'
-call in their mock cond do not regress on Phase 4-C L20.  Tests that
-care about the dispatch rebind the cache themselves."
+Pre-seeds the persistent state with a sentinel pre-2.34 Nix
+version so install-path tests that don't anticipate a `nix
+--version' call in their mock cond do not regress on Phase 4-C
+L20.  Tests that care about the dispatch overwrite the cache
+themselves via `anvil-pkg-state-put'.
+
+The state file is bound to a tmp path so the real
+~/.local/state/anvil-pkg/state.json is never touched and the
+in-process state cache is reset between tests."
   (declare (indent 1))
-  `(let ((anvil-pkg--call-nix-fn ,mock-fn)
-         (anvil-pkg-nix-channel "nixpkgs")
-         (anvil-pkg-profile-dir "/tmp/anvil-pkg-test-profile")
-         (anvil-pkg--nix-version-cache "2.18.0"))
-     ,@body))
+  `(let* ((tmp (make-temp-file "anvil-pkg-test-" nil ".json"))
+          (anvil-pkg-state-file tmp)
+          (anvil-pkg-state--cache 'unloaded)
+          (anvil-pkg-state--loaded-from nil)
+          (anvil-pkg--call-nix-fn ,mock-fn)
+          (anvil-pkg-nix-channel "nixpkgs")
+          (anvil-pkg-profile-dir "/tmp/anvil-pkg-test-profile"))
+     (unwind-protect
+         (progn
+           (delete-file tmp)
+           (anvil-pkg-state-put anvil-pkg--nix-version-namespace
+                                anvil-pkg--nix-version-key
+                                "2.18.0")
+           ,@body)
+       (when (file-exists-p tmp) (delete-file tmp)))))
 
 ;;;; --- install ---------------------------------------------------------------
 
@@ -464,8 +480,8 @@ ascending order by id."
       (should (null (plist-get g4 :active)))
       (should (equal '(ripgrep magit) (plist-get g5 :packages)))
       (should (eq t (plist-get g5 :active)))
-      ;; cache mirror updated
-      (should (equal res anvil-pkg--generations-cache)))))
+      ;; cache mirror updated (now persisted via anvil-pkg-state)
+      (should (equal res (anvil-pkg--generations-cache-get))))))
 
 (ert-deftest anvil-pkg-test-rollback-runs-nix-profile-rollback ()
   "pkg-rollback shells out to `nix profile rollback --to-generation N'.
@@ -473,10 +489,7 @@ ascending order by id."
 Mock captures rollback invocation arguments and returns an empty
 profile for the post-rollback `pkg-list' so the emacs-package
 hook re-run is a benign no-op."
-  (let ((captured-rollback-args nil)
-        (anvil-pkg--generations-cache
-         (list (list :id 3 :date "d3" :packages '() :active nil)
-               (list :id 4 :date "d4" :packages '() :active t))))
+  (let ((captured-rollback-args nil))
     (anvil-pkg-test--with-mock
         (lambda (args)
           (cond
@@ -499,6 +512,10 @@ hook re-run is a benign no-op."
                   :stdout "{\"version\":3,\"elements\":{}}"
                   :stderr ""))
            (t (ert-fail (format "unexpected nix args: %S" args)))))
+      ;; Pre-seed the persistent generations mirror.
+      (anvil-pkg--generations-cache-put
+       (list (list :id 3 :date "d3" :packages '() :active nil)
+             (list :id 4 :date "d4" :packages '() :active t)))
       (should (eq t (pkg-rollback 3)))
       (should (member "rollback" captured-rollback-args))
       (should (member "--to-generation" captured-rollback-args))
@@ -507,15 +524,18 @@ hook re-run is a benign no-op."
 (ert-deftest anvil-pkg-test-history-filters-by-package-name ()
   "pkg-history returns events for the requested package only.
 
-Pre-populates the in-process generations mirror with three
+Pre-populates the persistent generations mirror with three
 generations involving two packages (foo, bar); queries for `foo'
 and verifies only foo's :installed / :removed events come back —
 bar's lineage stays out of the result."
-  (let ((anvil-pkg--generations-cache
-         (list
-          (list :id 1 :date "d1" :packages '(foo)         :active nil)
-          (list :id 2 :date "d2" :packages '(foo bar)     :active nil)
-          (list :id 3 :date "d3" :packages '(bar)         :active t))))
+  (anvil-pkg-test--with-mock
+      (lambda (_args)
+        (ert-fail "pkg-history must not shell out when mirror is populated"))
+    (anvil-pkg--generations-cache-put
+     (list
+      (list :id 1 :date "d1" :packages '(foo)         :active nil)
+      (list :id 2 :date "d2" :packages '(foo bar)     :active nil)
+      (list :id 3 :date "d3" :packages '(bar)         :active t)))
     (let ((events (pkg-history 'foo)))
       (should (= 2 (length events)))
       ;; First entry: id=1, foo present, prev set uninitialised → :installed
@@ -533,21 +553,17 @@ bar's lineage stays out of the result."
 (ert-deftest anvil-pkg-test-install-uses-add-on-nix-2-34 ()
   "pkg-install passes `add' (not `install') as the subcommand on Nix >= 2.34.
 
-Pins `anvil-pkg--nix-version-cache' to a 2.34 version inside the
-macro body so the detect-nix-version helper short-circuits
-without consulting the mock; verifies the captured args carry
-`add' instead of `install'.
-
-The cache is set inside the macro body (rather than as an outer
-let-binding) because `anvil-pkg-test--with-mock' rebinds the
-cache to a pre-2.34 sentinel for the rest of the suite; an outer
-let would be shadowed."
+Pins the persistent Nix-version cache to a 2.34 string inside the
+macro body so the detect helper short-circuits without consulting
+the mock; verifies the captured args carry `add' instead of
+`install'."
   (let (captured-args)
     (anvil-pkg-test--with-mock
         (lambda (args)
           (setq captured-args args)
           (list :exit 0 :stdout "" :stderr ""))
-      (setq anvil-pkg--nix-version-cache "2.34.0")
+      (anvil-pkg-state-put anvil-pkg--nix-version-namespace
+                           anvil-pkg--nix-version-key "2.34.0")
       (should (eq t (pkg-install "ripgrep"))))
     (should (member "profile" captured-args))
     (should (member "add" captured-args))
@@ -557,15 +573,17 @@ let would be shadowed."
 (ert-deftest anvil-pkg-test-install-uses-install-on-pre-2-34 ()
   "pkg-install passes `install' on Nix < 2.34.
 
-Pins `anvil-pkg--nix-version-cache' to 2.18.5 (older than 2.34)
-inside the macro body and verifies the legacy `install'
-subcommand is preserved."
+Pins the persistent Nix-version cache to 2.18.5 (older than 2.34)
+inside the macro body and verifies the legacy `install' subcommand
+is preserved.  The macro pre-seeds 2.18.0 already, but we overwrite
+explicitly so this test does not couple to that default."
   (let (captured-args)
     (anvil-pkg-test--with-mock
         (lambda (args)
           (setq captured-args args)
           (list :exit 0 :stdout "" :stderr ""))
-      (setq anvil-pkg--nix-version-cache "2.18.5")
+      (anvil-pkg-state-put anvil-pkg--nix-version-namespace
+                           anvil-pkg--nix-version-key "2.18.5")
       (should (eq t (pkg-install "ripgrep"))))
     (should (member "profile" captured-args))
     (should (member "install" captured-args))

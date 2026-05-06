@@ -59,6 +59,7 @@
 ;;; Code:
 
 (require 'anvil-pkg-compat)
+(require 'anvil-pkg-state)
 
 (defgroup anvil-pkg nil
   "Elisp DSL package manager backed by Nix store."
@@ -313,20 +314,34 @@ exists."
 ;; runtime version once per Emacs session and dispatch the right subcommand
 ;; so >= 2.34 stops emitting the deprecation warning.
 
-(defvar anvil-pkg--nix-version-cache nil
-  "Cached `nix --version' output as a version string (e.g. \"2.34.6\").
-Per-Emacs-session cache; nil triggers re-detection on next call.
-Phase 4-C defers persistent caching to Phase 4-D when anvil-state
-integration lands; until then this resets on every Emacs restart.")
+(defconst anvil-pkg--nix-version-namespace "anvil-pkg:nix-version"
+  "`anvil-pkg-state' namespace for the cached `nix --version' string.")
+
+(defconst anvil-pkg--nix-version-key "default"
+  "Single key under `anvil-pkg--nix-version-namespace'.
+
+There is one Nix per profile so a constant key is sufficient.")
+
+(defcustom anvil-pkg-nix-version-ttl-seconds (* 24 60 60)
+  "TTL (seconds) for the cached `nix --version' lookup.
+
+Default 1 day.  Re-detection on TTL expiry catches users upgrading
+their Nix daemon mid-session without forcing them to clear the
+cache manually."
+  :type 'integer
+  :group 'anvil-pkg)
 
 (defun anvil-pkg--detect-nix-version ()
   "Return the Nix version string by calling `nix --version'.
 
-Caches the result in `anvil-pkg--nix-version-cache' so subsequent
-calls are free.  When the executable is missing or the call fails
-this returns nil and the caller MUST treat that as `< 2.34' for
-safety (= keep using the older `install' subcommand)."
-  (or anvil-pkg--nix-version-cache
+Caches the result in `anvil-pkg-state' (namespace
+`anvil-pkg--nix-version-namespace') with a 1-day TTL so subsequent
+calls are free across Emacs restarts.  When the executable is
+missing or the call fails this returns nil and the caller MUST
+treat that as `< 2.34' for safety (= keep using the older `install'
+subcommand)."
+  (or (anvil-pkg-state-get anvil-pkg--nix-version-namespace
+                           anvil-pkg--nix-version-key)
       (let ((res (condition-case _
                      (anvil-pkg--call-nix (list "--version"))
                    (error nil))))
@@ -334,8 +349,12 @@ safety (= keep using the older `install' subcommand)."
           (let ((stdout (or (plist-get res :stdout) "")))
             (when (string-match "\\([0-9]+\\.[0-9]+\\(?:\\.[0-9]+\\)?\\)"
                                 stdout)
-              (setq anvil-pkg--nix-version-cache
-                    (match-string 1 stdout))))))))
+              (let ((ver (match-string 1 stdout)))
+                (anvil-pkg-state-put anvil-pkg--nix-version-namespace
+                                     anvil-pkg--nix-version-key
+                                     ver
+                                     anvil-pkg-nix-version-ttl-seconds)
+                ver)))))))
 
 (defun anvil-pkg--nix-version-at-least-p (major minor)
   "Return non-nil when the cached Nix version is >= MAJOR.MINOR.
@@ -666,16 +685,28 @@ Returns a list of plists carrying :name :attr-path :original-url
 ;; mirror is a per-Emacs-session defvar; persistent storage is deferred
 ;; to Phase 4-D when anvil-state integration lands.
 
-(defvar anvil-pkg--generations-cache nil
-  "In-process mirror of `nix profile history --json' for the anvil-pkg profile.
+(defconst anvil-pkg--generations-namespace "anvil-pkg:generations"
+  "`anvil-pkg-state' namespace for the profile generations mirror.")
 
-A list of plists: (:id INT :date STR :packages (SYM ...) :active BOOL).
-Refreshed on every `pkg-list-generations' call and on every
-`pkg-rollback'.  `pkg-history' reads from this cache without
-shelling out so per-package event lookups stay cheap.
+(defconst anvil-pkg--generations-key "mirror"
+  "Single key under `anvil-pkg--generations-namespace' holding the full list.
 
-Per-Emacs-session only; resets on Emacs restart.  Phase 4-D will
-back this with `anvil-state' so cross-session history survives.")
+The mirror is small enough (one entry per generation, ≤ tens of KiB
+in practice) that a single blob is cheaper than per-id rows.")
+
+(defun anvil-pkg--generations-cache-get ()
+  "Return the cached generations list from `anvil-pkg-state'."
+  (anvil-pkg-state-get anvil-pkg--generations-namespace
+                       anvil-pkg--generations-key))
+
+(defun anvil-pkg--generations-cache-put (generations)
+  "Persist GENERATIONS as the mirror in `anvil-pkg-state'.
+
+No TTL: the mirror is refreshed on every install / list / rollback
+so staleness is bounded by the time between user-driven calls."
+  (anvil-pkg-state-put anvil-pkg--generations-namespace
+                       anvil-pkg--generations-key
+                       generations))
 
 (defun anvil-pkg--parse-history (json-str)
   "Parse `nix profile history --json' output JSON-STR into list of plists.
@@ -735,8 +766,9 @@ Returns a list of plists carrying :id, :date, :packages,
 :active.  Generations are sorted by :id ascending so
 `(car (last (pkg-list-generations)))' is the latest.
 
-Side effects: refreshes `anvil-pkg--generations-cache' so
-`pkg-history' has fresh data without an extra shell-out.
+Side effects: refreshes the persistent generations mirror in
+`anvil-pkg-state' so `pkg-history' has fresh data without an extra
+shell-out, surviving Emacs restarts.
 
 Signals `anvil-pkg-nix-failed' on a non-zero `nix profile history'
 exit (e.g. corrupt profile)."
@@ -753,7 +785,7 @@ exit (e.g. corrupt profile)."
                     :stderr (plist-get res :stderr))))
     (let ((generations (anvil-pkg--parse-history
                         (or (plist-get res :stdout) ""))))
-      (setq anvil-pkg--generations-cache generations)
+      (anvil-pkg--generations-cache-put generations)
       generations)))
 
 (defun anvil-pkg--rollback-replay-emacs-hooks ()
@@ -775,7 +807,7 @@ again.  The hook is idempotent (`add-to-list')."
 (defun anvil-pkg--generation-id-known-p (id)
   "Return non-nil when ID matches a generation in the cache."
   (let (found)
-    (dolist (gen anvil-pkg--generations-cache)
+    (dolist (gen (anvil-pkg--generations-cache-get))
       (when (and (not found) (eq (plist-get gen :id) id))
         (setq found t)))
     found))
@@ -844,20 +876,20 @@ remove + install on adjacent generations; Phase 4-C does not
 attempt to coalesce these into `:upgraded' / `:downgraded' — that
 needs version metadata the history endpoint does not surface).
 
-Reads from `anvil-pkg--generations-cache'; if the cache is empty,
-calls `pkg-list-generations' once to populate it.  Pass a fresh
-generations list by calling `pkg-list-generations' explicitly
-beforehand."
+Reads from the persistent generations mirror in `anvil-pkg-state';
+if the mirror is empty, calls `pkg-list-generations' once to
+populate it.  Pass a fresh generations list by calling
+`pkg-list-generations' explicitly beforehand."
   (unless (symbolp pkg-name)
     (signal 'anvil-pkg-error
             (list (format "pkg-history: PKG-NAME must be symbol, got %S"
                           pkg-name))))
-  (when (null anvil-pkg--generations-cache)
+  (when (null (anvil-pkg--generations-cache-get))
     (pkg-list-generations))
   (let ((events nil)
         (prev-pkgs nil)
         (prev-set-initialised nil))
-    (dolist (gen anvil-pkg--generations-cache)
+    (dolist (gen (anvil-pkg--generations-cache-get))
       (let* ((id (plist-get gen :id))
              (date (plist-get gen :date))
              (pkgs (plist-get gen :packages))
@@ -877,6 +909,47 @@ beforehand."
               prev-set-initialised t)))
     (nreverse events)))
 
+;;;; --- cache control (Phase 4-D L26) ---------------------------------------
+
+;; Forward declaration for the byte-compiler — anvil-pkg-emacs is loaded
+;; lazily so the constant is not in scope at top-level compile time.
+(defvar anvil-pkg-emacs--deps-namespace)
+
+;;;###autoload
+(defun pkg-clear-cache (&optional scope)
+  "Drop persistent caches under `anvil-pkg-state'.
+
+SCOPE selects which namespaces to clear:
+- nil or `all'    — every anvil-pkg cache
+- `deps'          — Phase 4-C Package-Requires lookup cache
+- `nix-version'   — `nix --version' detection cache
+- `generations'   — profile generations mirror
+
+Returns t.  Signals `anvil-pkg-error' on an unknown SCOPE so users
+notice typos rather than silently clearing the wrong namespace."
+  (interactive)
+  ;; Lazy-require for the deps namespace constant (anvil-pkg-emacs is
+  ;; loaded on demand from `pkg-install', so a fresh session that calls
+  ;; `pkg-clear-cache' first would otherwise hit a void-variable error).
+  (when (memq (or scope 'all) '(all deps))
+    (require 'anvil-pkg-emacs))
+  (pcase (or scope 'all)
+    ('all
+     (anvil-pkg-state-clear anvil-pkg-emacs--deps-namespace)
+     (anvil-pkg-state-clear anvil-pkg--nix-version-namespace)
+     (anvil-pkg-state-clear anvil-pkg--generations-namespace))
+    ('deps
+     (anvil-pkg-state-clear anvil-pkg-emacs--deps-namespace))
+    ('nix-version
+     (anvil-pkg-state-clear anvil-pkg--nix-version-namespace))
+    ('generations
+     (anvil-pkg-state-clear anvil-pkg--generations-namespace))
+    (_
+     (signal 'anvil-pkg-error
+             (list (format "pkg-clear-cache: unknown SCOPE %S (expected one of all / deps / nix-version / generations)"
+                           scope)))))
+  t)
+
 ;;;; --- backwards-compatible long-form aliases -------------------------------
 ;; anvil-pkg owns the `pkg-' namespace as its public DSL surface; the
 ;; long-form `anvil-pkg-' aliases below remain available so callers
@@ -894,6 +967,8 @@ beforehand."
 (defalias 'anvil-pkg-rollback #'pkg-rollback)
 ;;;###autoload
 (defalias 'anvil-pkg-history #'pkg-history)
+;;;###autoload
+(defalias 'anvil-pkg-clear-cache #'pkg-clear-cache)
 
 ;;;; --- MCP tool surface ------------------------------------------------------
 

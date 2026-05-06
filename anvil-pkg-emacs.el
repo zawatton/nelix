@@ -67,6 +67,7 @@
 ;;; Code:
 
 (require 'anvil-pkg-compat)
+(require 'anvil-pkg-state)
 
 ;; `url' is loaded lazily by `anvil-pkg-compat-http-get'; declare so
 ;; byte-compile keeps quiet.
@@ -82,8 +83,8 @@
 (defcustom anvil-pkg-emacs-cache-ttl-seconds (* 30 24 60 60)
   "TTL (seconds) for cached Package-Requires lookups.
 
-Default 30 days.  Cache is in-process (per-session) in Phase 4-C;
-Phase 4-D will promote to SQLite-backed `anvil-pkg-state'."
+Default 30 days.  Phase 4-D persists this cache to
+`anvil-pkg-state' so it survives Emacs restarts."
   :type 'integer
   :group 'anvil-pkg-emacs)
 
@@ -96,17 +97,13 @@ Per-lookup timeout; the lookup chain (`<pname>-pkg.el' →
   :type 'integer
   :group 'anvil-pkg-emacs)
 
-(defvar anvil-pkg-emacs--deps-cache (make-hash-table :test 'equal)
-  "In-process cache for Package-Requires lookups.
+(defconst anvil-pkg-emacs--deps-namespace "anvil-pkg:emacs-deps"
+  "`anvil-pkg-state' namespace for Package-Requires lookup cache.
 
 Key = \"<owner>/<repo>@<rev>\" (string).
-Value = plist (:deps (SYM ...) :cached-at TIME :status SYM) where
-status ∈ (:hit-pkg-el :hit-header :miss :error).
-
-Phase 4-C ships a per-session defvar cache rather than a persistent
-SQLite namespace because anvil-pkg-state is not yet a dependency
-of anvil-pkg.  Phase 4-D can promote when anvil-state integration
-lands.")
+Value = plist (:deps (SYM ...) :status SYM) where status ∈
+(:hit-pkg-el :hit-header :miss :error).  TTL is supplied via
+`anvil-pkg-emacs-cache-ttl-seconds' on every put.")
 
 ;;;; --- parsers --------------------------------------------------------------
 
@@ -209,28 +206,27 @@ Returns plist (:status INT :body STRING).  Wraps
   "Build the cache key string for OWNER REPO REV."
   (format "%s/%s@%s" owner repo rev))
 
-(defun anvil-pkg-emacs--cache-fresh-p (entry)
-  "Non-nil when ENTRY's :cached-at is within
-`anvil-pkg-emacs-cache-ttl-seconds' of `current-time'."
-  (let ((cached-at (plist-get entry :cached-at)))
-    (and cached-at
-         (< (float-time (time-subtract (current-time) cached-at))
-            anvil-pkg-emacs-cache-ttl-seconds))))
+(defun anvil-pkg-emacs--cache-get (key)
+  "Return the cache entry for KEY, or nil when missing or expired.
+
+TTL is enforced inside `anvil-pkg-state' itself (entries put with a
+non-nil TTL drop transparently after expiry); this helper only
+dereferences the namespaced KV."
+  (anvil-pkg-state-get anvil-pkg-emacs--deps-namespace key))
 
 (defun anvil-pkg-emacs--cache-put (key deps status)
-  "Store DEPS + STATUS under KEY in the cache."
-  (puthash key
-           (list :deps deps
-                 :cached-at (current-time)
-                 :status status)
-           anvil-pkg-emacs--deps-cache))
+  "Store DEPS + STATUS under KEY with the configured TTL."
+  (anvil-pkg-state-put anvil-pkg-emacs--deps-namespace
+                       key
+                       (list :deps deps :status status)
+                       anvil-pkg-emacs-cache-ttl-seconds))
 
 ;;;; --- public API ----------------------------------------------------------
 
 (defun anvil-pkg-emacs-clear-cache ()
-  "Clear the in-process Package-Requires cache."
+  "Clear the persistent Package-Requires cache namespace."
   (interactive)
-  (clrhash anvil-pkg-emacs--deps-cache))
+  (anvil-pkg-state-clear anvil-pkg-emacs--deps-namespace))
 
 (defun anvil-pkg-emacs-derive-deps (ir)
   "Return derived `:depends-on' list of SYMBOLS for an emacs-package IR.
@@ -266,11 +262,12 @@ proceeds)."
              (pname (if (symbolp name) (symbol-name name)
                       (format "%s" name)))
              (key   (anvil-pkg-emacs--cache-key owner repo rev))
-             (cached (gethash key anvil-pkg-emacs--deps-cache)))
+             (cached (anvil-pkg-emacs--cache-get key)))
         (cond
-         ;; Cache hit (within TTL): return cached deps (which may be
-         ;; nil for :miss / :error statuses).
-         ((and cached (anvil-pkg-emacs--cache-fresh-p cached))
+         ;; Cache hit (still within TTL — state layer drops expired entries
+         ;; before they reach us): return cached deps (which may be nil
+         ;; for :miss / :error statuses).
+         (cached
           (plist-get cached :deps))
          (t
           (anvil-pkg-emacs--lookup-and-cache owner repo rev pname key))))))))
