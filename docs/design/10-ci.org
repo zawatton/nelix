@@ -1,0 +1,148 @@
+#+title: anvil-pkg — CI integration (GitHub Actions)
+#+author: zawatton
+#+date: 2026-05-06
+#+property: status DRAFT
+
+* STATUS
+
+DRAFT 2026-05-06.  Single-task scope.  Lands a GitHub Actions
+workflow that gates =push= / =pull_request= against =main= on
+ERT 91/91 PASS + byte-compile clean.
+
+Not a feature phase — infrastructure only.  Phase 4-G (private
+repo) and Phase 5 (NeLisp backend) remain the next *feature*
+milestones; CI is meta.
+
+* Goal
+
+| Today                                                  | After CI                                                        |
+|--------------------------------------------------------+-----------------------------------------------------------------|
+| =make test= / =make compile= run only on author's box  | Every push / PR against =main= runs them on a clean Ubuntu VM   |
+| Public repo, no objective signal of build health       | README badge: ✓ if green, ✗ if red                              |
+| External PR contributor has no automatic gate          | PR cannot merge with red CI; reviewer sees pass/fail at a glance|
+| Regression on stale env / removed dep is silent        | =emacs -Q --batch= on a fresh container catches it on next push |
+
+* Locked decisions
+
+** L35 — minimum matrix: Emacs 30.x × Linux, single job
+
+- Emacs version: =30.1= (current dev box) via =purcell/setup-emacs=
+  action (de-facto standard, GPL-3-friendly).
+- OS: =ubuntu-latest= only.
+- Reason: =make test= is mock-driven, has no Nix dependency, and
+  finishes in ~1s.  A larger matrix is overkill until we see a
+  cross-version flake.  Emacs 29 / macOS / Windows can be added
+  in a follow-up if a real bug report demands it.
+
+** L36 — workflow steps
+
+1. =actions/checkout@v4=
+2. =purcell/setup-emacs@master= with =version: 30.1=
+3. =make compile= (warnings-as-errors)
+4. =make test= (ERT 91/91 expected)
+
+No caching of =.elc= — the build is fast enough that cache
+invalidation cost outweighs the saving.
+
+** L37 — triggers: push / pull_request against main
+
+- =on.push.branches: [main]= — gate the canonical branch.
+- =on.pull_request.branches: [main]= — block bad PRs at review
+  time.
+- No scheduled / cron run.  We're not testing against external
+  drift (yet).
+
+** L38 — no Nix smoke in CI
+
+Nix tarball / build / cache setup is heavy (=cachix/install-nix-action=
++ store warm-up).  =examples/= recipes carry =sha256-PLACEHOLDER=
+values that won't resolve, so a real-Nix smoke would fail
+deterministically until we either (a) replace placeholders with
+real hashes (=Real-Nix smoke= proposal), or (b) write a separate
+tiny example that does build.
+
+Decision: defer Nix-in-CI to its own phase.  This phase keeps
+CI scope to the host-side Elisp gate.
+
+** L39 — README badge
+
+Add a single-line badge at the top of =README.org= linking to
+the workflow run page:
+
+#+begin_src org
+[[https://github.com/zawatton/anvil-pkg/actions/workflows/test.yml][file:https://github.com/zawatton/anvil-pkg/actions/workflows/test.yml/badge.svg]]
+#+end_src
+
+Place above the existing =Status:= block so it's the first thing
+a visitor sees.
+
+* Open questions / non-goals
+
+- *OQ24.* Do we want to fail CI on byte-compile warnings even
+  when =make test= passes?  Decision: yes — =make compile= already
+  uses =byte-compile-error-on-warn t=, and =lint= adds
+  =check-declare-file=.  Run =make compile= as a distinct step
+  before =make test= so a failed compile is reported separately
+  in the run log.
+- *OQ25.* Should =lint= be required to pass?  Decision: yes,
+  but bundled inside =make compile= — =check-declare= surfaces
+  void-function regressions that ERT misses (we hit one in
+  Phase 4-D).  Keep the explicit =make lint= target, but call
+  =make compile= in CI for now; promote to =make lint= once we
+  audit current =check-declare= output for false positives.
+- *Non-goal.* Multi-Emacs matrix.  Adding 28/29/30 triples
+  runtime + runs into setup-emacs binary availability gaps on
+  older versions.  Re-evaluate when we get a 28/29 bug report.
+- *Non-goal.* macOS / Windows runners.  GitHub free minutes
+  multiplier (10× macOS, 2× Windows) makes this expensive
+  before we have a known cross-platform issue.
+- *Non-goal.* Real-Nix smoke / build cache.  Separate phase.
+- *Non-goal.* Coverage upload (Codecov etc.).  91 tests, no
+  coverage tooling currently — additive complexity for unclear
+  ROI.
+- *Non-goal.* Auto-format / commit-message gate.  Out of scope.
+
+* Sub-task decomposition
+
+Single sub-task.  Touches:
+
+- =.github/workflows/test.yml= (new, ~25 lines).
+- =README.org= (badge line + Phase plan table row).
+
+** Implementation order
+
+1. Create =.github/workflows/test.yml= with the four steps
+   above.
+2. Push branch / open PR to verify CI green on first run
+   (or push directly to =main= since this is the gate's
+   first installation — there is nothing yet to gate against).
+3. Add README badge once the workflow has at least one
+   green run (so the badge is not red on the first visit).
+
+* Test plan
+
+Manual verification only:
+
+- Workflow file lints with =yamllint= (informal).
+- After push, GitHub Actions tab shows a green run within
+  ~2 minutes.
+- Intentional break (e.g., add =(error "boom")= to a test) on
+  a throwaway branch confirms red CI on that branch's PR.
+  Revert before merge.
+
+* Acceptance
+
+- =.github/workflows/test.yml= exists and validates on push.
+- First post-merge run is green (ERT 91/91, compile clean).
+- README badge renders.
+- Future PRs cannot be merged without green CI (branch
+  protection rule is *separate* — not configured by this phase,
+  noted as a follow-up since it requires repo Settings access).
+
+* Follow-up tasks (out of scope)
+
+- Branch protection rule on =main= requiring CI green
+  (Settings → Branches → Add rule).
+- Emacs 29 fallback once a 29.x user reports a bug.
+- Nix-in-CI smoke phase.
+- =make lint= promotion (after =check-declare= audit).
