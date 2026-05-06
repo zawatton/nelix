@@ -1,0 +1,206 @@
+#+title: anvil-pkg — Phase 4-G: private repo support
+#+author: zawatton
+#+date: 2026-05-06
+#+property: status DRAFT
+
+* STATUS
+
+DRAFT 2026-05-06.  Single-task scope on canonical =main=.
+Closes the carry-over from Phase 4-D / 4-E that left
+=url-fetch= / =git-fetch= / =github-fetch= public-only.
+
+After this phase, the same DSL forms work against private
+repos when the user exports a credential env var
+(=GITHUB_TOKEN= / =GH_TOKEN= / =GITLAB_TOKEN=) — no DSL
+change, no =:auth= keyword, no on-disk credential storage.
+
+* Goal
+
+| Today                                                    | After Phase 4-G                                                      |
+|----------------------------------------------------------+----------------------------------------------------------------------|
+| =github-fetch= against a private repo → 404 on raw scrape | Auth header attached when env var present → 200, deps derived       |
+| =url-fetch= tarball from a private GitHub Release → 404   | Auth header attached → bytes flow                                    |
+| =git-fetch= via HTTPS against a private repo → "Repository not found" | =git -c http.<host>.extraheader= clone with the token         |
+| =git-fetch= via SSH already works (SSH agent)             | Unchanged.  No env-var lookup needed.                                |
+| =nix profile install path:#sym= with a private GH source → fetcher 404 | =--option extra-access-tokens "github.com=$TOKEN"= injected   |
+| Token visible in =ps= for nix / git invocations            | Documented limitation (Nix-side); our own logs / errors mask the token|
+
+* Locked decisions
+
+** L40 — credential source: environment variables only
+
+- Primary lookup: =anvil-pkg-compat-credential-env-alist=
+  (defcustom), an alist =HOST → (ENV-VAR …)=.
+  Defaults:
+
+  | Host         | Env vars (first non-empty wins)        |
+  |--------------+----------------------------------------|
+  | github.com   | =GITHUB_TOKEN=, =GH_TOKEN=             |
+  | gitlab.com   | =GITLAB_TOKEN=                         |
+  | codeberg.org | =CODEBERG_TOKEN=                       |
+
+- *No* DSL =:auth= keyword.  Repos can flip public/private
+  without rewriting =pkg-define= forms.  Env presence is the
+  source of truth.
+- *No* persistence to =anvil-pkg-state= / =state.json=.
+  Plain JSON on disk is the wrong threat model for tokens.
+- *No* =~/.netrc= integration in this phase.  If demand
+  surfaces, =netrc-parse= can be wired in by extending the
+  alist resolution (out-of-scope follow-up).
+
+** L41 — pre-fetch HTTP: =Authorization: Bearer= via existing compat layer
+
+- =anvil-pkg-compat-http-get= and
+  =anvil-pkg-compat-http-get-binary= gain an optional
+  =:auth-header HEADER-STRING= keyword.
+  - HEADER-STRING is the full =Authorization:= value (without
+    the field name), e.g. =Bearer ghp_xxx=.
+- Default behaviour when =:auth-header= is omitted: auto-detect
+  from URL host via =anvil-pkg-compat-credential-for-url=, which
+  walks =anvil-pkg-compat-credential-env-alist= and returns
+  =Bearer TOKEN= or =nil=.
+- Emacs backend wires the header through =url-request-extra-headers=
+  (existing =url= package mechanism).  No NeLisp impact —
+  Phase 5 NeLisp HTTP backend will honour the same
+  keyword.
+- The two existing call sites in =anvil-pkg-emacs.el=
+  (raw.githubusercontent scrape + tarball binary fetch) need
+  no change — both implicitly pick up auth via host lookup.
+
+** L42 — git pre-fetch: =-c http.<host>.extraheader=
+
+- =anvil-pkg-emacs--git-clone= (and the =init+fetch+checkout=
+  fallback) detect HTTPS URLs against a host with a credential
+  and inject =-c "http.<HOST>/.extraheader=Authorization: Bearer TOKEN"=
+  before the subcommand.
+- SSH URLs (=git@host:…=) are passed through unmodified — SSH
+  agent / =~/.ssh/= keys handle auth out-of-band.
+- Token masking: =anvil-pkg-emacs--git-clone= helper logs the
+  *masked* command when =anvil-pkg-emacs--debug= is non-nil
+  (replace =Bearer .*= with =Bearer ***= in the visible
+  command).  The actual subprocess call still carries the real
+  token; OS-level =ps= visibility is a known limitation
+  shared with curl / nix.
+
+** L43 — Nix CLI: =--option extra-access-tokens=
+
+- =anvil-pkg--call-nix-default= prepends a list returned by
+  =anvil-pkg--nix-credential-args= when env vars are present.
+  Format: =--option extra-access-tokens "github.com=TOKEN gitlab.com=TOKEN"=
+  (Nix accepts space-separated host=token pairs).
+- Injection is unconditional but only when at least one
+  configured env var resolves; otherwise no extra args.
+- Applies uniformly to =install= / =add= / =build= / =eval= /
+  =profile list= / =--version= — Nix ignores =--option= for
+  subcommands that don't fetch.
+
+** L44 — security: masking + non-persistence
+
+- Token strings are *never* written to:
+  - =anvil-pkg-state= (=state.json= on disk).
+  - Worklog entries / org capture buffers.
+  - =lwarn= / =message= calls (always pass the masked form).
+- Public helpers that surface a "command for debugging" form
+  (Phase 4-D =anvil-pkg-debug-flake-render= etc.) call
+  =anvil-pkg--mask-credentials STRING= which redacts =Bearer=
+  / =extra-access-tokens "..."= / =x-access-token:…@= patterns.
+- Known limitation: tokens still appear in =ps aux= for the
+  duration of nix / git invocations because both expose them
+  on the CLI.  We document this in =examples/private-github.el=
+  and the README =Security notes= subsection.  Mitigations
+  (=GIT_ASKPASS= shim, Nix daemon-side =access-tokens.conf=)
+  are out of scope for this phase.
+
+** L45 — DSL surface unchanged
+
+- =github-fetch=, =url-fetch=, =git-fetch=, =emacs-package=
+  parsers / IR shapes are *not* modified.
+- =pkg-install= keyword set is unchanged (no =:auth=, no
+  =:credential=).
+- Backward-compatibility: existing public-repo recipes
+  continue to work identically; the new auth path activates
+  *only* when env vars are set.
+
+* Open questions / non-goals
+
+- *OQ26.* Should we honour =~/.netrc=?  Decision: not in this
+  phase.  Many users curate =GITHUB_TOKEN= already; netrc adds
+  parser surface area + a second secret store for marginal
+  convenience.  Revisit if someone files a request.
+- *OQ27.* Should =git-fetch= URL rewriting (=https://x-access-token:T@host/...=)
+  be the fallback when the =-c extraheader= form is rejected by
+  an old git?  Decision: no, =-c= has been supported since
+  git 1.7.10 (2012); the rewrite form leaks the token into
+  =git remote -v= and =reflog= output, which is worse.
+- *Non-goal.* SSO-protected GitHub orgs requiring SAML auth
+  approval per token.  Out-of-band step; user responsibility.
+- *Non-goal.* Token rotation / refresh.  Static env var only.
+- *Non-goal.* Per-repo credentials.  Host-level alist is the
+  granularity; sub-org / sub-path scoping requires netrc.
+- *Non-goal.* Nix daemon-side =access-tokens.conf= management.
+  Phase 4-G only injects via CLI =--option=; persistent daemon
+  config is the user's responsibility (and conflicts with our
+  ephemeral profile model).
+- *Non-goal.* Real private-repo smoke test in CI.  Would
+  require committing test credentials or wiring a GitHub App;
+  defer until CI matrix expansion phase.
+
+* Sub-task decomposition
+
+Single sub-task; touches three files plus tests.
+
+** Implementation order
+
+1. =anvil-pkg-compat.el= —
+   - =defcustom anvil-pkg-compat-credential-env-alist=
+   - =anvil-pkg-compat-credential-for-url URL= → "Bearer TOK" / nil
+   - =anvil-pkg-compat-http-get URL &optional TIMEOUT &key AUTH-HEADER=
+     (extend signature; existing positional callers unchanged)
+   - =anvil-pkg-compat-http-get-binary= same extension
+   - mask helper =anvil-pkg-compat-mask-credentials STRING=
+2. =anvil-pkg-emacs.el= —
+   - =anvil-pkg-emacs--git-clone= prepends =-c http.HOST.extraheader=
+     when URL host resolves to a credential
+   - =--git-clone= log line uses masked form
+3. =anvil-pkg.el= —
+   - =anvil-pkg--nix-credential-args= → list (or nil)
+   - =anvil-pkg--call-nix-default= prepends those args
+4. =examples/private-github.el= —
+   - =github-fetch= against a private repo placeholder, with
+     a =;; export GITHUB_TOKEN=...= prelude and security notes
+5. =test/anvil-pkg-{compat,emacs,*}-test.el= — ERTs.
+
+* Test plan
+
+| ERT                                                                  | Expectation                                               |
+|----------------------------------------------------------------------+-----------------------------------------------------------|
+| =credential-for-url-github-uses-github-token=                        | env =GITHUB_TOKEN= → "Bearer ghp_x"                       |
+| =credential-for-url-fallback-to-gh-token=                            | =GITHUB_TOKEN= unset, =GH_TOKEN= set → uses fallback      |
+| =credential-for-url-no-env-returns-nil=                              | both unset → nil                                          |
+| =credential-for-url-unknown-host-returns-nil=                        | =https://example.com/= → nil                              |
+| =mask-credentials-redacts-bearer=                                    | "Bearer ghp_xxx" → "Bearer ***"                           |
+| =mask-credentials-redacts-extra-access-tokens=                       | =extra-access-tokens "github.com=xxx"= → =github.com=***= |
+| =http-get-emacs-injects-auth-header=                                 | mock =url-retrieve-synchronously= sees the header         |
+| =http-get-no-env-no-header=                                          | env unset → no Authorization injected                     |
+| =git-clone-https-with-env-prepends-extraheader=                      | mock =call-process= captures =-c http.github.com/...=     |
+| =git-clone-ssh-passthrough=                                          | SSH URL → no =-c= injected                                |
+| =git-clone-https-no-env-passthrough=                                 | HTTPS URL + no env → no =-c= injected                     |
+| =nix-credential-args-with-env=                                       | =GITHUB_TOKEN= set → =--option extra-access-tokens "..."= |
+| =nix-credential-args-no-env=                                         | env unset → nil                                           |
+| =call-nix-default-prepends-credential-args=                          | mock subprocess sees the option                           |
+
+ERT delta target: +12 (compat ×6, emacs ×3, install ×3 actual delta —
+some helpers may merge tests).
+
+* Acceptance
+
+- All Phase 4-F ERTs pass unchanged.
+- New ERTs pass.  ERT total ≥ 100.
+- Byte-compile clean (warnings-as-errors).
+- =examples/private-github.el= renders with masked token in any
+  debug print.
+- README.org gains a *Phase 4-G* row in the phase plan and a
+  =Security notes= subsection covering env-var precedence and
+  the =ps= visibility caveat.
+- Memory file =project_anvil_pkg_phase0.md= updated with commit
+  pair + frontmatter "Phase 1〜4-G SHIPPED".
