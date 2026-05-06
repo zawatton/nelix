@@ -346,6 +346,87 @@ plist (:status INT :body STRING).  On any error returns (:status 0
              body "")))
     (list :status status :body body)))
 
+(defun anvil-pkg-compat-http-get-binary (url &optional timeout)
+  "Synchronously fetch URL preserving raw bytes (no coding conversion).
+
+Like `anvil-pkg-compat-http-get' but the response :body is the raw
+byte string from the server (not decoded into multibyte characters).
+Used for binary payloads such as tar.gz tarballs where the L24a
+deps scrape pipes the bytes straight to a tmp file for `tar -xzOf'.
+
+Returns plist (:status INT :body STRING :content-length INT-OR-NIL).
+The :content-length slot is parsed from the response headers when
+present, so callers can refuse oversize payloads without keeping
+the whole body in memory afterwards.
+
+Signals `anvil-pkg-http-not-supported' on the NeLisp standalone
+runtime; Phase 5 will land a real NeLisp HTTP backend."
+  (pcase (anvil-pkg-compat-runtime)
+    ('emacs
+     (anvil-pkg-compat--http-get-binary-emacs url (or timeout 30)))
+    ('nelisp
+     (signal 'anvil-pkg-http-not-supported
+             (list (format "anvil-pkg-compat-http-get-binary: NeLisp HTTP backend not yet implemented (url=%s)"
+                           url))))
+    (_
+     (signal 'anvil-pkg-http-not-supported
+             (list (format "anvil-pkg-compat-http-get-binary: no backend for runtime %S"
+                           (anvil-pkg-compat-runtime)))))))
+
+(defun anvil-pkg-compat--http-get-binary-emacs (url timeout)
+  "Emacs backend for `anvil-pkg-compat-http-get-binary'.
+
+Identical control-flow to `anvil-pkg-compat--http-get-emacs' but
+binds `coding-system-for-read' to `binary' so the response buffer
+is not transcoded; the body is returned as a raw byte string ready
+for `write-region' to a tmp tarball file.  Also parses the
+Content-Length header into a numeric :content-length slot when
+present."
+  (require 'url)
+  (defvar url-show-status)
+  (let ((url-show-status nil)
+        (coding-system-for-read 'binary)
+        (status 0)
+        (body "")
+        (content-length nil))
+    (ignore url-show-status)
+    (condition-case _err
+        (let ((buf (url-retrieve-synchronously url t t timeout)))
+          (when (and buf (buffer-live-p buf))
+            (unwind-protect
+                (with-current-buffer buf
+                  ;; Status line.
+                  (goto-char (point-min))
+                  (let ((line-end (line-end-position)))
+                    (when (re-search-forward
+                           "\\`HTTP/[0-9.]+ \\([0-9]+\\)" line-end t)
+                      (setq status (string-to-number (match-string 1)))))
+                  ;; Content-Length header (case-insensitive).
+                  (goto-char (point-min))
+                  (let ((case-fold-search t)
+                        (header-end
+                         (save-excursion
+                           (goto-char (point-min))
+                           (when (re-search-forward "\r?\n\r?\n" nil t)
+                             (point)))))
+                    (when (and header-end
+                               (re-search-forward
+                                "^Content-Length:[ \t]*\\([0-9]+\\)"
+                                header-end t))
+                      (setq content-length
+                            (string-to-number (match-string 1)))))
+                  ;; Body.
+                  (goto-char (point-min))
+                  (when (re-search-forward "\r?\n\r?\n" nil t)
+                    (setq body (buffer-substring-no-properties
+                                (point) (point-max)))))
+              (kill-buffer buf))))
+      (error
+       (setq status 0
+             body ""
+             content-length nil)))
+    (list :status status :body body :content-length content-length)))
+
 ;;;; --- error symbols --------------------------------------------------------
 
 (defun anvil-pkg-compat-define-error-symbol (sym message &optional parent)
