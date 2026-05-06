@@ -1,0 +1,172 @@
+#+title: anvil-pkg — Phase 4-E: MELPA upstream recipe fetch + better :files default
+#+author: zawatton
+#+date: 2026-05-06
+#+property: status DRAFT
+
+* STATUS
+
+Phase 4-E — DRAFT 2026-05-06.  Picks up two of the three deferred
+micro-phases enumerated in Phase 4-D's residual list:
+
+- =anvil-pkg-emacs-has-recipe-p= upstream check (lifted to the more
+  useful =fetch-melpa-recipe= variant: existence check + content fetch
+  in one HTTP).
+- L23 =:melpa-files= glob default upgrade (=("*.el")= → MELPA's
+  =package-build-default-files-spec=).
+
+The third deferred candidate (private repo support for url-fetch /
+git-fetch) is *not* in this phase — it requires SSH agent / token
+forwarding plumbing that crosses the =anvil-pkg-compat= boundary and
+deserves its own design pass.
+
+* Goal
+
+Two independent, non-breaking quality improvements to =:format
+"melpa"=:
+
+#+begin_src elisp
+;; L27 — auto-synth picks up the canonical MELPA recipe when it exists
+;; upstream, so Nix's melpaBuild gets the curated :files / :fetcher
+;; spec instead of our minimal synth.
+(setq anvil-pkg-emacs-melpa-upstream-fetch t)  ; opt-in
+(pkg-define helm
+  (version "3.9.7")
+  (source (github-fetch :owner "emacs-helm" :repo "helm"
+                        :rev "v3.9.7" :sha256 "sha256-..."))
+  (build-system (emacs-package :format "melpa")))
+;; → with fetch enabled: GET raw.githubusercontent.com/melpa/melpa/
+;;   master/recipes/helm; 200 → write that verbatim into
+;;   $sourceRoot/recipes/helm.  Fall back to synth on miss / error /
+;;   when fetch is disabled.
+
+;; L28 — :format "melpa" without :melpa-files now uses MELPA's own
+;; default glob spec.  Single-root .el packages still match; lisp/
+;; subdir packages, .info files, .el.in templates all flow through
+;; without manual :melpa-files.
+(pkg-define magit
+  (version "3.3.0")
+  (source (github-fetch :owner "magit" :repo "magit"
+                        :rev "v3.3.0" :sha256 "sha256-..."))
+  (build-system (emacs-package :format "melpa" :melpa-synth force)))
+;; → synth recipe now uses ("*.el" "*.el.in" "dir" "*.info" ...
+;;   (:exclude ".dir-locals.el" "test.el" "tests.el" "*-test.el"
+;;             "*-tests.el" ...))
+#+end_src
+
+* Locked decisions
+
+** L27 — MELPA upstream recipe fetch (opt-in)
+
+- Public API: =anvil-pkg-emacs-fetch-melpa-recipe PNAME= → STRING |
+  nil.  Returns the verbatim recipe body (trimmed) or nil on miss /
+  error / when fetch is disabled.
+- New defcustom =anvil-pkg-emacs-melpa-upstream-fetch= (boolean,
+  default *nil*).  Opt-in to keep Phase 4-D semantics intact and avoid
+  changing derivation hashes for existing users.
+- Cache namespace =anvil-pkg:melpa-recipe= via =anvil-pkg-state=, TTL
+  7 days.  Value plist =(:status SYM :recipe STRING-or-nil)= where
+  status ∈ =(:hit :miss :error)=.
+- HTTP layer reuses =anvil-pkg-compat-http-get= (text, not binary;
+  recipes are short Elisp).  Timeout =anvil-pkg-emacs-http-timeout=
+  (existing, 5 s default).
+- Wire-in (=anvil-pkg--render-melpa-post-unpack=, dsl.el):
+  - explicit =:melpa-recipe= → wins (existing).
+  - =:melpa-synth 'never= → return nil (existing).
+  - =:melpa-synth 'force= → synth, skip fetch (existing semantics
+    preserved — =force= now explicitly means "ignore upstream").
+  - =:melpa-synth 'auto= (default) AND fetch enabled → try upstream
+    via fluid =anvil-pkg-emacs--render-fetch-fn=; on hit emit
+    upstream recipe verbatim; on miss / error fall back to synth.
+  - =:melpa-synth 'auto= AND fetch disabled (defcustom nil) → synth
+    (current Phase 4-D behaviour).
+- Render dispatch fluid: =anvil-pkg-emacs--render-fetch-fn= (=defvar=
+  holding a 1-arg lambda PNAME → STRING-or-nil).  Tests rebind to a
+  stub via =cl-letf= or =let=.  Default =funcall='s the public fetcher.
+
+** L28 — =:melpa-files= default upgrade
+
+- Constant =anvil-pkg-emacs--default-melpa-files= holding a copy of
+  =package-build-default-files-spec=:
+
+  #+begin_src elisp
+  '("*.el" "*.el.in" "dir"
+    "*.info" "*.texi" "*.texinfo"
+    "doc/dir" "doc/*.info" "doc/*.texi" "doc/*.texinfo"
+    "lisp/*.el" "lisp/*.el.in" "lisp/dir"
+    "lisp/*.info" "lisp/*.texi" "lisp/*.texinfo"
+    (:exclude ".dir-locals.el" "lisp/.dir-locals.el"
+              "test.el" "tests.el" "*-test.el" "*-tests.el"
+              "lisp/test.el" "lisp/tests.el"
+              "lisp/*-test.el" "lisp/*-tests.el"))
+  #+end_src
+
+- =anvil-pkg--synth-melpa-recipe= already does =(format "%S")= per
+  element so nested =(:exclude ...)= sublists serialise correctly
+  without further changes.
+- User-supplied =:melpa-files= still wins; the default only applies
+  when the keyword is omitted.
+- Validator stays unchanged.  =:exclude= sublists are well-formed
+  Elisp — only top-level strings are required when user supplies the
+  list explicitly (validator already enforces).
+
+* Open questions / non-goals
+
+- *OQ20.* Should =force= attempt upstream fetch?  Decision: *no*.
+  =force= is the user's explicit "synth, do not consult upstream"
+  signal; =auto= is the discoverable default.
+- *OQ21.* Should fetch be on by default?  Decision: *no, opt-in*.
+  Adds latency to first install per package, changes derivation
+  hashes vs Phase 4-D.  Defaulting nil keeps Phase 4-D behaviour and
+  lets motivated users flip the switch.
+- *Non-goal.* Detecting recipes in a *user-supplied* MELPA mirror /
+  fork.  Always queries upstream =melpa/melpa@master=.
+- *Non-goal.* Glob auto-detection from the actual source tree (would
+  require unpacking the fetched tarball / cloning the git repo just
+  to enumerate files).  L28 stops at "use a better default constant".
+
+* Sub-task decomposition
+
+Single sub-task — scope is small enough that parallelism is not
+worth the worktree overhead.  The two changes touch =anvil-pkg-emacs.el=
+(L27 fetch + cache + fluid), =anvil-pkg-dsl.el= (L27 wire-in + L28
+default constant), =test/anvil-pkg-emacs-test.el= (L27 ERT), and
+=test/anvil-pkg-dsl-test.el= (L28 ERT + L27 wire-in mock).
+
+** Implementation order
+
+1. =anvil-pkg-emacs.el= — add defcustom + cache namespace + fetch fn
+   + render-fetch fluid.
+2. =anvil-pkg-dsl.el= — replace hardcoded =("*.el")= with new
+   constant; add =:melpa-synth 'auto= upstream branch using fluid.
+3. =test/anvil-pkg-emacs-test.el= — fetch ERT (hit / miss / error /
+   cache hit / cache TTL expiry).
+4. =test/anvil-pkg-dsl-test.el= — L28 default-files ERT; wire-in
+   ERT (auto + fetch enabled + stub returning recipe → upstream
+   wins; fetch enabled + stub returning nil → synth fallback).
+
+ERT delta target: ~6 new tests (4 emacs + 2 dsl).
+
+* Test plan
+
+| ERT                                                          | Expectation                              |
+|--------------------------------------------------------------+------------------------------------------|
+| =fetch-melpa-recipe-hit-caches=                              | 200 → returns body, cache stores =:hit=  |
+| =fetch-melpa-recipe-miss-caches=                             | 404 → returns nil, cache stores =:miss=  |
+| =fetch-melpa-recipe-error-caches=                            | network err → nil, cache stores =:error= |
+| =fetch-melpa-recipe-cache-hit-skips-http=                    | 2nd call inside TTL → no HTTP            |
+| =render-melpa-default-files-uses-package-build-spec=         | renders new constant, not =("*.el")=     |
+| =render-melpa-auto-with-upstream-fetch-emits-upstream-body=  | fluid stub returning recipe → emitted    |
+| =render-melpa-auto-falls-back-to-synth-on-miss=              | fluid stub returning nil → synth         |
+
+* Acceptance
+
+- All Phase 4-D ERTs continue to pass without modification (the
+  default-off defcustom keeps the synth path active by default).
+- L28 modifies the existing
+  =anvil-pkg-dsl-test-render-emacs-package-melpa-golden= and
+  =anvil-pkg-dsl-test-melpa-synth-auto-with-github-fetch= /
+  =-with-git-fetch= expected outputs (now show full glob list, not
+  =("*.el")= only).  Acceptance: tests updated, byte-compile clean,
+  77+ ERT total.
+- README updated with =anvil-pkg-emacs-melpa-upstream-fetch= and the
+  upgraded =:melpa-files= default.
