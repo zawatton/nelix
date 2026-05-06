@@ -589,5 +589,170 @@ explicitly so this test does not couple to that default."
     (should (member "install" captured-args))
     (should-not (member "add" captured-args))))
 
+;;;; --- Phase 4-D sub-task C (L25): per-package rollback -------------------
+
+(ert-deftest anvil-pkg-test-rollback-package-happy ()
+  "pkg-rollback-package re-renders flake without target pkg + calls nix add.
+
+Pre-seeds the registry with two emacs-package IRs (magit + ripgrep)
+and the persistent generations mirror with a single active
+generation listing both.  Mocks the flake writer to capture the
+rendered Nix expression and the nix invocation to capture argv.
+After (pkg-rollback-package 'magit) verifies (a) the call returns
+t, (b) the captured nix argv carries the install subcommand
+resolved by `anvil-pkg--nix-install-subcommand' (= `install' under
+the macro's pre-seeded 2.18.0 cache), (c) the rendered flake
+references the surviving package only — magit must NOT appear
+anywhere in the flake and ripgrep MUST."
+  (require 'anvil-pkg-dsl)
+  (let* ((captured-args nil)
+         (captured-flake nil)
+         (flake-path "/tmp/anvil-pkg-test/flake.nix"))
+    (unwind-protect
+        (let ((anvil-pkg--registry (make-hash-table :test 'eq)))
+          (puthash 'magit
+                   '(:name magit
+                     :version "3.3.0"
+                     :source (:type url-fetch
+                              :url "https://example.invalid/magit.tar.gz"
+                              :sha256 "sha256-magit")
+                     :build-system (:type emacs-package)
+                     :inputs nil
+                     :native-inputs nil)
+                   anvil-pkg--registry)
+          (puthash 'ripgrep
+                   '(:name ripgrep
+                     :version "13.0.0"
+                     :source (:type url-fetch
+                              :url "https://example.invalid/ripgrep.tar.gz"
+                              :sha256 "sha256-ripgrep")
+                     :build-system (:type emacs-package)
+                     :inputs nil
+                     :native-inputs nil)
+                   anvil-pkg--registry)
+          (let ((anvil-pkg--write-flake-fn
+                 (lambda ()
+                   ;; Capture the flake string the production code
+                   ;; would have written to disk.  Walking the
+                   ;; (let-bound) registry mirrors what
+                   ;; `anvil-pkg--write-flake-default' would do.
+                   (setq captured-flake (anvil-pkg--render-flake))
+                   flake-path)))
+            (anvil-pkg-test--with-mock
+                (lambda (args)
+                  (cond
+                   ;; Initial active-generation lookup uses the
+                   ;; persistent mirror, no shell-out — but post-
+                   ;; rollback `pkg-list-generations' refreshes the
+                   ;; mirror.
+                   ((and (member "profile" args)
+                         (member "history" args)
+                         (member "--json" args))
+                    (list :exit 0
+                          :stdout "{\"generations\":[]}"
+                          :stderr ""))
+                   ;; Hook re-run consults pkg-list — empty profile is
+                   ;; benign.
+                   ((and (member "profile" args)
+                         (member "list" args)
+                         (member "--json" args))
+                    (list :exit 0
+                          :stdout "{\"version\":3,\"elements\":{}}"
+                          :stderr ""))
+                   ;; The rollback `nix profile add' / `install'
+                   ;; invocation we want to inspect.
+                   ((and (member "profile" args)
+                         (or (member "add" args)
+                             (member "install" args)))
+                    (setq captured-args args)
+                    (list :exit 0 :stdout "" :stderr ""))
+                   (t (ert-fail (format "unexpected nix args: %S" args)))))
+              ;; Pre-seed mirror — current = (magit ripgrep), active.
+              (anvil-pkg--generations-cache-put
+               (list (list :id 7
+                           :date "2026-05-04T20:00:00Z"
+                           :packages '(magit ripgrep)
+                           :active t)))
+              (should (eq t (pkg-rollback-package 'magit))))))
+      (when (file-exists-p "/tmp/anvil-pkg-test")
+        (delete-directory "/tmp/anvil-pkg-test" t)))
+    (should captured-args)
+    (should (member "profile" captured-args))
+    ;; Macro pre-seeds 2.18.0 → install subcommand on this branch.
+    (should (member "install" captured-args))
+    (should-not (member "add" captured-args))
+    ;; Rendered flake must reference only the surviving package.
+    (should captured-flake)
+    (should (string-match-p "ripgrep" captured-flake))
+    (should-not (string-match-p "magit" captured-flake))
+    ;; The flakeref handed to nix should target the surviving package.
+    (should (cl-some (lambda (a)
+                       (and (stringp a)
+                            (string-match-p "#ripgrep\\'" a)))
+                     captured-args))
+    (should-not (cl-some (lambda (a)
+                           (and (stringp a)
+                                (string-match-p "#magit\\'" a)))
+                         captured-args))))
+
+(ert-deftest anvil-pkg-test-rollback-package-refuses-no-ir ()
+  "pkg-rollback-package signals when a remaining pkg has no IR.
+
+Pre-seeds the mirror with current = (foo ripgrep), registers ONLY
+foo (= the package being rolled back) — ripgrep has no IR so the
+re-render would silently drop it.  Refuses with the L25 spec
+suggestion to use whole-profile `pkg-rollback' instead.
+
+Variant of the spec wording: the package being rolled back has IR
+(foo) but a sibling installed via raw nixpkgs lookup (ripgrep) does
+not, so the safety check fires before any flake render."
+  (require 'anvil-pkg-dsl)
+  (let ((anvil-pkg--registry (make-hash-table :test 'eq)))
+    (puthash 'foo
+             '(:name foo
+               :version "1.0"
+               :source (:type url-fetch
+                        :url "https://example.invalid/foo.tar.gz"
+                        :sha256 "sha256-foo")
+               :build-system (:type emacs-package)
+               :inputs nil
+               :native-inputs nil)
+             anvil-pkg--registry)
+    (anvil-pkg-test--with-mock
+        (lambda (_args)
+          ;; Mirror is pre-populated; no shell-out should fire before
+          ;; the IR check refuses.  The rollback path itself must not
+          ;; reach `nix profile add'.
+          (list :exit 0 :stdout "" :stderr ""))
+      (anvil-pkg--generations-cache-put
+       (list (list :id 4
+                   :date "2026-05-04T19:00:00Z"
+                   :packages '(foo ripgrep)
+                   :active t)))
+      (let ((err (should-error (pkg-rollback-package 'foo)
+                               :type 'anvil-pkg-error)))
+        (should (string-match-p "pkg-rollback" (cadr err)))
+        (should (string-match-p "ripgrep" (cadr err)))))))
+
+(ert-deftest anvil-pkg-test-rollback-package-not-in-current ()
+  "pkg-rollback-package signals when target pkg is absent from active gen.
+
+Pre-seeds the mirror with current = (ripgrep) and asks to roll back
+magit, which is not installed.  The call must refuse with
+`anvil-pkg-error' carrying a `not currently installed' hint without
+shelling out to nix."
+  (require 'anvil-pkg-dsl)
+  (anvil-pkg-test--with-mock
+      (lambda (_args)
+        (ert-fail "pkg-rollback-package must not shell out when pkg is absent"))
+    (anvil-pkg--generations-cache-put
+     (list (list :id 2
+                 :date "2026-05-04T18:30:00Z"
+                 :packages '(ripgrep)
+                 :active t)))
+    (let ((err (should-error (pkg-rollback-package 'magit)
+                             :type 'anvil-pkg-error)))
+      (should (string-match-p "not currently installed" (cadr err))))))
+
 (provide 'anvil-pkg-test)
 ;;; anvil-pkg-test.el ends here

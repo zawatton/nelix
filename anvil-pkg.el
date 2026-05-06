@@ -865,6 +865,100 @@ non-zero `nix profile rollback' exit."
     (anvil-pkg--rollback-replay-emacs-hooks)
     t))
 
+(defun anvil-pkg--active-generation ()
+  "Return the active generation plist from the mirror.
+Refreshes via `pkg-list-generations' when the mirror is empty.
+Returns nil when no generation has `:active' t (= no profile yet)."
+  (let ((mirror (anvil-pkg--generations-cache-get)))
+    (unless mirror
+      (setq mirror (pkg-list-generations)))
+    (let (active)
+      (dolist (gen mirror)
+        (when (and (not active) (plist-get gen :active))
+          (setq active gen)))
+      active)))
+
+;;;###autoload
+(defun pkg-rollback-package (pkg-name)
+  "Roll back a single package PKG-NAME from the anvil-pkg Nix profile.
+PKG-NAME is a symbol previously installed via `pkg-define' /
+`pkg-install'.  Synthesises a NEW generation containing every
+package currently installed EXCEPT PKG-NAME, re-rendering
+flake.nix from each remaining package's IR in
+`anvil-pkg--registry' and dispatching `nix profile add' against
+the freshly-written flake.  Nix records this as a new
+generation (not as a rollback) — that is the documented L25
+contract.
+
+Signals `anvil-pkg-error' when:
+  - PKG-NAME is not installed in the active generation,
+  - any remaining package has no IR in the registry (= installed
+    via raw nixpkgs name lookup, not via `pkg-define').  The
+    suggestion in the error message points to the whole-profile
+    `pkg-rollback' as a fallback.
+
+Returns t on success.  Side effects: refreshes the generations
+mirror and replays the post-install hook for emacs-package
+entries in the now-active generation so `load-path' stays
+consistent.  Phase 4-D L25."
+  (unless (symbolp pkg-name)
+    (signal 'anvil-pkg-error
+            (list (format "pkg-rollback-package: PKG-NAME must be symbol, got %S"
+                          pkg-name))))
+  (require 'anvil-pkg-dsl)
+  (anvil-pkg--ensure-nix)
+  (let* ((active (anvil-pkg--active-generation))
+         (current-pkgs (and active (plist-get active :packages))))
+    (unless active
+      (signal 'anvil-pkg-error
+              (list "pkg-rollback-package: no active generation found in profile history")))
+    (unless (memq pkg-name current-pkgs)
+      (signal 'anvil-pkg-error
+              (list (format "pkg-rollback-package: %s is not currently installed in the active generation"
+                            pkg-name))))
+    (let ((remaining (delq pkg-name (copy-sequence current-pkgs))))
+      ;; Verify every remaining package has IR in the registry.  Without
+      ;; an IR we cannot re-render its derivation in the new flake.nix,
+      ;; so refuse loudly with a pointer to whole-profile rollback.
+      (dolist (sym remaining)
+        (unless (gethash sym anvil-pkg--registry)
+          (signal 'anvil-pkg-error
+                  (list (format "pkg-rollback-package: %s has no IR in the registry (installed by name only); use pkg-rollback for whole-profile rollback instead"
+                                sym)))))
+      ;; Re-render the flake from a temporary registry containing only
+      ;; the remaining IRs so `anvil-pkg--render-flake' (which walks the
+      ;; registry hash) produces a flake without PKG-NAME.
+      (let* ((scoped-registry (make-hash-table :test 'eq))
+             (flake-path nil)
+             (flake-dir nil))
+        (dolist (sym remaining)
+          (puthash sym (gethash sym anvil-pkg--registry) scoped-registry))
+        (let ((anvil-pkg--registry scoped-registry))
+          (setq flake-path (funcall anvil-pkg--write-flake-fn)))
+        (setq flake-dir (directory-file-name (file-name-directory flake-path)))
+        (let* ((subcmd (anvil-pkg--nix-install-subcommand))
+               (flakerefs (mapcar (lambda (sym)
+                                    (format "path:%s#%s" flake-dir sym))
+                                  remaining))
+               (args (append (list "profile" subcmd)
+                             (anvil-pkg--profile-args)
+                             flakerefs))
+               (res (anvil-pkg--call-nix args)))
+          (unless (eq 0 (plist-get res :exit))
+            (signal 'anvil-pkg-nix-failed
+                    (list (format "nix profile %s (rollback-package %s) failed (exit %s): %s"
+                                  subcmd pkg-name
+                                  (plist-get res :exit)
+                                  (anvil-pkg-compat-string-trim
+                                   (or (plist-get res :stderr) "")))
+                          :stderr (plist-get res :stderr)))))
+        ;; Refresh mirror + replay emacs-package hooks.  Both wrapped so
+        ;; a refresh failure does not mask a successful per-package
+        ;; rollback.
+        (condition-case _ (pkg-list-generations) (error nil))
+        (anvil-pkg--rollback-replay-emacs-hooks)
+        t))))
+
 ;;;###autoload
 (defun pkg-history (pkg-name)
   "Return install / remove events for PKG-NAME (a symbol).
@@ -965,6 +1059,8 @@ notice typos rather than silently clearing the wrong namespace."
 (defalias 'anvil-pkg-list-generations #'pkg-list-generations)
 ;;;###autoload
 (defalias 'anvil-pkg-rollback #'pkg-rollback)
+;;;###autoload
+(defalias 'anvil-pkg-rollback-package #'pkg-rollback-package)
 ;;;###autoload
 (defalias 'anvil-pkg-history #'pkg-history)
 ;;;###autoload
