@@ -1,0 +1,540 @@
+#+title: anvil-pkg — Phase 4-D: melpa recipe synth, url/git L18, per-pkg rollback, state integration
+#+author: zawatton
+#+date: 2026-05-05
+#+property: status DRAFT
+
+* STATUS
+
+Phase 4-D — DRAFT 2026-05-05.  Builds on Phase 4-C (commits =36222e8=
+/ =153c065= / =eafe1ba= / integration =12956d0=) which shipped L18
+=Package-Requires= pre-fetch, L19 generation rollback, L20 Nix 2.34
+dispatch, L21 importer integration, and L22 =anvil-pkg-compat=
+async primitive.
+
+Phase 4-D closes four loose ends explicitly enumerated in 4-B / 4-C
+open questions and the README "Phase 4-D candidates" line:
+
+- *L23.* MELPA recipe synthesis for repos that ship Elisp without a
+  =recipes/<pname>= entry (Phase 4-B OQ7 / 4-C OQ12).
+- *L24.* L18 pre-fetch coverage for =url-fetch= (tarball header read)
+  and =git-fetch= (shallow clone scrape).  Phase 4-C scoped L18 to
+  =github-fetch= only.
+- *L25.* Per-package rollback (Phase 4-C OQ13).  Today =pkg-rollback=
+  is profile-wide; users want to drop one package without losing
+  intervening installs.
+- *L26.* =anvil-pkg-state= integration so the deps cache, Nix-version
+  cache, and generations mirror persist across Emacs sessions
+  instead of living in three session-only =defvar= hash-tables.
+
+L26 is intentionally first in the implementation order — L23 / L24 /
+L25 all benefit from a real persistent KV, and L26 doubles as the
+moment =anvil-pkg-state= becomes a hard dependency of =anvil-pkg=.
+
+* Goal
+
+Make =:format "melpa"=, non-=github-fetch= sources, fine-grained
+rollback, and cross-session caching all "just work":
+
+#+begin_src elisp
+;; L23 — :format "melpa" works even when the repo has no recipe
+(pkg-define helm
+  (version "3.9.7")
+  (source (github-fetch :owner "emacs-helm" :repo "helm"
+                        :rev "v3.9.7" :sha256 "sha256-..."))
+  (build-system (emacs-package :format "melpa")))
+;; → upstream has no MELPA recipe.  Phase 4-D synthesises a minimal
+;;   one via postUnpack ((helm :fetcher git :url "...")) so melpaBuild
+;;   does not need a separate recipes file.
+
+;; L24 — L18 pre-fetch works for tarballs and git URLs
+(pkg-define dash
+  (version "2.20.0")
+  (source (url-fetch :url "https://example.com/dash-2.20.0.tar.gz"
+                     :sha256 "sha256-..."))
+  (build-system (emacs-package :format "trivial")))
+;; → tarball partially extracted, dash-pkg.el header read, depends-on
+;;   derived without manual entry.
+
+(pkg-define internal
+  (version "1.0")
+  (source (git-fetch :url "https://git.example.com/internal.el.git"
+                     :rev "v1.0" :sha256 "sha256-..."))
+  (build-system (emacs-package :format "trivial")))
+;; → shallow clone (depth 1) into a tmp dir; same scrape as L18;
+;;   tmp dir cleaned post-fetch.
+
+;; L25 — per-package rollback drops a single entry
+(pkg-rollback-package 'magit)
+;; → synthesises a new generation = current minus magit, runs
+;;   `nix profile add` with the pruned flake.  Other packages stay.
+
+;; L26 — caches persist across Emacs restarts
+(pkg-clear-cache)                  ; now wipes anvil-pkg-state KV
+(pkg-list-generations)             ; first call after restart hits
+                                   ; the mirror cache, no nix shell-out.
+#+end_src
+
+* Non-goals
+
+- Replacing =melpaBuild= itself.  L23 only synthesises the recipe;
+  the actual build still runs nixpkgs's =melpaBuild= helper.  If
+  upstream has /malformed/ Elisp, the build still fails as before.
+- Generic URL recipe inference for non-Emacs packages.  L23 is
+  scoped to =:format "melpa"= + =emacs-package= only.
+- Full mirror of =nix profile= history outside anvil-pkg.  L26 keeps
+  the L19 contract: we mirror what we install / rollback through
+  our API, not what the user does via raw =nix= commands.
+- Multi-profile support.  Phase 4-D continues to assume a single
+  =~/.local/state/anvil-pkg/profile= per machine; per-project
+  profiles are a separate Phase 5+ design pass.
+- =git-fetch= shallow-clone authentication.  L24 only handles
+  publicly-accessible git URLs.  Private repo support (SSH key /
+  token forwarding) is deferred — same scope rule as L18 for
+  =github-fetch= which also assumes public repos for the scrape.
+
+* Locked decisions (continuing L18-L22 from doc 06)
+
+** L23. MELPA recipe synthesis via =postUnpack=
+
+When =build-system= is =(emacs-package :format "melpa")= and the
+=:source= directory does NOT contain =recipes/<pname>= (or no
+=recipes/= directory at all), the renderer adds a =postUnpack= phase
+to the flake that synthesises a minimal recipe before =melpaBuild=
+runs.
+
+Synthesised recipe shape:
+
+#+begin_src lisp
+;; recipes/<pname>
+(<pname> :fetcher git :url "<source-url>" :files ("*.el"))
+#+end_src
+
+Behaviour:
+
+- =:source= type =github-fetch= → =:url= becomes the github URL.
+- =:source= type =git-fetch= → =:url= becomes the upstream URL.
+- =:source= type =url-fetch= → =postUnpack= is skipped (tarball
+  layout cannot reliably be re-pinned via :fetcher).  The user must
+  supply an explicit recipe file via =:melpa-recipe= keyword (new
+  in Phase 4-D for this case).
+- =:files= defaults to =("*.el")= unless the IR carries a
+  =:melpa-files= override (also new keyword).
+
+Detection heuristic:
+
+- At render time, peek at the source URL via L24's pre-fetch path
+  if available; otherwise assume "no recipe" and synthesise.  False
+  positives (synth runs over an existing recipe) are harmless because
+  the synth file lands in =recipes/= and =melpaBuild= picks the
+  first match — but we still attempt to skip if a recipe is found
+  via the pre-fetch lookup.
+- Add a =:melpa-synth= keyword on =emacs-package= (default =auto=,
+  values =auto= / =force= / =never=) so users can override.
+
+Implementation lives in =anvil-pkg-dsl.el= as a renderer extension
+(=anvil-pkg--synth-melpa-recipe=) plus an upstream check helper in
+=anvil-pkg-emacs.el= (=anvil-pkg-emacs-has-recipe-p=) that reuses
+L18 / L24 fetch infrastructure.
+
+** L24. L18 pre-fetch coverage for =url-fetch= and =git-fetch=
+
+L18 currently dispatches only for =github-fetch=.  Phase 4-D adds
+two new dispatch arms.
+
+*** L24a. =url-fetch= tarball header scrape
+
+For =:source (url-fetch :url "..." :sha256 "...")=:
+
+1. Check L26 deps cache (key = =sha256:<hash>=) — return on hit.
+2. Download the tarball into a tmp file via =anvil-pkg-compat-http-get=
+   (extended in 4-D to stream binary bodies — see contract).
+3. Use =tar -tzf= to enumerate entries, find =<pname>-pkg.el= or
+   =<pname>.el= in the top-level dir, =tar -xzOf= to extract that
+   one file's contents.
+4. Apply the existing L18 parser (=anvil-pkg-emacs--parse-define-package=
+   / =--parse-package-requires-header=).
+5. Cache result + cleanup tmp file.
+
+Failure modes degrade to empty deps + warning, same as L18.  Tarball
+download timeout: 30s (vs L18's 5s; tarballs are bigger).  Maximum
+tarball size: 50 MiB (refuse + warn for larger; users with huge
+tarballs should declare deps explicitly).
+
+*** L24b. =git-fetch= shallow-clone scrape
+
+For =:source (git-fetch :url "..." :rev "..." :sha256 "...")=:
+
+1. Check L26 deps cache (key = =git:<url>@<rev>=).
+2. =git clone --depth 1 --branch <rev> <url> <tmpdir>= (fall back
+   to fetch + checkout if =--branch= rejects a SHA).
+3. Read =<pname>-pkg.el= or =<pname>.el= from =<tmpdir>=.
+4. Apply L18 parser.
+5. Cache + remove =<tmpdir>=.
+
+Cleanup uses =unwind-protect= so failed clones still remove the
+tmpdir.  Clone timeout: 60s.  =--depth 1= keeps the disk hit small;
+worst case for a fat repo is the single-commit working tree.
+
+The dispatch lives in =anvil-pkg-emacs.el='s
+=anvil-pkg-emacs-derive-deps= (which already takes the source plist
+as input — Phase 4-D extends the =:type= dispatch from one arm to
+three).
+
+** L25. Per-package rollback (=pkg-rollback-package=)
+
+New public function in =anvil-pkg.el=:
+
+#+begin_src elisp
+(pkg-rollback-package pkg-name)
+;; → t on success, signals `anvil-pkg-error' if pkg not in current
+;;   generation.
+#+end_src
+
+Behaviour:
+
+1. Read current generation's package list from L26's mirror.
+2. Synthesise a NEW generation = current minus =pkg-name=.
+3. Re-render the flake.nix for the pruned set.
+4. =nix profile add <flake>= (= L20's dispatch path) — Nix records
+   this as a new generation, NOT as a rollback.
+5. Refresh the L26 mirror so subsequent =pkg-history= sees the
+   removal event.
+
+Implementation note: the synthesised flake reuses each remaining
+package's IR from the registry (=anvil-pkg--registry= hash-table —
+already populated by =pkg-define=).  A package installed by name
+without =pkg-define= (= straight nixpkgs lookup, no IR) cannot be
+rebuilt this way; Phase 4-D refuses with =anvil-pkg-error= +
+suggestion to use whole-profile =pkg-rollback=.
+
+The =pkg-rollback= (whole-profile) path is unchanged.
+
+** L26. =anvil-pkg-state= integration (cross-session caches)
+
+Phase 4-C stored three caches in session-only =defvar= hash-tables:
+
+| Variable                          | Purpose                            |
+|-----------------------------------+------------------------------------|
+| =anvil-pkg-emacs--deps-cache=     | L18 derived =:depends-on=          |
+| =anvil-pkg--nix-version-cache=    | =nix --version= result             |
+| =anvil-pkg--generations-cache=    | =nix profile history --json= mirror|
+
+Phase 4-D promotes all three to =anvil-pkg-state= KV namespaces:
+
+| Namespace                         | Key shape                                    |
+|-----------------------------------+----------------------------------------------|
+| =anvil-pkg:emacs-deps=            | =github:<owner>/<repo>@<rev>= /              |
+|                                   | =sha256:<tarball-hash>= / =git:<url>@<rev>=  |
+| =anvil-pkg:nix-version=           | constant key =default= (single value)        |
+| =anvil-pkg:generations=           | constant key =mirror= (whole list)           |
+
+Migration semantics:
+
+- =anvil-pkg-state= becomes a /hard/ dependency of =anvil-pkg= — no
+  more "promote when integration lands" comments.  =Package-Requires=
+  (or =require=) declares it.
+- On first call after upgrade, the session =defvar= caches stay
+  populated for the current session but are no longer authoritative
+  — every cache read goes to =anvil-pkg-state= first, falls back to
+  the defvar (treated as a transient L1).
+- =pkg-clear-cache= drops both: the =anvil-pkg-state= namespaces AND
+  the session defvars.
+- TTL for L18 deps: 30 days (matches Phase 4-C's
+  =anvil-pkg-emacs--deps-ttl=).  TTL for nix-version: 1 day.
+  Generations mirror: no TTL — refreshed on every install / list /
+  rollback (= unchanged from 4-C).
+
+Implementation: replace the three =defvar= read/write sites with
+=anvil-pkg-state-get= / =anvil-pkg-state-put= calls.  Tests that
+relied on =defvar= reset between cases switch to mocking
+=anvil-pkg--call-state-fn= (new injection point — same pattern as
+=anvil-pkg--call-nix-fn=) so we never touch the real SQLite during
+ERT.
+
+* Phase 4-D implementation contract
+
+** Files touched / added
+
+| File                                  | Change                                                              |
+|---------------------------------------+---------------------------------------------------------------------|
+| =anvil-pkg-dsl.el=                    | =anvil-pkg--synth-melpa-recipe= renderer extension (L23)            |
+| =anvil-pkg-dsl.el=                    | =:melpa-synth= / =:melpa-recipe= / =:melpa-files= keyword parser    |
+| =anvil-pkg-emacs.el=                  | =derive-deps= dispatch arms for =url-fetch= / =git-fetch= (L24)     |
+| =anvil-pkg-emacs.el=                  | =anvil-pkg-emacs-has-recipe-p= upstream check (L23 helper)          |
+| =anvil-pkg.el=                        | =pkg-rollback-package= public API (L25)                             |
+| =anvil-pkg.el=                        | =anvil-pkg--call-state-fn= injection point (L26 mockable backend)   |
+| =anvil-pkg.el=                        | three cache call-sites switched to state-fn (L26)                   |
+| =anvil-pkg-emacs.el=                  | deps cache call-sites switched to state-fn (L26)                    |
+| =anvil-pkg-compat.el=                 | =anvil-pkg-compat-http-get= extended for binary streaming (L24a)    |
+| =anvil-pkg-compat.el=                 | =anvil-pkg-compat-shell-out= primitive for =tar= / =git= (L24)      |
+| =anvil-pkg-state.el= (new — sub-module)| thin wrapper over =anvil-state= namespacing for anvil-pkg          |
+| =test/anvil-pkg-dsl-test.el=          | L23 synth happy / skip-when-recipe-present / force / never          |
+| =test/anvil-pkg-emacs-test.el=        | L24a tarball + L24b shallow-clone happy + cache + failure paths     |
+| =test/anvil-pkg-test.el=              | L25 per-pkg rollback happy / refuse-no-IR; L26 state mocks          |
+| =test/anvil-pkg-state-test.el= (new)  | namespace round-trip + TTL semantics                                |
+| =docs/design/02-dsl.org=              | =:melpa-synth= / =:melpa-recipe= / =:melpa-files= keyword rows      |
+| =docs/design/04-emacs-packages.org=   | L23 reference + L24 source coverage table                            |
+| =docs/smoke-test.org=                 | new step: install helm with synth recipe; per-pkg rollback round-trip|
+| =README.org=                          | examples for L23-L26; Phase plan +4-D SHIPPED row                    |
+| =Makefile=                            | =SRC= += =anvil-pkg-state.el=; =TEST_SRC= += new test file          |
+
+** Public surface diff
+
+#+begin_src elisp
+;; L23 — :format "melpa" extras
+(pkg-define helm
+  (version "3.9.7")
+  (source (github-fetch :owner "emacs-helm" :repo "helm"
+                        :rev "v3.9.7" :sha256 "sha256-..."))
+  (build-system (emacs-package
+                  :format "melpa"
+                  :melpa-synth 'auto              ; auto / force / never
+                  :melpa-files '("*.el" "lisp/*.el")
+                  :melpa-recipe nil)))             ; explicit override
+
+;; L24 — extends L18 to non-github sources (no DSL change; transparent)
+
+;; L25 — per-package rollback
+(pkg-rollback-package 'magit)
+;; → t / signals `anvil-pkg-error' if magit was installed by-name only
+
+;; L26 — clear-cache now affects persistent state
+(pkg-clear-cache)              ; drops state KV + session defvars
+(pkg-clear-cache 'deps)        ; new optional scope arg: deps / version / generations / all
+#+end_src
+
+** Mappings (additions to docs 05 + 06)
+
+| DSL / call                                           | IR / state                                  | Behaviour                                                |
+|------------------------------------------------------+---------------------------------------------+----------------------------------------------------------|
+| =:melpa-synth 'auto= + no recipe upstream            | renderer adds =postUnpack=                  | synthesises =recipes/<pname>=, melpaBuild succeeds       |
+| =:melpa-recipe "...elisp..."=                        | renderer wraps verbatim into postUnpack     | user-supplied recipe; synth skipped                      |
+| =url-fetch= source + emacs-package + no =depends-on= | =:depends-on= injected post tarball-scrape  | tarball header read, deps cached by sha256               |
+| =git-fetch= source + emacs-package + no =depends-on= | =:depends-on= injected post shallow-clone   | depth-1 clone, scraped, tmpdir removed                   |
+| =pkg-rollback-package=                               | new generation synthesised from registry    | =nix profile add= with pruned flake                      |
+| L26 cache hit                                        | KV lookup before HTTP / nix shell-out       | unchanged hot path; cold path persists across restarts   |
+
+** ERT plan (≈18 new tests)
+
+L23 — melpa recipe synth (anvil-pkg-dsl):
+
+1. =melpa-synth-auto-when-no-recipe= — fixture IR with =:format "melpa"=
+   + mocked =has-recipe-p= returns nil; expect rendered flake contains
+   =postUnpack= block + synthesised recipe.
+2. =melpa-synth-skipped-when-recipe-present= — mocked =has-recipe-p= t;
+   no =postUnpack= block emitted.
+3. =melpa-synth-force-overrides-detection= — =:melpa-synth 'force=;
+   synth runs even when upstream has a recipe.
+4. =melpa-synth-never-disables= — =:melpa-synth 'never=; no synth
+   even when upstream lacks a recipe (user accepts melpaBuild may
+   fail).
+5. =melpa-recipe-explicit-wins= — =:melpa-recipe "(helm ...)"=
+   verbatim used; synth skipped.
+6. =melpa-files-keyword-overrides-default= — =:melpa-files
+   '("*.el" "lisp/*.el")=; rendered recipe contains both globs.
+
+L24a — url-fetch tarball scrape (anvil-pkg-emacs):
+
+7. =derive-deps-tarball-pkg-el-happy= — mock HTTP returns a small
+   tar.gz with =foo-pkg.el=; expect parsed deps.
+8. =derive-deps-tarball-package-requires-header= — tarball with no
+   =-pkg.el= but =foo.el= containing the header; expect parsed deps.
+9. =derive-deps-tarball-too-large-refuses= — mock content-length
+   header > 50 MiB; expect warn + nil.
+10. =derive-deps-tarball-cache-hit-by-sha256= — second call with same
+    sha256; mock HTTP NOT called.
+
+L24b — git-fetch shallow-clone scrape (anvil-pkg-emacs):
+
+11. =derive-deps-git-clone-happy= — mock =shell-out= returns success
+    + fixture =foo-pkg.el= in tmpdir; expect parsed deps + tmpdir
+    cleaned.
+12. =derive-deps-git-clone-failure-degrades= — mock =shell-out=
+    nonzero; expect warn + empty list + tmpdir cleaned.
+13. =derive-deps-git-cache-hit-by-rev= — second call same =url@rev=;
+    no shell-out.
+
+L25 — per-package rollback (anvil-pkg):
+
+14. =rollback-package-happy= — current generation contains
+    =(magit ripgrep)=, both have IR; expect new flake rendered with
+    =(ripgrep)=, =nix profile add= called.
+15. =rollback-package-refuses-no-ir= — package was installed by
+    name (no entry in registry); expect =anvil-pkg-error= with
+    suggestion.
+16. =rollback-package-not-in-current= — pkg not in current
+    generation; expect =anvil-pkg-error=.
+
+L26 — anvil-pkg-state integration (anvil-pkg / anvil-pkg-emacs):
+
+17. =state-cache-roundtrip= — mock state-fn put/get; deps written
+    on first call, read on second, no HTTP on second.
+18. =state-cache-clear-by-scope= — =(pkg-clear-cache 'deps)= drops
+    only deps namespace, leaves nix-version + generations.
+
+** Reject list (Phase 4-D errors)
+
+- =:format "melpa"= + =url-fetch= + =:melpa-synth 'auto= →
+  warn-then-skip (synth disabled for url-fetch by L23 spec).
+  =:melpa-synth 'force= over =url-fetch= raises
+  =anvil-pkg-error=.
+- =pkg-rollback-package= for a name-only install →
+  =anvil-pkg-error= ("no IR in registry; use pkg-rollback for
+  whole-profile rollback").
+- =pkg-rollback-package= for a package not in current generation →
+  =anvil-pkg-error= ("not currently installed").
+- =anvil-pkg-state= load failure (e.g. SQLite missing in NeLisp
+  build) → fall back to session defvars + =lwarn=.  No hard error.
+- L24a tarball download > 50 MiB → warn + return nil deps.
+  Build still runs; user gets an empty =packageRequires=.
+
+** Smoke test additions
+
+#+begin_src elisp
+;; L23 round-trip — install helm without an upstream recipe
+(pkg-define helm-test
+  (version "3.9.7")
+  (source (github-fetch :owner "emacs-helm" :repo "helm"
+                        :rev "v3.9.7"
+                        :sha256 "sha256-..."))
+  (build-system (emacs-package :format "melpa")))
+(pkg-install 'helm-test :require 'helm)
+;; expect: pre-fetch derives deps, synth adds recipes/helm-test,
+;; melpaBuild reads the synth recipe, package builds, helm loads.
+
+;; L24 round-trip — url-fetch + auto deps
+(pkg-define dash-test
+  (version "2.20.0")
+  (source (url-fetch :url "https://example.com/dash-2.20.0.tar.gz"
+                     :sha256 "sha256-..."))
+  (build-system (emacs-package :format "trivial")))
+(pkg-install 'dash-test)
+;; expect: tarball downloaded, header scraped, deps cached.
+
+;; L25 round-trip — per-package rollback
+(pkg-install "ripgrep")
+(pkg-install "fd")
+(pkg-rollback-package 'ripgrep)
+;; expect: ripgrep removed, fd still installed, current generation
+;; reflects only fd.
+
+;; L26 cross-session cache survival
+(pkg-clear-cache)
+(pkg-install 'helm-test)        ; first run, hits HTTP
+;; quit emacs, restart, reload anvil-pkg
+(pkg-install 'helm-test)        ; should hit state cache, no HTTP
+#+end_src
+
+* Open questions
+
+** OQ15. =anvil-pkg-state= cross-runtime portability
+
+L26 makes =anvil-pkg-state= a hard dep, but the actual state library
+lives in =anvil.el= and assumes Emacs's built-in =sqlite-*=
+functions.  NeLisp does not yet expose =sqlite-*=.  Until Phase 5
+ships a NeLisp SQLite backend, =anvil-pkg-state= on NeLisp falls
+back to a plain alist persisted to JSON in =~/.local/state/=.  Same
+API, lower performance — acceptable for the tiny anvil-pkg cache
+shapes (< 1k entries).
+
+** OQ16. Tarball size threshold
+
+L24a's 50 MiB cap is a guess.  Real-world Elisp packages average
+< 1 MiB.  Keeping the cap forces a graceful fail mode for someone
+who points =url-fetch= at e.g. a CI artifact that bundles
+non-Elisp.  If users complain, the cap moves to a defcustom
+(=anvil-pkg-tarball-max-bytes=).
+
+** OQ17. =melpa-synth= file glob heuristics
+
+The synthesised recipe's =:files= defaults to =("*.el")=.  Many
+real MELPA recipes use richer globs (=("*.el" "lisp/*.el"
+"snippets")=).  Phase 4-D punts on auto-detection — users who need
+non-default globs supply =:melpa-files= explicitly.  A future phase
+could attempt detection by inspecting the source layout, but the
+heuristic surface is large enough to defer.
+
+** OQ18. Per-package rollback ordering
+
+L25 synthesises a new generation by removing one package, but the
+remaining packages are re-added in registry-iteration order.  If
+Nix is sensitive to dependency ordering (it generally isn't —
+=buildEnv= is order-agnostic), this is fine.  Smoke test in 4-D
+will validate by inspecting the resulting profile's contents.
+
+** OQ19. State migration from session caches
+
+Users running Phase 4-C in a long-lived Emacs and upgrading to 4-D
+will have populated session =defvar= caches.  Phase 4-D's first
+call after upgrade copies them into =anvil-pkg-state= via a one-shot
+migration helper (=anvil-pkg--migrate-session-caches=).  Migration
+is silent (no prompt) because the session cache content is already
+valid — it just moves to persistent storage.
+
+* Sub-task decomposition (parallel worktrees, like 4-B / 4-C)
+
+Sub-task A: L23 melpa recipe synth (anvil-pkg-dsl renderer + dsl
+parser + helper in anvil-pkg-emacs) + ERT 1-6.  Estimated ~400 LOC
+src + ~300 LOC test.
+
+Sub-task B: L24a + L24b L18 extension (anvil-pkg-emacs derive-deps
+dispatch + compat-shell-out primitive + compat-http-get binary
+streaming) + ERT 7-13.  Estimated ~500 LOC src + ~400 LOC test.
+
+Sub-task C: L25 per-package rollback (anvil-pkg new public API +
+flake re-render path that reuses the registry) + ERT 14-16.
+Estimated ~300 LOC src + ~250 LOC test.
+
+Sub-task D: L26 anvil-pkg-state integration (new sub-module +
+=anvil-pkg--call-state-fn= injection + 3 call-site rewrites + ERT
+17-18 + state-test file).  Estimated ~350 LOC src + ~250 LOC test.
+
+** Landing order
+
+D first (= sequential, lands on main alone), then A / B / C in
+parallel worktrees off the post-D HEAD.
+
+Rationale: A, B, C all want to write to / read from the persistent
+state layer that D introduces.  If we land A / B / C first they
+each implement their own ad-hoc persistence, then D refactors them
+all — wasted churn.  D is also the smallest behavioural change (=
+moves data from defvar to KV with same semantics) so it merges
+cleanly without conflicting with the others.
+
+Worktree base HEAD reminder (= Phase 4-B / 4-C lesson): when
+spawning parallel agents, branch from the latest HEAD AFTER D
+lands, not from the design commit.  Capture the post-D commit SHA
+in each agent's prompt so the agent's ERT baseline is reported
+correctly.
+
+* Effort estimate
+
+| Sub-task | LOC (src+test) | Status |
+|----------+----------------+--------|
+| D        | ~600           | TODO   |
+| A        | ~700           | TODO   |
+| B        | ~900           | TODO   |
+| C        | ~550           | TODO   |
+| Total    | ~2750          | DRAFT  |
+
+** Cumulative test count target
+
+Phase 4-C baseline: 55.  Phase 4-D target: 73 (+18 new ERTs;
+A=6, B=7, C=3, D=2).
+
+* References
+
+- =04-emacs-packages.org= (Phase 4-A locked decisions L7-L12).
+- =05-phase4b.org= (Phase 4-B L13-L17, including OQ7 melpaBuild
+  recipe issue and L15 deferral lineage).
+- =06-phase4c.org= (Phase 4-C L18-L22 + OQ12 / OQ13 / OQ14 that
+  this phase closes).
+- =anvil-pkg-state= sub-module (Phase 4-D introduces; wraps
+  =anvil-state= from =anvil.el=).
+- nixpkgs MELPA recipe schema:
+  https://github.com/NixOS/nixpkgs/blob/master/pkgs/applications/editors/emacs/elisp-packages/recipes/recipes.nix
+- =melpa= recipe format:
+  https://github.com/melpa/melpa/blob/master/README.md#recipe-format
+- async-installer clone layout (referenced by L21, reused by L24b
+  for the cache key shape):
+  =/home/madblack-21/.emacs.d/external-packages/=
