@@ -439,7 +439,9 @@
    :type 'anvil-pkg-dsl-error))
 
 (ert-deftest anvil-pkg-dsl-test-render-emacs-package-melpa-golden ()
-  "Renderer emits melpaBuild when :format is \"melpa\"."
+  "Renderer emits melpaBuild when :format is \"melpa\".
+Phase 4-D L23: github-fetch + default :melpa-synth `auto' adds a
+postUnpack block synthesising recipes/<pname>."
   (let ((ir '(:name magit
               :version "3.3.0"
               :source (:type github-fetch
@@ -460,6 +462,12 @@
                    "    sha256 = \"sha256-magit\";\n"
                    "  };\n"
                    "  packageRequires = with pkgs.emacsPackages; [ dash transient ];\n"
+                   "  postUnpack = ''\n"
+                   "    mkdir -p $sourceRoot/recipes\n"
+                   "    cat > $sourceRoot/recipes/magit <<'ANVIL_PKG_RECIPE_EOF'\n"
+                   "    (magit :fetcher git :url \"https://github.com/magit/magit\" :files (\"*.el\"))\n"
+                   "    ANVIL_PKG_RECIPE_EOF\n"
+                   "  '';\n"
                    "}")))
     (should (equal expected (anvil-pkg-render-nix ir)))))
 
@@ -485,6 +493,126 @@
                    "  };\n"
                    "}")))
     (should (equal expected (anvil-pkg-render-nix ir)))))
+
+;;;; --- Phase 4-D sub-task A: :melpa-synth / :melpa-recipe / :melpa-files (L23) -
+
+(ert-deftest anvil-pkg-dsl-test-melpa-synth-auto-with-github-fetch ()
+  "L23: :format \"melpa\" + github-fetch + default `:melpa-synth auto'
+emits a postUnpack block carrying the github URL."
+  (let* ((ir '(:name helm
+               :version "3.9.7"
+               :source (:type github-fetch
+                        :owner "emacs-helm"
+                        :repo "helm"
+                        :rev "v3.9.7"
+                        :sha256 "sha256-helm")
+               :build-system (:type emacs-package :format "melpa")))
+         (out (anvil-pkg-render-nix ir)))
+    (should (string-match-p "postUnpack = ''" out))
+    (should (string-match-p "mkdir -p \\$sourceRoot/recipes" out))
+    (should (string-match-p "cat > \\$sourceRoot/recipes/helm" out))
+    (should (string-match-p
+             "(helm :fetcher git :url \"https://github\\.com/emacs-helm/helm\" :files (\"\\*\\.el\"))"
+             out))))
+
+(ert-deftest anvil-pkg-dsl-test-melpa-synth-auto-with-git-fetch ()
+  "L23: :format \"melpa\" + git-fetch + default `auto' uses the upstream URL."
+  (let* ((ir '(:name myelp
+               :version "0.1.0"
+               :source (:type git-fetch
+                        :url "https://example.com/myelp.git"
+                        :rev "abc1234"
+                        :sha256 "sha256-myelp")
+               :build-system (:type emacs-package :format "melpa")))
+         (out (anvil-pkg-render-nix ir)))
+    (should (string-match-p "postUnpack = ''" out))
+    (should (string-match-p
+             "(myelp :fetcher git :url \"https://example\\.com/myelp\\.git\" :files (\"\\*\\.el\"))"
+             out))))
+
+(ert-deftest anvil-pkg-dsl-test-melpa-synth-auto-skipped-for-url-fetch ()
+  "L23: :format \"melpa\" + url-fetch + `auto' silently skips synth
+\(no postUnpack, no error)."
+  (let* ((ir '(:name foo
+               :version "1.0.0"
+               :source (:type url-fetch
+                        :url "https://example.com/foo-1.0.0.tar.gz"
+                        :sha256 "sha256-foo")
+               :build-system (:type emacs-package :format "melpa")))
+         (out (anvil-pkg-render-nix ir)))
+    (should-not (string-match-p "postUnpack" out))
+    (should (string-match-p "pkgs.emacsPackages.melpaBuild {" out))))
+
+(ert-deftest anvil-pkg-dsl-test-melpa-synth-never-disables ()
+  "L23: :melpa-synth `never' suppresses synth even on github-fetch."
+  (let* ((ir '(:name helm
+               :version "3.9.7"
+               :source (:type github-fetch
+                        :owner "emacs-helm"
+                        :repo "helm"
+                        :rev "v3.9.7"
+                        :sha256 "sha256-helm")
+               :build-system (:type emacs-package
+                              :format "melpa"
+                              :melpa-synth never)))
+         (out (anvil-pkg-render-nix ir)))
+    (should-not (string-match-p "postUnpack" out))))
+
+(ert-deftest anvil-pkg-dsl-test-melpa-synth-force-on-url-fetch-errors ()
+  "L23: :melpa-synth `force' over url-fetch raises `anvil-pkg-error'."
+  (anvil-pkg-dsl-test--with-clean-registry
+    (should-error
+     (macroexpand-1
+      '(pkg-define foo
+         (version "1.0.0")
+         (source (url-fetch "https://example.com/foo-1.0.0.tar.gz"
+                            :sha256 "sha256-foo"))
+         (build-system (emacs-package :format "melpa" :melpa-synth force))))
+     :type 'anvil-pkg-error)))
+
+(ert-deftest anvil-pkg-dsl-test-melpa-recipe-explicit-wins-and-files-keyword ()
+  "L23: :melpa-recipe verbatim wins over auto-synth; separately,
+:melpa-files overrides the default \(\"*.el\") glob list in the
+synthesised recipe."
+  ;; Part 1: explicit :melpa-recipe is emitted verbatim, no synth heuristic.
+  (let* ((ir-explicit
+          '(:name helm
+            :version "3.9.7"
+            :source (:type github-fetch
+                     :owner "emacs-helm"
+                     :repo "helm"
+                     :rev "v3.9.7"
+                     :sha256 "sha256-helm")
+            :build-system (:type emacs-package
+                           :format "melpa"
+                           :melpa-recipe
+                           "(helm :fetcher git :url \"u\" :files (\"*.el\" \"lisp/*.el\"))")))
+         (out-explicit (anvil-pkg-render-nix ir-explicit)))
+    (should (string-match-p "postUnpack = ''" out-explicit))
+    ;; The user string is emitted verbatim, including its own URL "u".
+    (should (string-match-p
+             "(helm :fetcher git :url \"u\" :files (\"\\*\\.el\" \"lisp/\\*\\.el\"))"
+             out-explicit))
+    ;; Auto-synth would have used the github URL — verify it did NOT.
+    (should-not
+     (string-match-p "https://github\\.com/emacs-helm/helm" out-explicit)))
+  ;; Part 2: :melpa-files overrides the default ("*.el") glob list.
+  (let* ((ir-files
+          '(:name helm
+            :version "3.9.7"
+            :source (:type github-fetch
+                     :owner "emacs-helm"
+                     :repo "helm"
+                     :rev "v3.9.7"
+                     :sha256 "sha256-helm")
+            :build-system (:type emacs-package
+                           :format "melpa"
+                           :melpa-files ("*.el" "lisp/*.el"))))
+         (out-files (anvil-pkg-render-nix ir-files)))
+    (should (string-match-p "postUnpack = ''" out-files))
+    (should (string-match-p
+             "(helm :fetcher git :url \"https://github\\.com/emacs-helm/helm\" :files (\"\\*\\.el\" \"lisp/\\*\\.el\"))"
+             out-files))))
 
 (provide 'anvil-pkg-dsl-test)
 ;;; anvil-pkg-dsl-test.el ends here
