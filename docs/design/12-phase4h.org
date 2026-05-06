@@ -1,0 +1,203 @@
+#+title: anvil-pkg — Phase 4-H: real-Nix smoke (renderer end-to-end)
+#+author: zawatton
+#+date: 2026-05-06
+#+property: status DRAFT
+
+* STATUS
+
+DRAFT 2026-05-06.  Single-task scope on canonical =main=.
+
+Until now, every example in =examples/= shipped with
+=sha256-PLACEHOLDER-...= literals — copy/paste users would
+hit a hash-mismatch on first =pkg-install=.  ERT covered the
+DSL parser and the renderer but never the renderer's *output*
+against a real Nix evaluator.
+
+Phase 4-H closes that gap: every recipe in =examples/= is
+verified against a real Nix evaluator (=nix flake check
+--no-build=) on every push, and four of them carry
+real, prefetched hashes so end-to-end =nix build= also works
+on a developer machine.
+
+* Goal
+
+| Today                                                       | After Phase 4-H                                                 |
+|-------------------------------------------------------------+-----------------------------------------------------------------|
+| Every example uses =sha256-PLACEHOLDER-...=                 | Four examples (hello / ripgrep / black / hugo) use real hashes  |
+| Renderer ERT asserts hand-written golden strings only       | =make smoke-eval= renders → =nix flake check --no-build=        |
+| Renderer's =cargoSha256= field name is unverified           | CI catches the field-name skew (modern nixpkgs needs =cargoHash=)|
+| =pkg-install= path never exercised in CI                    | =make smoke-build= optional gate runs real builds locally       |
+| README claims "verified on Nix 2.34" but no automation      | GitHub Actions =smoke= job re-verifies on every push to =main=  |
+
+* Locked decisions
+
+** L46 — two-tier smoke (eval-only in CI, build local)
+
+Two =make= targets, two cost profiles:
+
+- =make smoke-eval= — render each example to a temp dir and
+  run =nix flake check --no-build= on each.  Eval-only, never
+  fetches sources, never builds derivations.  Catches DSL →
+  flake.nix renderer regressions.  Cost: ~10s/example after
+  the nixpkgs flake input is locked in the runner cache.
+- =make smoke-build= — actually =nix build= the rendered
+  flake for the small examples (=gnu-hello= + =black=).
+  Real hashes required.  Cost: ~5s + ~30s.  Local-only by
+  default; rust/go are *not* part of =smoke-build= because of
+  the multi-minute cargo / go-mod download even on warm cache.
+
+CI runs =smoke-eval= only.  If a contributor wants to verify
+real builds end-to-end, =make smoke-build= is the local gate.
+
+*Why not full build in CI?*  The cheapest GitHub free runner
+charges no multiplier for ubuntu-latest, but a cold ripgrep
+build pulls ~50MB of cargo deps and takes 3-5 min; hugo is
+similar.  Push frequency on this repo is high enough that
+~10 min/push of CI burn for the rust/go path is not paying
+for itself.  Eval-only catches the renderer-shape regressions
+that would actually break users (e.g. the =cargoSha256= bug
+this phase discovered); end-to-end build sanity is local.
+
+** L47 — renderer fix: =cargoSha256= → =cargoHash=
+
+Discovered while writing this design: the rust renderer at
+=anvil-pkg-dsl.el:450= emits =cargoSha256 = "...";= but
+nixpkgs deprecated that attribute and modern unstable
+rejects it with "cargoHash, cargoVendorDir, cargoDeps, or
+cargoLock must be set".
+
+Fix: rename the *output* attribute only.  The DSL surface
+keyword =:cargo-sha256= stays the same — it has been shipped
+since Phase 1 and renaming it would break every existing
+recipe.  The value's already an SRI string, just labelled
+with a name nixpkgs no longer recognises.
+
+This change is purely additive: existing =pkg-define= forms
+keep working, and =cargoHash= has accepted SRI sha256 input
+since the rename in nixpkgs 23.11.
+
+The =go= renderer already emits =vendorHash= (correct), so
+nothing to change there.
+
+** L48 — real hashes in four examples
+
+Hashes prefetched 2026-05-06 with =nix-prefetch-url --unpack=
+on Determinate Nix 3.19.1 / nixpkgs-unstable.  Stored as SRI:
+
+| Recipe              | Source hash                                       | Build-system hash                                 |
+|---------------------+---------------------------------------------------+---------------------------------------------------|
+| =stdenv-hello.el=   | =sha256-jZkUKv2SV28wsM18tCqNxoCZmLxdYH2Idh9RLibH2yA== | (none — stdenv is hash-free)                       |
+| =rust-ripgrep.el=   | =sha256-CBU1GzgWMPTVsgaPMy39VRcENw5iWRUrRpjyuGiZpPI== | cargoHash =sha256-mi7fPMI8tZRZdW8cDN5p4Q/2ieJ9DnrI+esfUMHiBFk== |
+| =python-black.el=   | =sha256-JijlsRYOR+GI+D+992czIPQVKNMEsS6v2xnIiLe7B+c== | (none — pyproject is hash-free)                    |
+| =go-hugo.el=        | =sha256-UXOZCiwYpMnJsNSO7y3CsB8nmPxtBErYYl8YwWO3Hts== | vendorHash =sha256-e0LTe1MKXo757q0UlaNzo4FikMxK3G1gPv/EtSg195w== |
+
+The remaining recipes (=multi-install=, =emacs-melpa-magit=,
+=emacs-trivial-dash=, =private-github=) keep placeholder
+hashes — they exist as "shape examples" and live verification
+either requires private auth or doesn't add coverage beyond
+what the four real-hash examples already give us.
+
+** L49 — render script: =scripts/anvil-pkg-render.el=
+
+A dedicated batch-mode script invoked as:
+
+#+begin_src shell
+emacs -Q --batch -L . -l scripts/anvil-pkg-render.el \
+  --eval "(anvil-pkg-render-example \"examples/stdenv-hello.el\" \
+                                    \"/tmp/smoke/hello\")"
+#+end_src
+
+The script:
+
+1. Loads =anvil-pkg-dsl= + the example file
+2. Calls the existing =anvil-pkg--render-flake= (registry → string)
+3. Writes =flake.nix= into the requested output dir
+
+Why a *separate* script and not a new public Elisp function?
+It keeps the testing path out of the public API surface
+(=pkg-render-flake-to= would be a defun we'd then have to
+support).  The existing internal =anvil-pkg--render-flake=
+already does the work — the script is a thin wrapper for
+=make smoke-eval= shell invocation.
+
+** L50 — CI workflow: separate =smoke.yml=, not bolted onto =test.yml=
+
+Two reasons for separation:
+
+1. =test.yml= is the green-light gate (Emacs ERT + byte-compile).
+   =smoke.yml= depends on Nix install (~30s) + nixpkgs flake
+   eval (~2s) which is qualitatively a different kind of
+   check — keeping them separate makes failure attribution
+   instant ("Emacs broke" vs "renderer broke against current
+   nixpkgs").
+2. The Nix install step uses
+   =DeterminateSystems/nix-installer-action@main= which is
+   not auditable as a third-party dependency in the same way
+   =purcell/setup-emacs= is.  Failing on either should not
+   poison the other's status.
+
+The smoke job runs:
+- =DeterminateSystems/nix-installer-action@main= (installs Nix 2.x)
+- =DeterminateSystems/magic-nix-cache-action@main= (warm cache, free)
+- =make smoke-eval=
+
+* Open questions
+
+** OQ28 — should =smoke-build= be in CI behind a label?
+
+Defer.  GitHub Actions supports =if: contains(github.event.pull_request.labels.*.name, 'real-build')= to gate a job on a PR label.  We could ship that for occasional end-to-end validation without paying the per-push cost.  Hold until a renderer regression slips through =smoke-eval= and we want a stronger gate.
+
+** OQ29 — magic-nix-cache vs FlakeHub Cache vs Cachix
+
+Phase 4-H uses =magic-nix-cache-action= (free, GitHub-Actions-scoped).  If smoke jobs grow (more examples, more matrix entries) and warm-cache hits become flaky, Cachix is the next step.  Tracked here so the migration intent is documented; no action this phase.
+
+* ERT impact
+
+| Test                                          | Change            |
+|-----------------------------------------------+-------------------|
+| =anvil-pkg-dsl-test-render-rust-golden=       | =cargoSha256= → =cargoHash= in golden string |
+| =anvil-pkg-dsl-test-render-rust-cargo-hash=   | NEW: assert renderer emits =cargoHash =, not =cargoSha256 == |
+| =anvil-pkg-render-script-test-write-flake=    | NEW: render script writes a non-empty =flake.nix= for stdenv-hello |
+| =anvil-pkg-render-script-test-rust-no-cargo-sha256= | NEW: rendered output never contains =cargoSha256= |
+
+Target ERT count: 111 → 114.
+
+* Files touched
+
+#+begin_src text
+docs/design/12-phase4h.org                  (new)  ← this file
+.github/workflows/smoke.yml                 (new)  ← Nix smoke CI
+scripts/anvil-pkg-render.el                 (new)  ← batch render entry
+anvil-pkg-dsl.el                            (mod)  ← cargoHash output
+test/anvil-pkg-dsl-test.el                  (mod)  ← golden + new ERT
+examples/stdenv-hello.el                    (mod)  ← real source hash
+examples/rust-ripgrep.el                    (mod)  ← real source + cargoHash
+examples/python-black.el                    (mod)  ← real source hash
+examples/go-hugo.el                         (mod)  ← real source + vendorHash
+examples/README.org                         (mod)  ← drop "every example uses placeholder"
+README.org                                  (mod)  ← Phase 4-H badge + status
+Makefile                                    (mod)  ← smoke-eval + smoke-build
+#+end_src
+
+* Phase 4-H exit criteria
+
+- [ ] =make smoke-eval= passes locally on Determinate Nix 3.19.1
+- [ ] =make smoke-build= passes locally for hello + black
+- [ ] =make test= still 111+/111+ green
+- [ ] CI =test= job green (no regression)
+- [ ] CI =smoke= job green (new)
+- [ ] Renderer outputs =cargoHash= for the rust path; golden ERT updated
+- [ ] README + examples/README reflect "real hashes shipped" reality
+- [ ] memory =project_anvil_pkg_phase0.md= bumped to "Phase 4-H SHIPPED"
+
+* Out of scope
+
+- Multi-arch (aarch64-darwin, x86_64-darwin, aarch64-linux) flake
+  outputs.  Renderer hardcodes =packages.x86_64-linux= today.
+  Tracked separately under any future multi-system phase.
+- =melpa= / =trivial= Emacs example smoke.  Their build path
+  goes through =pkgs.emacsPackages.trivialBuild= which is
+  fast in CI but pulls a full Emacs closure (~250MB).
+  Defer until Emacs-specific renderer needs a smoke gate.
+- Cachix / FlakeHub Cache subscription.  =magic-nix-cache=
+  is enough for a single-machine push cadence.
