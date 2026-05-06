@@ -290,9 +290,22 @@
                    "    sha256 = \"sha256-src\";\n"
                    "  };\n"
                    "  buildInputs = with pkgs; [ openssl ];\n"
-                   "  cargoSha256 = \"sha256-cargo\";\n"
+                   "  cargoHash = \"sha256-cargo\";\n"
                    "}")))
     (should (equal expected (anvil-pkg-render-nix ir)))))
+
+(ert-deftest anvil-pkg-dsl-test-render-rust-emits-cargo-hash-not-sha256 ()
+  "Phase 4-H regression: rust renderer must emit `cargoHash', not
+`cargoSha256'.  Modern nixpkgs (>=23.11) deprecated `cargoSha256'
+and nixpkgs-unstable rejects it with `cargoHash, cargoVendorDir,
+cargoDeps, or cargoLock must be set'."
+  (let* ((ir '(:name r
+               :version "1.0"
+               :source (:type url-fetch :url "https://x/x.tgz" :sha256 "sha256-x")
+               :build-system (:type rust :cargo-sha256 "sha256-cargoval")))
+         (out (anvil-pkg-render-nix ir)))
+    (should (string-match-p "cargoHash = \"sha256-cargoval\";" out))
+    (should-not (string-match-p "cargoSha256" out))))
 
 (ert-deftest anvil-pkg-dsl-test-render-python-golden ()
   "Renderer emits buildPythonPackage for python build-system with :format."

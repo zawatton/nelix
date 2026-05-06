@@ -24,12 +24,15 @@
 
 (require 'anvil-pkg-dsl)
 
+;; Phase 4-H: hashes are *real*, prefetched 2026-05-06.  Source via
+;; `nix-prefetch-url --unpack', vendor via `vendorHash = lib.fakeHash'
+;; placeholder + `nix build' to capture the expected SRI value.
 (pkg-define hugo
   (version "0.139.0")
   (source (github-fetch :owner "gohugoio" :repo "hugo"
                         :rev "v0.139.0"
-                        :sha256 "sha256-PLACEHOLDER-source-hash"))
-  (build-system (go :vendor-sha256 "sha256-PLACEHOLDER-go-mod-hash"))
+                        :sha256 "sha256-UXOZCiwYpMnJsNSO7y3CsB8nmPxtBErYYl8YwWO3Hts="))
+  (build-system (go :vendor-sha256 "sha256-e0LTe1MKXo757q0UlaNzo4FikMxK3G1gPv/EtSg195w="))
   (description "The world's fastest framework for building websites.")
   (homepage "https://gohugo.io/")
   (license apache2))

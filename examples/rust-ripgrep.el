@@ -27,15 +27,17 @@
   (version "14.1.0")
   (source (github-fetch :owner "BurntSushi" :repo "ripgrep"
                         :rev "14.1.0"
-                        :sha256 "sha256-PLACEHOLDER-source-hash"))
-  (build-system (rust :cargo-sha256 "sha256-PLACEHOLDER-cargo-deps-hash"))
+                        :sha256 "sha256-CBU1GzgWMPTVsgaPMy39VRcENw5iWRUrRpjyuGiZpPI="))
+  (build-system (rust :cargo-sha256 "sha256-mi7fPMI8tZRZdW8cDN5p4Q/2ieJ9DnrI+esfUMHiBFk="))
   (description "Recursively search directories for a regex pattern.")
   (homepage "https://github.com/BurntSushi/ripgrep")
   (license mit))
 
-;; Tip: To get the real :cargo-sha256, install once with a
-;; placeholder.  Nix prints both the source hash and the cargo
-;; deps hash on mismatch.
+;; Phase 4-H: hashes above are *real*, prefetched 2026-05-06 with
+;; `nix-prefetch-url --unpack' for the source and
+;; `cargoHash = lib.fakeHash; nix build' for the cargo-deps hash.
+;; The DSL keyword stays `:cargo-sha256' for backward compat,
+;; but the renderer emits Nix's modern `cargoHash' attribute (>=23.11).
 
 (provide 'rust-ripgrep)
 ;;; rust-ripgrep.el ends here

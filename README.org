@@ -3,6 +3,7 @@
 #+date: 2026-04-27
 
 [[https://github.com/zawatton/anvil-pkg/actions/workflows/test.yml][file:https://github.com/zawatton/anvil-pkg/actions/workflows/test.yml/badge.svg]]
+[[https://github.com/zawatton/anvil-pkg/actions/workflows/smoke.yml][file:https://github.com/zawatton/anvil-pkg/actions/workflows/smoke.yml/badge.svg]]
 
 * What is anvil-pkg?
 
@@ -19,7 +20,7 @@ agents can install anything by writing one Lisp form.
 
 * Status
 
-*Phase 1+2+3+4-A+4-B+4-C+4-D+4-E+4-F+4-G SHIPPED + REAL-NIX VERIFIED* (2026-05-06) —
+*Phase 1+2+3+4-A+4-B+4-C+4-D+4-E+4-F+4-G+4-H SHIPPED + REAL-NIX VERIFIED* (2026-05-06) —
 Full DSL stack on top of the Nix store with multiple fetcher /
 build-system support, an =emacs-package= backend that round-trips
 Elisp libraries through =trivialBuild= / =melpaBuild= with optional
@@ -36,17 +37,18 @@ importer that auto-populates =:depends-on= from local clones, and
 the L18 pre-fetch, git HTTPS clone, and =nix --option
 extra-access-tokens= paths.
 
-- ERT 111/111 PASS (mocked, runs without a nix binary).
-- /Real-nix smoke test/ executed end-to-end in a =nixos/nix:2.34=
-  rootless podman container with Emacs 30.2:
-  - =(pkg-install "hello")= installed GNU Hello into an isolated
-    profile and the binary ran.
-  - =(pkg-list)= reflected the install.
-  - =(pkg-search "hello")= returned 30 hits.
-  - =(pkg-define) + (pkg-install 'sym)= reached the Nix daemon
-    through the generated =flake.nix= and surfaced the expected
-    hash-mismatch error from a placeholder.
-- Generated =flake.nix= validated by Nix as well-formed.
+- ERT 112/112 PASS (mocked, runs without a nix binary).
+- /Real-nix smoke test/ runs on every push (Phase 4-H, =smoke.yml=):
+  - =make smoke-eval= renders four examples
+    (=stdenv-hello=, =rust-ripgrep=, =python-black=, =go-hugo=)
+    and runs =nix flake check --no-build= on each
+    (Determinate Nix on =ubuntu-latest=).
+  - =make smoke-build= (local-only) actually =nix build= s the
+    cheap subset (=gnu-hello= + =black=) end-to-end.
+  - Real source / cargo / vendor hashes ship in the recipes —
+    no =sha256-PLACEHOLDER= literals to swap out before install.
+- Generated =flake.nix= validated by Nix as well-formed
+  on every push (matrix: Emacs 30.1 × Linux).
 
 Public Elisp API uses the short =pkg-= prefix:
 - =pkg-install= / =pkg-search= / =pkg-list= — Phase 1
@@ -164,6 +166,7 @@ your config should not require learning a new macro language.
 | 4-F   | pkg-install multi-package dispatch (atomic bulk install)               | *SHIPPED*      |
 | 4-G   | private repo: env-var credentials → HTTP / git / nix CLI auth          | *SHIPPED*      |
 | CI    | GitHub Actions — Emacs 30 × Linux, =make compile= + =make test= gate    | *SHIPPED*      |
+| 4-H   | Real-Nix smoke (=make smoke-eval=) + cargoSha256→cargoHash renderer fix | *SHIPPED*      |
 | 5+    | NeLisp async backend + HTTP backend (replaces Phase 4-C/4-D stubs)     | research       |
 
 See =docs/design/01-overview.org= for the full Phase 1 contract.

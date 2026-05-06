@@ -441,13 +441,17 @@ Returns a list of strings."
 
 (defun anvil-pkg--render-rust (ir)
   "Render IR using `pkgs.rustPlatform.buildRustPackage'.
-Requires :cargo-sha256 in the build-system args."
+Requires :cargo-sha256 in the build-system args.
+
+DSL keyword stays :cargo-sha256 for backward compat, but the
+emitted Nix attribute is `cargoHash' — modern nixpkgs (>=23.11)
+deprecated `cargoSha256' and unstable rejects it outright."
   (let* ((bs (plist-get ir :build-system))
          (cargo-sha256 (plist-get bs :cargo-sha256)))
     (anvil-pkg--render-derivation
      "pkgs.rustPlatform.buildRustPackage"
      (append (anvil-pkg--render-pre-bs-fields ir)
-             (list (format "  cargoSha256 = %S;" cargo-sha256))
+             (list (format "  cargoHash = %S;" cargo-sha256))
              (anvil-pkg--render-post-bs-fields ir)))))
 
 (defun anvil-pkg--render-python (ir)

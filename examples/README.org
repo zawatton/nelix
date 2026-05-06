@@ -11,19 +11,34 @@ Each file is a self-contained Elisp library.  Load it from your
 Emacs config (or =M-x load-file=), then call =(pkg-install
 '<package>)= to actually build / install through Nix.
 
-* How to use a placeholder sha256
+* Hashes — real vs placeholder
 
-The =sha256-...= and =sha256-cargo...= literals in these examples
-are *placeholders*.  When you copy a recipe, run =pkg-install=
-once with a placeholder; Nix will fail with a hash-mismatch error
-that prints the *real* hash.  Paste that back into the recipe and
-re-install.
+Phase 4-H (2026-05-06) shipped *real* prefetched hashes for
+four recipes — they are smoke-verified against
+=nixpkgs-unstable= on every push (=make smoke-eval=):
+
+| Recipe                | Source hash | Build-system hash         |
+|-----------------------+-------------+---------------------------|
+| =stdenv-hello.el=     | real        | (none)                    |
+| =rust-ripgrep.el=     | real        | =cargoHash= real          |
+| =python-black.el=     | real        | (none — pyproject)        |
+| =go-hugo.el=          | real        | =vendorHash= real         |
+
+The other recipes (=multi-install=, =emacs-melpa-magit=,
+=emacs-trivial-dash=, =private-github=) are still *shape
+examples* — they use =sha256-PLACEHOLDER= literals and need
+real hashes before =pkg-install=.
+
+When you copy a placeholder recipe, run =pkg-install= once;
+Nix will fail with a hash-mismatch error that prints the
+*real* hash.  Paste that back and re-install.
 
 For deterministic CI you can also pre-compute hashes:
 
 #+begin_src shell
 nix-prefetch-url --type sha256 https://example.com/foo.tar.gz
-nix-prefetch-git --rev <sha> https://github.com/owner/repo
+nix-prefetch-url --unpack https://github.com/owner/repo/archive/REV.tar.gz
+nix hash convert --hash-algo sha256 --to sri <base32-hash>
 #+end_src
 
 * Index
@@ -44,8 +59,11 @@ order — the headline example is whichever language you came for.
 
 * Caveats
 
-- *Hashes:* every example uses placeholder hashes.  Replace before
-  installing to a real profile.
+- *Hashes:* the four real-hash recipes are pinned to specific
+  =:version= / =:rev= values; bumping either means re-running
+  =nix-prefetch-url= and rebuilding the cargo / vendor hash
+  via =lib.fakeHash + nix build=.  Placeholder recipes still
+  need real hashes before installing to a real profile.
 - *Nix daemon:* =pkg-install= shells out to =nix profile install= /
   =nix profile add= via the Phase 1 wrapper.  Make sure flakes are
   enabled and the daemon is running.

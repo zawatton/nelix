@@ -24,11 +24,13 @@
 
 (require 'anvil-pkg-dsl)
 
+;; Phase 4-H: source hash is *real*, prefetched 2026-05-06 with
+;; `nix-prefetch-url --unpack' against nixpkgs-unstable.
 (pkg-define black
   (version "24.10.0")
   (source (github-fetch :owner "psf" :repo "black"
                         :rev "24.10.0"
-                        :sha256 "sha256-PLACEHOLDER-source-hash"))
+                        :sha256 "sha256-JijlsRYOR+GI+D+992czIPQVKNMEsS6v2xnIiLe7B+c="))
   (build-system (python :format "pyproject"))
   (inputs (list python3Packages.click
                 python3Packages.mypy-extensions
