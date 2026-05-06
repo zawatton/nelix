@@ -2,6 +2,8 @@
 #+author: zawatton
 #+date: 2026-04-27
 
+[[https://github.com/zawatton/anvil-pkg/actions/workflows/test.yml][file:https://github.com/zawatton/anvil-pkg/actions/workflows/test.yml/badge.svg]]
+
 * What is anvil-pkg?
 
 *anvil-pkg* is a package manager you configure in /Emacs Lisp/, backed
@@ -156,6 +158,7 @@ your config should not require learning a new macro language.
 | 4-D   | melpaBuild recipe synthesis + url/git L18 + per-pkg rollback + state   | *SHIPPED*      |
 | 4-E   | MELPA upstream recipe fetch (opt-in) + better :melpa-files default     | *SHIPPED*      |
 | 4-F   | pkg-install multi-package dispatch (atomic bulk install)               | *SHIPPED*      |
+| CI    | GitHub Actions — Emacs 30 × Linux, =make compile= + =make test= gate    | *SHIPPED*      |
 | 5+    | NeLisp async backend + HTTP backend (replaces Phase 4-C/4-D stubs)     | research       |
 
 See =docs/design/01-overview.org= for the full Phase 1 contract.
