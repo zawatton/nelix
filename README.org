@@ -19,7 +19,7 @@ agents can install anything by writing one Lisp form.
 
 * Status
 
-*Phase 1+2+3+4-A+4-B+4-C+4-D+4-E+4-F SHIPPED + REAL-NIX VERIFIED* (2026-05-06) —
+*Phase 1+2+3+4-A+4-B+4-C+4-D+4-E+4-F+4-G SHIPPED + REAL-NIX VERIFIED* (2026-05-06) —
 Full DSL stack on top of the Nix store with multiple fetcher /
 build-system support, an =emacs-package= backend that round-trips
 Elisp libraries through =trivialBuild= / =melpaBuild= with optional
@@ -29,10 +29,14 @@ git sources with cross-session caching in =anvil-pkg-state=, profile
 generation rollback (=pkg-list-generations= / =pkg-rollback= /
 =pkg-rollback-package= / =pkg-history=), Nix 2.34 =install=→=add=
 dispatch, MELPA recipe auto-synthesis via =postUnpack= with optional
-upstream MELPA recipe lookup, and a one-shot =async-installer=
-importer that auto-populates =:depends-on= from local clones.
+upstream MELPA recipe lookup, a one-shot =async-installer=
+importer that auto-populates =:depends-on= from local clones, and
+*private repo support* via env-var credentials
+(=GITHUB_TOKEN= / =GITLAB_TOKEN= / =CODEBERG_TOKEN=) wired through
+the L18 pre-fetch, git HTTPS clone, and =nix --option
+extra-access-tokens= paths.
 
-- ERT 91/91 PASS (mocked, runs without a nix binary).
+- ERT 111/111 PASS (mocked, runs without a nix binary).
 - /Real-nix smoke test/ executed end-to-end in a =nixos/nix:2.34=
   rootless podman container with Emacs 30.2:
   - =(pkg-install "hello")= installed GNU Hello into an isolated
@@ -158,6 +162,7 @@ your config should not require learning a new macro language.
 | 4-D   | melpaBuild recipe synthesis + url/git L18 + per-pkg rollback + state   | *SHIPPED*      |
 | 4-E   | MELPA upstream recipe fetch (opt-in) + better :melpa-files default     | *SHIPPED*      |
 | 4-F   | pkg-install multi-package dispatch (atomic bulk install)               | *SHIPPED*      |
+| 4-G   | private repo: env-var credentials → HTTP / git / nix CLI auth          | *SHIPPED*      |
 | CI    | GitHub Actions — Emacs 30 × Linux, =make compile= + =make test= gate    | *SHIPPED*      |
 | 5+    | NeLisp async backend + HTTP backend (replaces Phase 4-C/4-D stubs)     | research       |
 
@@ -360,6 +365,28 @@ In your Emacs init:
 ;; :require is rejected with a list (which symbol to require?):
 ;; (pkg-install '(magit dash) :require 'magit)
 ;; → anvil-pkg-error
+
+;; Phase 4-G — private repo support via env-var credentials.
+;; Export a token before invoking pkg-install; the DSL form is
+;; identical to a public-repo recipe.  No :auth keyword, no
+;; on-disk credential storage.
+;;
+;;   $ export GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+(pkg-define my-private-tool
+  (version "0.1.0")
+  (source (github-fetch :owner "your-org"
+                        :repo "private-tool"
+                        :rev "v0.1.0"
+                        :sha256 "sha256-..."))
+  (build-system (rust :cargo-sha256 "sha256-...")))
+(pkg-install 'my-private-tool)
+;; anvil-pkg auto-injects:
+;;   - L18 raw.githubusercontent.com Authorization: Bearer header
+;;   - git -c http.<host>/.extraheader=Authorization: Bearer ...
+;;   - nix --option extra-access-tokens "github.com=$TOKEN"
+;; Default credential alist covers github.com + raw + api +
+;; codeload + objects subdomains; gitlab.com (GITLAB_TOKEN);
+;; codeberg.org (CODEBERG_TOKEN).  See examples/private-github.el.
 #+end_src
 
 CLI sub-command (=anvil pkg install ...=) lands in =anvil.el= via a
@@ -379,16 +406,46 @@ supported source + build-system combination:
 | =examples/emacs-trivial-dash.el= | github-fetch | emacs-package trivial |
 | =examples/emacs-melpa-magit.el=  | github-fetch | emacs-package melpa   |
 | =examples/multi-install.el=   | (mixed)      | rust × 3              |
+| =examples/private-github.el=  | github / git | rust / go             |
 
 Each file is self-contained; load with =M-x load-file= (or
 =(load-file ...)= from your init) and invoke =(pkg-install
 '<name>)=.  Replace the =sha256-PLACEHOLDER= literals before
 installing — see =examples/README.org= for the workflow.
 
+** Security notes (Phase 4-G credentials)
+
+Private repository access is opt-in and entirely env-var-driven.
+There is no DSL =:auth= keyword and *no* on-disk credential
+storage — anvil-pkg never writes tokens to =anvil-pkg-state= or
+to any of its own log lines.
+
+- Default credential map (=anvil-pkg-compat-credential-env-alist=):
+
+  | Host                                                | Env vars (first non-empty wins) |
+  |-----------------------------------------------------+---------------------------------|
+  | github.com / raw.githubusercontent.com / api.github.com / codeload.github.com / objects.githubusercontent.com | =GITHUB_TOKEN=, =GH_TOKEN= |
+  | gitlab.com                                          | =GITLAB_TOKEN=                  |
+  | codeberg.org                                        | =CODEBERG_TOKEN=                |
+
+- Add custom hosts (e.g. corporate GitHub Enterprise) by
+  =add-to-list='ing into =anvil-pkg-compat-credential-env-alist=
+  before invoking =pkg-install=.
+- Tokens *are* visible to =ps aux= for the duration of =nix= /
+  =git= subprocesses — both tools accept the credential on the
+  CLI and anvil-pkg cannot suppress that.  On a single-user
+  machine this is rarely an issue; on a shared host consider
+  Nix daemon =access-tokens.conf= or a =GIT_ASKPASS= shim
+  instead (out of scope for this phase).
+- Logging through =anvil-pkg-compat-mask-credentials= replaces
+  =Bearer .*=, =extra-access-tokens "host=tok"=, and
+  =x-access-token:tok@= patterns with =***= before any
+  =message= / =lwarn= / debug-print call.
+
 ** Run the test suite
 
 #+begin_src shell
-make test       # 91 ERT tests, no nix binary required (all mocked)
+make test       # 111 ERT tests, no nix binary required (all mocked)
 make compile    # byte-compile, warnings-as-errors
 #+end_src
 

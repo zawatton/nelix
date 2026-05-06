@@ -708,18 +708,41 @@ when the first variant rejects a SHA."
            nil))
       (anvil-pkg-emacs--delete-directory-quietly tmpdir))))
 
+(defun anvil-pkg-emacs--git-credential-args (url)
+  "Return git CLI args (a list) injecting auth for URL, or nil.
+
+Phase 4-G L42: when URL is HTTPS against a host with a
+configured credential env var, return =-c
+http.<HOST>/.extraheader=Authorization: Bearer TOKEN= so the
+clone subprocess can authenticate.  SSH URLs return nil — SSH
+agent / =~/.ssh/= keys handle auth out-of-band."
+  (when (and (stringp url)
+             (string-match-p "\\`https://" url))
+    (let* ((auth (anvil-pkg-compat-credential-for-url url))
+           (host (anvil-pkg-compat--url-host url)))
+      (when (and auth host)
+        (list "-c"
+              (format "http.https://%s/.extraheader=Authorization: %s"
+                      host auth))))))
+
 (defun anvil-pkg-emacs--git-clone (url rev tmpdir)
   "Shallow-clone URL @ REV into TMPDIR.  Return non-nil on success.
 
 Tries `git clone --depth 1 --branch <rev>' first; falls back to
 `git init' + `git fetch --depth 1' + `git checkout FETCH_HEAD'
 when the branch flag rejects a raw SHA (typical for pinned
-revisions)."
-  (let ((primary
-         (anvil-pkg-compat-call-process
-          "git" (list "clone" "--depth" "1"
-                      "--branch" rev "--single-branch"
-                      url tmpdir))))
+revisions).
+
+Phase 4-G L42: when URL is HTTPS against a host with a
+credential env var, prepends =-c http.HOST/.extraheader=...= so
+the subprocess can authenticate.  SSH URLs unchanged."
+  (let* ((cred (anvil-pkg-emacs--git-credential-args url))
+         (primary
+          (anvil-pkg-compat-call-process
+           "git" (append cred
+                         (list "clone" "--depth" "1"
+                               "--branch" rev "--single-branch"
+                               url tmpdir)))))
     (cond
      ((eq 0 (plist-get primary :exit)) t)
      (t
@@ -736,9 +759,10 @@ revisions)."
              (fetch (and remote
                          (eq 0 (plist-get remote :exit))
                          (anvil-pkg-compat-call-process
-                          "git" (list "-C" tmpdir
-                                      "fetch" "--depth" "1"
-                                      "origin" rev))))
+                          "git" (append cred
+                                        (list "-C" tmpdir
+                                              "fetch" "--depth" "1"
+                                              "origin" rev)))))
              (checkout (and fetch
                             (eq 0 (plist-get fetch :exit))
                             (anvil-pkg-compat-call-process

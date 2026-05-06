@@ -930,5 +930,63 @@ nixpkgs strings (nixpkgs#name) in a single nix invocation."
             ;; Single-name :name key MUST NOT appear in the multi case.
             (should-not (plist-member captured :name))))))))
 
+;;;; --- Phase 4-G: nix CLI credential injection -----------------------------
+
+(defmacro anvil-pkg-test--with-env (bindings &rest body)
+  "Set BINDINGS env vars for BODY; restore on exit."
+  (declare (indent 1))
+  `(let ((anvil-pkg-test--saved
+          (mapcar (lambda (b) (cons (car b) (getenv (car b))))
+                  ',bindings)))
+     (unwind-protect
+         (progn
+           ,@(mapcar (lambda (b) `(setenv ,(car b) ,(cadr b)))
+                     bindings)
+           ,@body)
+       (dolist (s anvil-pkg-test--saved)
+         (setenv (car s) (cdr s))))))
+
+(ert-deftest anvil-pkg-test-nix-credential-args-with-env ()
+  "GITHUB_TOKEN set → --option extra-access-tokens emitted."
+  (anvil-pkg-test--with-env (("GITHUB_TOKEN" "ghp_xyz")
+                             ("GH_TOKEN" nil)
+                             ("GITLAB_TOKEN" nil)
+                             ("CODEBERG_TOKEN" nil))
+    (let ((args (anvil-pkg--nix-credential-args)))
+      (should (equal "--option" (car args)))
+      (should (equal "extra-access-tokens" (cadr args)))
+      (should (string-match-p "github\\.com=ghp_xyz" (caddr args))))))
+
+(ert-deftest anvil-pkg-test-nix-credential-args-multi-host ()
+  "Both GitHub + GitLab tokens → space-separated host=token pairs."
+  (anvil-pkg-test--with-env (("GITHUB_TOKEN" "ghp_a")
+                             ("GITLAB_TOKEN" "glpat_b")
+                             ("GH_TOKEN" nil)
+                             ("CODEBERG_TOKEN" nil))
+    (let ((args (anvil-pkg--nix-credential-args)))
+      (should (string-match-p "github\\.com=ghp_a" (caddr args)))
+      (should (string-match-p "gitlab\\.com=glpat_b" (caddr args))))))
+
+(ert-deftest anvil-pkg-test-nix-credential-args-no-env ()
+  "All env vars unset → returns nil (no nix CLI flag added)."
+  (anvil-pkg-test--with-env (("GITHUB_TOKEN" nil) ("GH_TOKEN" nil)
+                             ("GITLAB_TOKEN" nil) ("CODEBERG_TOKEN" nil))
+    (should-not (anvil-pkg--nix-credential-args))))
+
+(ert-deftest anvil-pkg-test-call-nix-default-prepends-credential-args ()
+  "anvil-pkg--call-nix-default prepends credential args to ARGS."
+  (anvil-pkg-test--with-env (("GITHUB_TOKEN" "ghp_seen") ("GH_TOKEN" nil)
+                             ("GITLAB_TOKEN" nil) ("CODEBERG_TOKEN" nil))
+    (let ((seen-args nil))
+      (cl-letf (((symbol-function 'anvil-pkg-compat-call-process)
+                 (lambda (_program args)
+                   (setq seen-args args)
+                   (list :exit 0 :stdout "" :stderr ""))))
+        (anvil-pkg--call-nix-default '("--version"))
+        (should (equal "--option" (nth 0 seen-args)))
+        (should (equal "extra-access-tokens" (nth 1 seen-args)))
+        (should (string-match-p "github\\.com=ghp_seen" (nth 2 seen-args)))
+        (should (equal "--version" (nth 3 seen-args)))))))
+
 (provide 'anvil-pkg-test)
 ;;; anvil-pkg-test.el ends here

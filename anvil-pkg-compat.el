@@ -28,6 +28,11 @@
 ;;   executable-find         - PATH lookup
 ;;   getenv                  - environment variable
 ;;   http-get                - synchronous HTTP GET (Emacs only in Phase 4-C)
+;;                              (Phase 4-G: optional :auth-header keyword)
+;;   http-get-binary         - synchronous binary HTTP GET (tarball)
+;;                              (Phase 4-G: optional :auth-header keyword)
+;;   credential-for-url      - host -> "Bearer TOKEN" / nil (Phase 4-G)
+;;   mask-credentials        - redact token-like patterns in strings
 ;;   json-parse              - JSON string -> alist tree (Phase 1 schema)
 ;;   string-trim             - trim ASCII whitespace
 ;;   define-error-symbol     - install (sym 'error-conditions . msg) properties
@@ -274,6 +279,84 @@ Object -> alist, array -> list, null/false -> nil."
         (setq s (substring s 0 (1- (length s)))))
       s))))
 
+;;;; --- credentials (Phase 4-G L40-L41 + L44) -------------------------------
+
+(defcustom anvil-pkg-compat-credential-env-alist
+  '(;; GitHub: main + raw + API + zip download endpoints all accept the
+   ;; same PAT, so list each subdomain that we actually fetch from.
+   ("github.com"                 . ("GITHUB_TOKEN" "GH_TOKEN"))
+   ("raw.githubusercontent.com"  . ("GITHUB_TOKEN" "GH_TOKEN"))
+   ("api.github.com"             . ("GITHUB_TOKEN" "GH_TOKEN"))
+   ("codeload.github.com"        . ("GITHUB_TOKEN" "GH_TOKEN"))
+   ("objects.githubusercontent.com" . ("GITHUB_TOKEN" "GH_TOKEN"))
+   ;; GitLab.
+   ("gitlab.com"                 . ("GITLAB_TOKEN"))
+   ;; Codeberg.
+   ("codeberg.org"               . ("CODEBERG_TOKEN")))
+  "Alist mapping HOST to environment-variable name list for credential lookup.
+
+Each element is a cons cell =(HOST . (ENV-VAR ...))=.  When
+`anvil-pkg-compat-credential-for-url' resolves an URL whose host
+matches HOST exactly, the env vars are checked in order; the first
+non-empty one wins.  Returning a token here causes the HTTP
+helpers to inject =Authorization: Bearer TOKEN= and the git
+helpers to inject =-c http.HOST.extraheader=.
+
+GitHub subdomains (raw.githubusercontent.com, api.github.com etc.)
+are listed explicitly because host matching is exact rather than
+suffix-based — a single GitHub PAT works against all of them.
+
+Phase 4-G design L40: env-var-only credential model.  Tokens
+are never persisted to `anvil-pkg-state' or any on-disk file."
+  :type '(alist :key-type string :value-type (repeat string))
+  :group 'anvil-pkg)
+
+(defun anvil-pkg-compat--url-host (url)
+  "Return the lowercased host component of URL, or nil."
+  (when (and (stringp url)
+             (string-match "\\`[a-z][a-z0-9+.-]*://\\([^/?#]+\\)" url))
+    (let ((host (match-string 1 url)))
+      (when host (downcase host)))))
+
+(defun anvil-pkg-compat-credential-for-url (url)
+  "Return =Bearer TOKEN= for URL, or nil if no credential applies.
+
+Looks up URL's host in `anvil-pkg-compat-credential-env-alist'
+and walks the env-var list; the first env var whose value is
+non-empty wins.
+
+Phase 4-G L41."
+  (let* ((host (anvil-pkg-compat--url-host url))
+         (entry (and host (assoc host anvil-pkg-compat-credential-env-alist)))
+         (vars  (cdr entry))
+         (token nil))
+    (while (and vars (null token))
+      (let ((v (anvil-pkg-compat-getenv (car vars))))
+        (when (and v (> (length v) 0))
+          (setq token v)))
+      (setq vars (cdr vars)))
+    (when token (concat "Bearer " token))))
+
+(defun anvil-pkg-compat-mask-credentials (str)
+  "Redact token-like substrings in STR for safe logging.
+
+Currently masks:
+  - =Bearer <token>= → =Bearer ***=
+  - =extra-access-tokens \"host=token ...\"= → host=***
+  - =x-access-token:TOKEN@= → =x-access-token:***@=
+
+Phase 4-G L44.  Pure string transformation; no state."
+  (when (stringp str)
+    (let ((s str))
+      (setq s (replace-regexp-in-string
+               "Bearer [A-Za-z0-9_.-]+" "Bearer ***" s))
+      (setq s (replace-regexp-in-string
+               "\\(extra-access-tokens[ \t]+\"[^\"]*=\\)[^\" ]+"
+               "\\1***" s))
+      (setq s (replace-regexp-in-string
+               "x-access-token:[^@]+@" "x-access-token:***@" s))
+      s)))
+
 ;;;; --- HTTP -----------------------------------------------------------------
 
 ;; `url-retrieve-synchronously' is autoloaded from the built-in `url'
@@ -281,8 +364,15 @@ Object -> alist, array -> list, null/false -> nil."
 ;; file is compiled without `url' having been loaded yet.
 (declare-function url-retrieve-synchronously "url" t t)
 
-(defun anvil-pkg-compat-http-get (url &optional timeout)
+(defun anvil-pkg-compat-http-get (url &optional timeout auth-header)
   "Synchronously fetch URL.  TIMEOUT defaults to 5 seconds.
+
+AUTH-HEADER (Phase 4-G L41), when non-nil, is the full
+=Authorization:= value (without the field name) injected into
+the request — e.g. \"Bearer ghp_xxx\".  When nil, host-based
+auto-detection runs via `anvil-pkg-compat-credential-for-url'
+so existing callers transparently pick up credentials from
+environment variables.
 
 Returns plist (:status INT :body STRING).  Signals
 `anvil-pkg-http-not-supported' on NeLisp until Phase 5 lands an
@@ -295,7 +385,10 @@ line (we do not rely on `url-http-response-status' because the
 buffer may not have full HTTP metadata in some Emacs versions)."
   (pcase (anvil-pkg-compat-runtime)
     ('emacs
-     (anvil-pkg-compat--http-get-emacs url (or timeout 5)))
+     (anvil-pkg-compat--http-get-emacs
+      url
+      (or timeout 5)
+      (or auth-header (anvil-pkg-compat-credential-for-url url))))
     ('nelisp
      (signal 'anvil-pkg-http-not-supported
              (list (format "anvil-pkg-compat-http-get: NeLisp HTTP backend not yet implemented (url=%s)"
@@ -305,22 +398,34 @@ buffer may not have full HTTP metadata in some Emacs versions)."
              (list (format "anvil-pkg-compat-http-get: no backend for runtime %S"
                            (anvil-pkg-compat-runtime)))))))
 
-(defun anvil-pkg-compat--http-get-emacs (url timeout)
+(defun anvil-pkg-compat--http-get-emacs (url timeout &optional auth-header)
   "Emacs backend for `anvil-pkg-compat-http-get'.
 
 Wraps `url-retrieve-synchronously' with a TIMEOUT override and
 parses the HTTP status line from the buffer's first line.  Returns
 plist (:status INT :body STRING).  On any error returns (:status 0
-:body \"\") so callers do not need to wrap in `condition-case'."
+:body \"\") so callers do not need to wrap in `condition-case'.
+
+AUTH-HEADER (Phase 4-G), when non-nil, is injected into
+`url-request-extra-headers' as the =Authorization:= field for
+the duration of the call."
   (require 'url)
   (defvar url-show-status)
+  (defvar url-request-extra-headers)
   (let ((url-show-status nil)
+        (url-request-extra-headers
+         (if auth-header
+             (cons (cons "Authorization" auth-header)
+                   (and (boundp 'url-request-extra-headers)
+                        url-request-extra-headers))
+           (and (boundp 'url-request-extra-headers)
+                url-request-extra-headers)))
         (status 0)
         (body ""))
     ;; Reference url-show-status so the binding is not flagged as
     ;; unused — `url' reads it dynamically inside
     ;; `url-retrieve-synchronously'.
-    (ignore url-show-status)
+    (ignore url-show-status url-request-extra-headers)
     (condition-case _err
         (let ((buf (url-retrieve-synchronously url t t timeout)))
           (when (and buf (buffer-live-p buf))
@@ -346,13 +451,17 @@ plist (:status INT :body STRING).  On any error returns (:status 0
              body "")))
     (list :status status :body body)))
 
-(defun anvil-pkg-compat-http-get-binary (url &optional timeout)
+(defun anvil-pkg-compat-http-get-binary (url &optional timeout auth-header)
   "Synchronously fetch URL preserving raw bytes (no coding conversion).
 
 Like `anvil-pkg-compat-http-get' but the response :body is the raw
 byte string from the server (not decoded into multibyte characters).
 Used for binary payloads such as tar.gz tarballs where the L24a
 deps scrape pipes the bytes straight to a tmp file for `tar -xzOf'.
+
+AUTH-HEADER (Phase 4-G L41), when non-nil, is the full
+=Authorization:= value injected into the request.  Defaults to
+host-based auto-detection via `anvil-pkg-compat-credential-for-url'.
 
 Returns plist (:status INT :body STRING :content-length INT-OR-NIL).
 The :content-length slot is parsed from the response headers when
@@ -363,7 +472,10 @@ Signals `anvil-pkg-http-not-supported' on the NeLisp standalone
 runtime; Phase 5 will land a real NeLisp HTTP backend."
   (pcase (anvil-pkg-compat-runtime)
     ('emacs
-     (anvil-pkg-compat--http-get-binary-emacs url (or timeout 30)))
+     (anvil-pkg-compat--http-get-binary-emacs
+      url
+      (or timeout 30)
+      (or auth-header (anvil-pkg-compat-credential-for-url url))))
     ('nelisp
      (signal 'anvil-pkg-http-not-supported
              (list (format "anvil-pkg-compat-http-get-binary: NeLisp HTTP backend not yet implemented (url=%s)"
@@ -373,7 +485,7 @@ runtime; Phase 5 will land a real NeLisp HTTP backend."
              (list (format "anvil-pkg-compat-http-get-binary: no backend for runtime %S"
                            (anvil-pkg-compat-runtime)))))))
 
-(defun anvil-pkg-compat--http-get-binary-emacs (url timeout)
+(defun anvil-pkg-compat--http-get-binary-emacs (url timeout &optional auth-header)
   "Emacs backend for `anvil-pkg-compat-http-get-binary'.
 
 Identical control-flow to `anvil-pkg-compat--http-get-emacs' but
@@ -381,15 +493,26 @@ binds `coding-system-for-read' to `binary' so the response buffer
 is not transcoded; the body is returned as a raw byte string ready
 for `write-region' to a tmp tarball file.  Also parses the
 Content-Length header into a numeric :content-length slot when
-present."
+present.
+
+AUTH-HEADER (Phase 4-G), when non-nil, is injected into
+`url-request-extra-headers' for the call's duration."
   (require 'url)
   (defvar url-show-status)
+  (defvar url-request-extra-headers)
   (let ((url-show-status nil)
+        (url-request-extra-headers
+         (if auth-header
+             (cons (cons "Authorization" auth-header)
+                   (and (boundp 'url-request-extra-headers)
+                        url-request-extra-headers))
+           (and (boundp 'url-request-extra-headers)
+                url-request-extra-headers)))
         (coding-system-for-read 'binary)
         (status 0)
         (body "")
         (content-length nil))
-    (ignore url-show-status)
+    (ignore url-show-status url-request-extra-headers)
     (condition-case _err
         (let ((buf (url-retrieve-synchronously url t t timeout)))
           (when (and buf (buffer-live-p buf))

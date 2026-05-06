@@ -516,5 +516,49 @@ upstream-fetch defcustom is off (Phase 4-D parity)."
     ;; Even if cache happens to have a value, the lambda short-circuits.
     (should (null (funcall anvil-pkg-emacs--render-fetch-fn "anything")))))
 
+;;;; --- Phase 4-G: git-clone credential injection ---------------------------
+
+(defmacro anvil-pkg-emacs-test--with-env (bindings &rest body)
+  "Set BINDINGS env vars for BODY; restore on exit."
+  (declare (indent 1))
+  `(let ((anvil-pkg-emacs-test--saved
+          (mapcar (lambda (b) (cons (car b) (getenv (car b))))
+                  ',bindings)))
+     (unwind-protect
+         (progn
+           ,@(mapcar (lambda (b) `(setenv ,(car b) ,(cadr b)))
+                     bindings)
+           ,@body)
+       (dolist (s anvil-pkg-emacs-test--saved)
+         (setenv (car s) (cdr s))))))
+
+(ert-deftest anvil-pkg-emacs-test-git-credential-args-https-with-env ()
+  "HTTPS URL + GITHUB_TOKEN → -c http.<host>/.extraheader=Authorization."
+  (anvil-pkg-emacs-test--with-env (("GITHUB_TOKEN" "ghp_xxx"))
+    (let ((args (anvil-pkg-emacs--git-credential-args
+                 "https://github.com/owner/repo.git")))
+      (should (equal "-c" (car args)))
+      (should (string-match-p
+               "\\`http\\.https://github\\.com/\\.extraheader=Authorization: Bearer ghp_xxx\\'"
+               (cadr args))))))
+
+(ert-deftest anvil-pkg-emacs-test-git-credential-args-ssh-passthrough ()
+  "SSH URL → no -c injection (SSH agent handles auth)."
+  (anvil-pkg-emacs-test--with-env (("GITHUB_TOKEN" "ghp_xxx"))
+    (should-not (anvil-pkg-emacs--git-credential-args
+                 "git@github.com:owner/repo.git"))))
+
+(ert-deftest anvil-pkg-emacs-test-git-credential-args-https-no-env ()
+  "HTTPS URL + no env → no -c injection."
+  (anvil-pkg-emacs-test--with-env (("GITHUB_TOKEN" nil) ("GH_TOKEN" nil))
+    (should-not (anvil-pkg-emacs--git-credential-args
+                 "https://github.com/owner/repo.git"))))
+
+(ert-deftest anvil-pkg-emacs-test-git-credential-args-unknown-host ()
+  "HTTPS URL on a host not in the alist → no injection even with token set."
+  (anvil-pkg-emacs-test--with-env (("GITHUB_TOKEN" "ghp_xxx"))
+    (should-not (anvil-pkg-emacs--git-credential-args
+                 "https://example.com/foo.git"))))
+
 (provide 'anvil-pkg-emacs-test)
 ;;; anvil-pkg-emacs-test.el ends here

@@ -37,6 +37,7 @@ nix-prefetch-git --rev <sha> https://github.com/owner/repo
 | =emacs-trivial-dash.el=    | github-fetch   | emacs-package trivial | =:require= post-install hook            |
 | =emacs-melpa-magit.el=     | github-fetch   | emacs-package melpa   | =:native-comp= + upstream recipe fetch  |
 | =multi-install.el=         | (mixed)        | (mixed)               | composing multiple =pkg-define= forms   |
+| =private-github.el=        | github / git-fetch | rust / go         | Phase 4-G: =GITHUB_TOKEN= env-var auth  |
 
 Files are numbered by complexity, not by recommended reading
 order — the headline example is whichever language you came for.

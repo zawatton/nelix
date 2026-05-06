@@ -129,6 +129,31 @@ Called with one argument — a list of string ARGS for the `nix'
 executable.  Must return a plist with the keys :exit (integer),
 :stdout (string), :stderr (string).")
 
+(defun anvil-pkg--nix-credential-args ()
+  "Return Nix CLI args injecting access tokens, or nil.
+
+Phase 4-G L43: scans `anvil-pkg-compat-credential-env-alist'
+and emits =--option extra-access-tokens \"host=tok ...\"= when
+at least one env var resolves.  Nix accepts space-separated
+=host=token= pairs; the option is silently ignored by
+subcommands that do not fetch."
+  (let ((pairs '()))
+    (dolist (entry anvil-pkg-compat-credential-env-alist)
+      (let* ((host (car entry))
+             (vars (cdr entry))
+             (token nil))
+        (while (and vars (null token))
+          (let ((v (anvil-pkg-compat-getenv (car vars))))
+            (when (and v (> (length v) 0))
+              (setq token v)))
+          (setq vars (cdr vars)))
+        (when token
+          (push (format "%s=%s" host token) pairs))))
+    (when pairs
+      (list "--option"
+            "extra-access-tokens"
+            (mapconcat #'identity (nreverse pairs) " ")))))
+
 (defun anvil-pkg--call-nix-default (args)
   "Default `nix' invoker.  Synchronous, runtime-portable.
 
@@ -137,8 +162,14 @@ by `anvil-pkg-nix-program'.  Returns plist (:exit :stdout :stderr).
 
 Implementation defers I/O to `anvil-pkg-compat-call-process' so
 the same code runs on Emacs and on NeLisp standalone.  Phase 4
-will introduce an async variant gated by `:async'."
-  (anvil-pkg-compat-call-process anvil-pkg-nix-program args))
+will introduce an async variant gated by `:async'.
+
+Phase 4-G L43: prepends `anvil-pkg--nix-credential-args' so
+private fetchers reach private GitHub / GitLab repos when the
+appropriate env var is set."
+  (anvil-pkg-compat-call-process
+   anvil-pkg-nix-program
+   (append (anvil-pkg--nix-credential-args) args)))
 
 (defun anvil-pkg--call-nix (args)
   "Invoke `nix' with ARGS via `anvil-pkg--call-nix-fn'."
@@ -557,10 +588,15 @@ re-resolved inside `anvil-pkg--multi-after-install')."
          ;; compat-make-process-async signals
          ;; `anvil-pkg-async-not-supported' on NeLisp; Emacs gets a real
          ;; process object back from `make-process'.
+         ;; Phase 4-G L43: prepend credential args so async installs
+         ;; against private fetchers see the same access tokens as
+         ;; the sync `anvil-pkg--call-nix-default' path.
+         (cred-args (anvil-pkg--nix-credential-args))
          (proc (anvil-pkg-compat-make-process-async
                 :name (format "anvil-pkg-install-%s" process-label)
                 :buffer nil
-                :command (cons anvil-pkg-nix-program args)
+                :command (cons anvil-pkg-nix-program
+                               (append cred-args args))
                 :connection-type 'pipe
                 :noquery t
                 :stderr stderr-buf
