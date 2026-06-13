@@ -1,6 +1,6 @@
 EMACS ?= emacs
 SRC = anvil-pkg-compat.el anvil-pkg-state.el anvil-pkg.el anvil-pkg-dsl.el anvil-pkg-import.el anvil-pkg-emacs.el
-TEST_SRC = test/anvil-pkg-test.el test/anvil-pkg-dsl-test.el test/anvil-pkg-import-test.el test/anvil-pkg-compat-test.el test/anvil-pkg-emacs-test.el test/anvil-pkg-state-test.el
+TEST_SRC = test/anvil-pkg-test.el test/anvil-pkg-upgrade-test.el test/anvil-pkg-dsl-test.el test/anvil-pkg-import-test.el test/anvil-pkg-compat-test.el test/anvil-pkg-emacs-test.el test/anvil-pkg-state-test.el
 SCRIPT_SRC = scripts/anvil-pkg-render.el scripts/anvil-pkg-nelisp-smoke.el scripts/anvil-pkg-nelisp-ert-shim.el
 EXPECTED_ERT_TESTS ?= 182
 

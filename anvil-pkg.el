@@ -43,18 +43,20 @@
 ;;   (pkg-install NAME)
 ;;   (pkg-search QUERY)
 ;;   (pkg-list)
+;;   (pkg-upgrade &optional NAME)
 ;;   (pkg-define NAME &rest BODY)   ; Phase 2
 ;;
 ;; Backwards-compatible long-form aliases (`anvil-pkg-install' etc.) are
 ;; provided via `defalias' for callers that prefer Emacs prefix style.
 ;;
 ;; MCP tools (registered by `anvil-pkg-enable'):
-;;   pkg-install / pkg-search / pkg-list
+;;   pkg-install / pkg-search / pkg-list / pkg-upgrade
 ;;
 ;; CLI surface (out of scope for this repo; landed in anvil.el):
 ;;   anvil pkg install <name>
 ;;   anvil pkg search  <query>
 ;;   anvil pkg list
+;;   anvil pkg upgrade [name]
 
 ;;; Code:
 
@@ -871,6 +873,47 @@ Returns a list of plists carrying :name :attr-path :original-url
                     :stderr (plist-get res :stderr))))
     (anvil-pkg--parse-list (plist-get res :stdout))))
 
+;;;###autoload
+(defun pkg-upgrade (&optional name)
+  "Upgrade packages in the anvil-pkg Nix profile.
+
+When NAME is nil upgrades every installed package by passing the
+portable \".*\" matcher to `nix profile upgrade'.  Otherwise NAME
+must be a string or symbol naming the single profile element to
+upgrade.
+
+Returns t on success.  Signals `anvil-pkg-nix-failed' on a
+non-zero `nix profile upgrade' exit."
+  (anvil-pkg--ensure-nix)
+  (let* ((matcher
+          (cond
+           ((null name) ".*")
+           ((stringp name)
+            (let ((trimmed (anvil-pkg-compat-string-trim name)))
+              (if (zerop (length trimmed))
+                  (signal 'anvil-pkg-error
+                          (list (format "pkg-upgrade: NAME must be non-empty string or symbol, got %S"
+                                        name)))
+                name)))
+           ((symbolp name) (symbol-name name))
+           (t (signal 'anvil-pkg-error
+                      (list (format "pkg-upgrade: NAME must be string, symbol, or nil, got %S"
+                                    name))))))
+         (args (append (list "profile" "upgrade" matcher)
+                       (anvil-pkg--profile-args)))
+         (res (anvil-pkg--call-nix args)))
+    (unless (eq 0 (plist-get res :exit))
+      (signal 'anvil-pkg-nix-failed
+              (list (format "nix profile upgrade %s failed (exit %s): %s"
+                            matcher
+                            (plist-get res :exit)
+                            (anvil-pkg-compat-string-trim
+                             (or (plist-get res :stderr) "")))
+                    :stderr (plist-get res :stderr))))
+    (condition-case _ (pkg-list-generations) (error nil))
+    (anvil-pkg--rollback-replay-emacs-hooks)
+    t))
+
 ;;;; --- profile generation rollback (L19) ------------------------------------
 ;; Phase 4-C sub-task B: wrap `nix profile history --json' / `nix profile
 ;; rollback' so users can recover from a regressing install.  The local
@@ -1248,6 +1291,8 @@ notice typos rather than silently clearing the wrong namespace."
 ;;;###autoload
 (defalias 'anvil-pkg-list #'pkg-list)
 ;;;###autoload
+(defalias 'anvil-pkg-upgrade #'pkg-upgrade)
+;;;###autoload
 (defalias 'anvil-pkg-list-generations #'pkg-list-generations)
 ;;;###autoload
 (defalias 'anvil-pkg-rollback #'pkg-rollback)
@@ -1287,6 +1332,28 @@ MCP Parameters: (none)."
   (let ((rows (pkg-list)))
     (list :count (length rows)
           :installed (or rows []))))
+
+(defun anvil-pkg--tool-upgrade (name)
+  "MCP wrapper around `pkg-upgrade'.
+
+MCP Parameters:
+  name - package name to upgrade, or nil / empty / whitespace to
+    upgrade every installed package."
+  (let* ((normalized
+          (cond
+           ((null name) nil)
+           ((symbolp name) (symbol-name name))
+           ((stringp name)
+            (let ((trimmed (anvil-pkg-compat-string-trim name)))
+              (if (zerop (length trimmed))
+                  nil
+                trimmed)))
+           (t (signal 'anvil-pkg-error
+                      (list (format "pkg-upgrade: NAME must be string, symbol, or nil, got %S"
+                                    name)))))))
+    (pkg-upgrade normalized)
+    (list :status "ok"
+          :name (or normalized :all))))
 
 (defun anvil-pkg--tool-list-generations ()
   "MCP wrapper around `pkg-list-generations'.
@@ -1371,6 +1438,18 @@ original-url, store-paths).  Read-only."
    :read-only t)
 
   (anvil-server-register-tool
+   #'anvil-pkg--tool-upgrade
+   :id "pkg-upgrade"
+   :intent '(packages)
+   :layer 'io
+   :server-id anvil-pkg--server-id
+   :description
+   "Upgrade packages already installed in the anvil-pkg Nix profile.
+When name is nil or blank upgrades every installed package;
+otherwise upgrades the single matching profile element.  Returns
+:status \"ok\" and :name (string or :all).")
+
+  (anvil-server-register-tool
    #'anvil-pkg--tool-list-generations
    :id "pkg-list-generations"
    :intent '(packages)
@@ -1411,7 +1490,8 @@ call pkg-list-generations first for fresh data.  Read-only."
 (defun anvil-pkg--unregister-tools ()
   "Remove every pkg-* MCP tool from the shared anvil server."
   (dolist (id '("pkg-install" "pkg-search" "pkg-list"
-                "pkg-list-generations" "pkg-rollback" "pkg-history"))
+                "pkg-upgrade" "pkg-list-generations"
+                "pkg-rollback" "pkg-history"))
     (anvil-server-unregister-tool id anvil-pkg--server-id)))
 
 ;;;###autoload
@@ -1422,7 +1502,7 @@ repeatedly — re-registers idempotently."
   (interactive)
   (require 'anvil-server)
   (anvil-pkg--register-tools)
-  (message "anvil-pkg: enabled (6 MCP tools, profile = %s)"
+  (message "anvil-pkg: enabled (7 MCP tools, profile = %s)"
            anvil-pkg-profile-dir))
 
 (defun anvil-pkg-disable ()
