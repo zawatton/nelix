@@ -1,0 +1,95 @@
+#+title: anvil-pkg — Phase 6-B: pkg-upgrade (nix profile upgrade)
+#+author: zawatton
+#+date: 2026-06-13
+#+property: status SHIPPED
+
+* STATUS
+
+SHIPPED 2026-06-13.  Single-verb scope on the current branch.
+
+Phase 4 added profile inspection and rollback, but the public =pkg-=
+surface still lacked an explicit "upgrade what is already installed"
+verb.  Phase 6-B adds that gap-filling wrapper around =nix profile
+upgrade= without changing the profile isolation model, error
+contracts, or MCP naming rules established earlier in the project.
+
+* Goal
+
+| Before Phase 6-B                          | After Phase 6-B                                      |
+|-------------------------------------------+------------------------------------------------------|
+| Users can install, list, search, rollback | Users can also upgrade all or one installed element  |
+| MCP can mutate profile via install/rollback only | MCP exposes =pkg-upgrade= with the same naming contract |
+| Upgrade semantics are implicit in raw Nix | Upgrade semantics are available through public Elisp |
+
+* Locked decisions
+
+** L61 — use the =".*"= matcher for upgrade-all, not =--all=
+
+When =NAME= is nil, =pkg-upgrade= passes the two-character regex
+=.*= to =nix profile upgrade=.  This upgrades every installed profile
+element on Nix 2.18+ and stays portable across the project's declared
+minimum supported versions.
+
+Nix also supports =--all= as a newer alias, but that spelling is less
+portable across the older 2.x range this repository still targets.
+Using the documented matcher form avoids a version gate while keeping
+the CLI invocation simple and explicit.
+
+** L62 — blank strings are only treated as "all" on the MCP side
+
+The public Elisp API accepts =nil= for "upgrade everything" and a
+string or symbol for "upgrade one element".  Blank strings are
+therefore treated as argument errors at the Elisp layer so typos do
+not silently widen scope.
+
+The MCP wrapper is more permissive because tool inputs arrive as
+strings from agents.  There, =nil=, the empty string, and
+whitespace-only strings normalize to "upgrade everything".
+
+** L63 — post-upgrade side effects mirror =pkg-rollback=
+
+After a successful =nix profile upgrade=, the implementation runs:
+
+1. =(condition-case _ (pkg-list-generations) (error nil))=
+2. =(anvil-pkg--rollback-replay-emacs-hooks)=
+
+This exactly matches the whole-profile rollback path.  The generation
+mirror is refreshed on a best-effort basis, and emacs-package
+post-install hooks are replayed even if the refresh fails so
+=load-path= stays aligned with the active profile contents.
+
+* ERT impact
+
+New file: =test/anvil-pkg-upgrade-test.el=
+
+- upgrade-all happy path with exact matcher assertion
+- upgrade-one happy path
+- symbol coercion
+- non-zero nix exit
+- public bad-argument paths
+- MCP blank-input normalization
+- post-upgrade refresh-error + hook replay ordering
+
+Phase 6-B adds 9 focused ERTs.
+
+* Files touched
+
+#+begin_src text
+docs/design/15-phase6b.org        (new)  ← this file
+anvil-pkg.el                      (mod)  ← pkg-upgrade, alias, MCP tool
+test/anvil-pkg-upgrade-test.el    (new)  ← focused upgrade ERTs
+Makefile                          (mod)  ← include new ERT source
+#+end_src
+
+* Exit criteria
+
+- [x] =pkg-upgrade= exists as a public autoloaded =pkg-= API
+- [x] =anvil-pkg-upgrade= exists as the long-form alias
+- [x] nil upgrades all installed packages via the portable =".*"= matcher
+- [x] string and symbol names upgrade exactly one profile element
+- [x] non-zero nix exits signal =anvil-pkg-nix-failed= with stderr
+- [x] successful upgrades refresh the generations mirror best-effort
+      and replay emacs-package hooks
+- [x] MCP exposes =pkg-upgrade= with id parity and non-read-only
+      registration
+- [x] focused ERT coverage exists in a dedicated new test file
