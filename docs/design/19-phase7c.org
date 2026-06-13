@@ -1,0 +1,64 @@
+#+title: anvil-pkg — Phase 7-C: node + haskell build systems
+#+author: zawatton
+#+date: 2026-06-13
+#+property: status SHIPPED
+
+* STATUS
+
+SHIPPED 2026-06-13.  Developed in parallel with Phase 7-A (pkg-pin) and
+Phase 7-B (pkg-doctor) via anvil-orchestrator + codex worktrees, then
+integrated on canonical =main=.
+
+* Goal
+
+Extend the DSL build-system vocabulary beyond
+=stdenv / rust / python / go / emacs-package= with two new types:
+
+- =node=    → =pkgs.buildNpmPackage= (requires =:npm-deps-hash=)
+- =haskell= → =pkgs.haskellPackages.mkDerivation= (no required args)
+
+* Changes (anvil-pkg-dsl.el)
+
+- =anvil-pkg--known-build-systems= gains =node= and =haskell=.
+- =anvil-pkg--validate-build-system=: =node= requires =:npm-deps-hash=
+  (mirrors the =rust= =:cargo-sha256= contract and calls
+  =anvil-pkg--reject-non-emacs-package-args=); =haskell= falls through
+  the default arm (no required args, still rejects emacs-package-only
+  keys).
+- =anvil-pkg-render-nix= dispatch gains =('node ...)= and
+  =('haskell ...)= arms.
+- =anvil-pkg--render-node= emits =pkgs.buildNpmPackage= with an
+  =npmDepsHash= field, via the shared render-derivation / pre-bs /
+  post-bs helpers, mirroring =anvil-pkg--render-rust=.
+- =anvil-pkg--render-haskell= emits =pkgs.haskellPackages.mkDerivation=
+  via the same shared helpers (it accepts pname / version / src like the
+  other builders).
+
+* DSL
+
+#+begin_src elisp
+(pkg-define my-cli
+  :version "1.0.0"
+  :source (github-fetch :owner "o" :repo "r" :rev "v1.0.0" :sha256 "...")
+  :build-system (node :npm-deps-hash "sha256-..."))
+
+(pkg-define my-hs-tool
+  :version "0.1.0"
+  :source (github-fetch :owner "o" :repo "r" :rev "v0.1.0" :sha256 "...")
+  :build-system haskell)
+#+end_src
+
+* ERT
+
+test/anvil-pkg-buildsys-test.el (3 tests): node render asserts the
+=buildNpmPackage= builder + the =npmDepsHash= field; haskell render
+asserts =haskellPackages.mkDerivation=; node without =:npm-deps-hash=
+signals =anvil-pkg-dsl-error=.
+
+* Out of scope
+
+- Example recipes under =examples/= (skipped to keep the smoke
+  example-pair lists stable; the ERT render coverage is authoritative).
+- Real =nix build= of node / haskell derivations (needs real content
+  hashes; the existing real-Nix smoke path covers the other build
+  systems).

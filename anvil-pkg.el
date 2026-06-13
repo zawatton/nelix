@@ -70,6 +70,7 @@
 ;;   anvil pkg uninstall <name>
 ;;   anvil pkg upgrade [name]
 ;;   anvil pkg info <name>
+;;   anvil pkg doctor
 
 ;;; Code:
 
