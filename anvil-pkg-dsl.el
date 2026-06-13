@@ -31,7 +31,7 @@
 ;;
 ;; Phase 3 (this file) ships:
 ;;   - source types: url-fetch (Phase 2), github-fetch, git-fetch
-;;   - build systems: stdenv (Phase 2), rust, python, go
+;;   - build systems: stdenv (Phase 2), rust, python, go, node, haskell
 ;;   - build-system IR upgraded to plist `(:type SYM ...args)' so each
 ;;     build system can carry its own required fields (e.g. cargo-sha256
 ;;     for rust, vendor-sha256 for go, format for python).
@@ -143,7 +143,7 @@
     (_ (car val))))
 
 (defconst anvil-pkg--known-build-systems
-  '(stdenv rust python go emacs-package)
+  '(stdenv rust python go node haskell emacs-package)
   "Build-system symbols supported by the DSL.")
 
 (defun anvil-pkg--parse-build-system (name form)
@@ -153,7 +153,9 @@ Accepts:
   (build-system stdenv)              ; symbol form, no args
   (build-system (rust :cargo-sha256 \"...\"))
   (build-system (python :format \"pyproject\"))
-  (build-system (go :vendor-sha256 \"...\"))"
+  (build-system (go :vendor-sha256 \"...\"))
+  (build-system (node :npm-deps-hash \"...\"))
+  (build-system haskell)"
   (cond
    ((symbolp form)
     (anvil-pkg--validate-build-system name form nil)
@@ -180,10 +182,18 @@ Accepts:
                (list (format "pkg-define %s: rust build-system requires :cargo-sha256"
                              name))))
      (anvil-pkg--reject-non-emacs-package-args name type args))
+    ('node
+     (unless (plist-get args :npm-deps-hash)
+       (signal 'anvil-pkg-dsl-error
+               (list (format "pkg-define %s: node build-system requires :npm-deps-hash"
+                             name))))
+     (anvil-pkg--reject-non-emacs-package-args name type args))
     ('emacs-package
      (anvil-pkg--validate-emacs-package-args name args))
     ;; python: :format optional (defaults to setuptools)
     ;; go: :vendor-sha256 optional (defaults to vendorHash = null)
+    ;; node: :npm-deps-hash required
+    ;; haskell: no required args
     ;; stdenv: no required args
     ;; All non-emacs-package types reject :native-comp (L13).
     (_
@@ -355,7 +365,8 @@ Pure function — same input always yields the same output.
 
 Dispatches on the build-system :type to select the appropriate
 nixpkgs builder (stdenv.mkDerivation, rustPlatform.buildRustPackage,
-python3Packages.buildPythonPackage, buildGoModule)."
+python3Packages.buildPythonPackage, buildGoModule, buildNpmPackage,
+haskellPackages.mkDerivation)."
   (let* ((bs (plist-get ir :build-system))
          (type (plist-get bs :type)))
     (pcase type
@@ -363,6 +374,8 @@ python3Packages.buildPythonPackage, buildGoModule)."
       ('rust   (anvil-pkg--render-rust ir))
       ('python (anvil-pkg--render-python ir))
       ('go     (anvil-pkg--render-go ir))
+      ('node   (anvil-pkg--render-node ir))
+      ('haskell (anvil-pkg--render-haskell ir))
       ('emacs-package (anvil-pkg--render-emacs-package ir))
       (_ (signal 'anvil-pkg-dsl-error
                  (list (format "render: unsupported build-system :type %S"
@@ -478,6 +491,24 @@ Optional :vendor-sha256 (defaults to `vendorHash = null')."
                        (format "  vendorHash = %S;" vendor-sha256)
                      "  vendorHash = null;"))
              (anvil-pkg--render-post-bs-fields ir)))))
+
+(defun anvil-pkg--render-node (ir)
+  "Render IR using `pkgs.buildNpmPackage'.
+Requires :npm-deps-hash in the build-system args."
+  (let* ((bs (plist-get ir :build-system))
+         (npm-deps-hash (plist-get bs :npm-deps-hash)))
+    (anvil-pkg--render-derivation
+     "pkgs.buildNpmPackage"
+     (append (anvil-pkg--render-pre-bs-fields ir)
+             (list (format "  npmDepsHash = %S;" npm-deps-hash))
+             (anvil-pkg--render-post-bs-fields ir)))))
+
+(defun anvil-pkg--render-haskell (ir)
+  "Render IR using `pkgs.haskellPackages.mkDerivation'."
+  (anvil-pkg--render-derivation
+   "pkgs.haskellPackages.mkDerivation"
+   (append (anvil-pkg--render-pre-bs-fields ir)
+           (anvil-pkg--render-post-bs-fields ir))))
 
 (defun anvil-pkg--render-emacs-package (ir)
   "Render IR using `pkgs.emacsPackages.trivialBuild' or `.melpaBuild'.
