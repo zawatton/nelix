@@ -1,0 +1,87 @@
+#+title: Phase 6-C: pkg-info (installed plus nixpkgs metadata query)
+#+author: zawatton
+#+date: 2026-06-13
+#+property: status SHIPPED
+
+* STATUS
+
+SHIPPED 2026-06-13 on canonical =main=.
+
+Phase 6-C adds a read-only =pkg-info= query that merges local profile
+state with nixpkgs search metadata.  The new verb does not mutate the
+profile, does not refresh generations, and does not replay any install
+hooks.
+
+* Goal
+
+Provide one public query for the common question "what do we know about
+this package right now?" by combining:
+
+- installed-profile facts from =nix profile list --json=
+- registry metadata from =nix search nixpkgs NAME --json=
+
+The result should still be useful when one side is missing:
+
+- installed + search hit => merge them
+- installed + search failure => return installed facts only
+- not installed + search hit => return searchable metadata
+- neither => return nil
+
+* Locked decisions
+
+** L61 — read-only by construction
+
+=pkg-info= calls =pkg-list= and =pkg-search= only.  It does not invoke
+=nix profile install= / rollback / remove flows, does not touch the
+generations mirror, and does not replay post-install hooks.
+
+The MCP tool =pkg-info= is registered with =:read-only t= and reports a
+stable =:found= flag for callers that prefer a total result shape.
+
+** L62 — installed profile wins for local fields
+
+The returned plist carries:
+
+- =:name= — the coerced string form of the input
+- =:installed= — =t= when the package is present in =pkg-list=
+- =:version= / =:description= — from the search result
+- =:attr-path= — installed =:attr-path= when present, otherwise search =:attrpath=
+- =:original-url= / =:store-paths= — from the installed profile row
+
+This keeps local profile facts authoritative while still exposing the
+extra metadata that =nix profile list --json= does not provide.
+
+** L63 — search failure must not hide an installed package
+
+=pkg-search= is wrapped in =condition-case=.  If search fails for any
+reason, =pkg-info= still returns the installed row when one exists.
+Only the search-derived fields become nil.
+
+* Nix surface
+
+Phase 6-C reuses the existing wrappers and therefore the same Nix
+subcommands:
+
+- =nix profile list --json --profile ...=
+- =nix search nixpkgs NAME --json=
+
+No new shell-out backend is introduced in this phase.
+
+* Files touched
+
+#+begin_src text
+anvil-pkg.el                  ← pkg-info, alias, MCP wrapper + registration
+test/anvil-pkg-info-test.el   ← mocked ERT coverage for merge/fallback/tool paths
+Makefile                      ← add the new ERT file to TEST_SRC
+docs/design/16-phase6c.org    ← this file
+#+end_src
+
+* Acceptance
+
+- [x] Public API =pkg-info= exists with autoload
+- [x] Long-form alias =anvil-pkg-info= exists with autoload
+- [x] Invalid NAME signals =anvil-pkg-error=
+- [x] Search failure does not hide installed profile facts
+- [x] The tool wrapper returns a =:found= flag with stable shapes
+- [x] MCP registration uses id =pkg-info= and =:read-only t=
+- [x] =make check= passes without unexpected ERT failures or byte-compile warnings

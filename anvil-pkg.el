@@ -236,6 +236,17 @@ keyed by package name."
                         :store-paths (alist-get 'storePaths info))))
               elements))))
 
+(defun anvil-pkg--find-name-row (name rows)
+  "Return the first plist in ROWS whose :name equals NAME, or nil."
+  (let ((rest rows)
+        found)
+    (while (and rest (null found))
+      (let ((row (car rest)))
+        (when (equal name (plist-get row :name))
+          (setq found row))
+        (setq rest (cdr rest))))
+    found))
+
 (declare-function anvil-pkg--registry-get "anvil-pkg-dsl")
 
 (defun anvil-pkg--plist-has-key-p (plist key)
@@ -871,6 +882,38 @@ Returns a list of plists carrying :name :attr-path :original-url
                     :stderr (plist-get res :stderr))))
     (anvil-pkg--parse-list (plist-get res :stdout))))
 
+;;;###autoload
+(defun pkg-info (name)
+  "Return merged installed/profile and nixpkgs metadata for NAME.
+
+NAME must be a string or symbol naming a package.  Returns a
+plist carrying :name :installed :version :description :attr-path
+:original-url :store-paths, or nil when NAME is found neither in
+the current profile nor in `nix search'."
+  (anvil-pkg--ensure-nix)
+  (let* ((name-str (cond
+                    ((stringp name) name)
+                    ((symbolp name) (symbol-name name))
+                    (t (signal 'anvil-pkg-error
+                               (list (format "pkg-info: NAME must be string or symbol, got %S"
+                                             name))))))
+         (installed (anvil-pkg--find-name-row name-str (pkg-list)))
+         (search-hit
+          (condition-case _
+              (let* ((rows (pkg-search name-str))
+                     (exact (anvil-pkg--find-name-row name-str rows)))
+                (or exact (car rows)))
+            (error nil))))
+    (when (or installed search-hit)
+      (list :name name-str
+            :installed (and installed t)
+            :version (plist-get search-hit :version)
+            :description (plist-get search-hit :description)
+            :attr-path (or (plist-get installed :attr-path)
+                           (plist-get search-hit :attrpath))
+            :original-url (plist-get installed :original-url)
+            :store-paths (plist-get installed :store-paths)))))
+
 ;;;; --- profile generation rollback (L19) ------------------------------------
 ;; Phase 4-C sub-task B: wrap `nix profile history --json' / `nix profile
 ;; rollback' so users can recover from a regressing install.  The local
@@ -1248,6 +1291,8 @@ notice typos rather than silently clearing the wrong namespace."
 ;;;###autoload
 (defalias 'anvil-pkg-list #'pkg-list)
 ;;;###autoload
+(defalias 'anvil-pkg-info #'pkg-info)
+;;;###autoload
 (defalias 'anvil-pkg-list-generations #'pkg-list-generations)
 ;;;###autoload
 (defalias 'anvil-pkg-rollback #'pkg-rollback)
@@ -1287,6 +1332,22 @@ MCP Parameters: (none)."
   (let ((rows (pkg-list)))
     (list :count (length rows)
           :installed (or rows []))))
+
+(defun anvil-pkg--tool-info (name)
+  "MCP wrapper around `pkg-info'.
+
+MCP Parameters:
+  name - package name (string or symbol)."
+  (let* ((name-str (cond
+                    ((stringp name) name)
+                    ((symbolp name) (symbol-name name))
+                    (t (signal 'anvil-pkg-error
+                               (list (format "pkg-info: NAME must be string or symbol, got %S"
+                                             name))))))
+         (info (pkg-info name-str)))
+    (if info
+        (append info (list :found t))
+      (list :found nil :name name-str))))
 
 (defun anvil-pkg--tool-list-generations ()
   "MCP wrapper around `pkg-list-generations'.
@@ -1371,6 +1432,19 @@ original-url, store-paths).  Read-only."
    :read-only t)
 
   (anvil-server-register-tool
+   #'anvil-pkg--tool-info
+   :id "pkg-info"
+   :intent '(packages)
+   :layer 'io
+   :server-id anvil-pkg--server-id
+   :description
+   "Return merged package metadata for a NAME from the current
+anvil-pkg Nix profile and nixpkgs search results.  Returns the
+package plist plus :found t on success, or :found nil and :name
+when no installed or searchable package matches.  Read-only."
+   :read-only t)
+
+  (anvil-server-register-tool
    #'anvil-pkg--tool-list-generations
    :id "pkg-list-generations"
    :intent '(packages)
@@ -1411,6 +1485,7 @@ call pkg-list-generations first for fresh data.  Read-only."
 (defun anvil-pkg--unregister-tools ()
   "Remove every pkg-* MCP tool from the shared anvil server."
   (dolist (id '("pkg-install" "pkg-search" "pkg-list"
+                "pkg-info"
                 "pkg-list-generations" "pkg-rollback" "pkg-history"))
     (anvil-server-unregister-tool id anvil-pkg--server-id)))
 
@@ -1422,7 +1497,7 @@ repeatedly — re-registers idempotently."
   (interactive)
   (require 'anvil-server)
   (anvil-pkg--register-tools)
-  (message "anvil-pkg: enabled (6 MCP tools, profile = %s)"
+  (message "anvil-pkg: enabled (7 MCP tools, profile = %s)"
            anvil-pkg-profile-dir))
 
 (defun anvil-pkg-disable ()
