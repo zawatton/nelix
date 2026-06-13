@@ -46,13 +46,14 @@
 ;;   (pkg-uninstall NAME)
 ;;   (pkg-upgrade &optional NAME)
 ;;   (pkg-info NAME)
+;;   (pkg-doctor)
 ;;   (pkg-define NAME &rest BODY)   ; Phase 2
 ;;
 ;; Backwards-compatible long-form aliases (`anvil-pkg-install' etc.) are
 ;; provided via `defalias' for callers that prefer Emacs prefix style.
 ;;
 ;; MCP tools (registered by `anvil-pkg-enable'):
-;;   pkg-install / pkg-search / pkg-list / pkg-uninstall / pkg-upgrade / pkg-info
+;;   pkg-install / pkg-search / pkg-list / pkg-uninstall / pkg-upgrade / pkg-info / pkg-doctor
 ;;
 ;; CLI surface (out of scope for this repo; landed in anvil.el):
 ;;   anvil pkg install <name>
@@ -1001,6 +1002,113 @@ the current profile nor in `nix search'."
             :original-url (plist-get installed :original-url)
             :store-paths (plist-get installed :store-paths)))))
 
+;;;; --- environment health report (Phase 7-B) -------------------------------
+
+(defun anvil-pkg--doctor-check (check thunk &optional on-error-status)
+  "Run THUNK for CHECK and degrade errors into a report row.
+
+CHECK is the symbol identifying the health probe.  THUNK must
+return a plist carrying at least :status and :detail.  When THUNK
+signals, return `(:check CHECK :status STATUS :detail STRING)'
+instead of aborting the whole doctor report.  ON-ERROR-STATUS
+defaults to `:error'."
+  (condition-case err
+      (let ((row (funcall thunk)))
+        (list :check check
+              :status (plist-get row :status)
+              :detail (plist-get row :detail)))
+    (error
+     (list :check check
+           :status (or on-error-status :error)
+           :detail (format "%s check failed: %s"
+                           check
+                           (error-message-string err))))))
+
+(defun anvil-pkg--doctor-nix-version-check ()
+  "Return the nix-version row for `pkg-doctor'."
+  (let ((version (anvil-pkg--detect-nix-version)))
+    (cond
+     ((null version)
+      (list :status :error
+            :detail (format "Could not detect %s version; install Nix 2.18+ with flakes"
+                            anvil-pkg-nix-program)))
+     ((anvil-pkg--nix-version-at-least-p 2 18)
+      (list :status :ok
+            :detail (format "Detected Nix %s (meets >= 2.18)"
+                            version)))
+     (t
+      (list :status :warn
+            :detail (format "Detected Nix %s; anvil-pkg expects >= 2.18"
+                            version))))))
+
+(defun anvil-pkg--doctor-profile-dir-check ()
+  "Return the profile-dir row for `pkg-doctor'."
+  (let* ((profile-dir (expand-file-name anvil-pkg-profile-dir))
+         (parent (file-name-directory (directory-file-name profile-dir))))
+    (cond
+     ((not (anvil-pkg-compat-file-exists-p parent))
+      (list :status :warn
+            :detail (format "Profile parent %s does not exist"
+                            parent)))
+     ((and (fboundp 'file-writable-p)
+           (file-writable-p parent))
+      (list :status :ok
+            :detail (format "Profile parent %s exists and is writable"
+                            parent)))
+     (t
+      (list :status :warn
+            :detail (format "Profile parent %s exists but is not writable"
+                            parent))))))
+
+(defun anvil-pkg--doctor-installed-count-check ()
+  "Return the installed-count row for `pkg-doctor'."
+  (let ((rows (pkg-list)))
+    (list :status :info
+          :detail (format "%d package(s) installed in the anvil-pkg profile"
+                          (length rows)))))
+
+(defun anvil-pkg--doctor-anvil-server-check ()
+  "Return the anvil-server row for `pkg-doctor'."
+  (if (featurep 'anvil-server)
+      (list :status :info
+            :detail "Feature anvil-server is loaded")
+    (list :status :warn
+          :detail "Feature anvil-server is not loaded")))
+
+(defun anvil-pkg--doctor-state-file-check ()
+  "Return the state-file row for `pkg-doctor'."
+  (if (anvil-pkg-compat-file-exists-p anvil-pkg-state-file)
+      (list :status :info
+            :detail (format "State file exists at %s"
+                            anvil-pkg-state-file))
+    (list :status :info
+          :detail (format "State file not created yet: %s"
+                          anvil-pkg-state-file))))
+
+;;;###autoload
+(defun pkg-doctor ()
+  "Return a read-only environment health report for anvil-pkg.
+
+The return value is a list of check plists of the form
+`(:check SYMBOL :status STATUS :detail STRING)', where STATUS is
+one of `:ok', `:warn', `:error', or `:info'.
+
+This report is read-only: it does not mutate the profile, refresh
+generations, or replay post-install hooks."
+  (list
+   (anvil-pkg--doctor-check 'nix-version
+                            #'anvil-pkg--doctor-nix-version-check)
+   (anvil-pkg--doctor-check 'profile-dir
+                            #'anvil-pkg--doctor-profile-dir-check
+                            :warn)
+   (anvil-pkg--doctor-check 'installed-count
+                            #'anvil-pkg--doctor-installed-count-check)
+   (anvil-pkg--doctor-check 'anvil-server
+                            #'anvil-pkg--doctor-anvil-server-check
+                            :warn)
+   (anvil-pkg--doctor-check 'state-file
+                            #'anvil-pkg--doctor-state-file-check)))
+
 ;;;; --- profile generation rollback (L19) ------------------------------------
 ;; Phase 4-C sub-task B: wrap `nix profile history --json' / `nix profile
 ;; rollback' so users can recover from a regressing install.  The local
@@ -1384,6 +1492,8 @@ notice typos rather than silently clearing the wrong namespace."
 ;;;###autoload
 (defalias 'anvil-pkg-info #'pkg-info)
 ;;;###autoload
+(defalias 'anvil-pkg-doctor #'pkg-doctor)
+;;;###autoload
 (defalias 'anvil-pkg-list-generations #'pkg-list-generations)
 ;;;###autoload
 (defalias 'anvil-pkg-rollback #'pkg-rollback)
@@ -1469,6 +1579,24 @@ MCP Parameters:
     (if info
         (append info (list :found t))
       (list :found nil :name name-str))))
+
+(defun anvil-pkg--doctor-status-count (checks status)
+  "Count rows in CHECKS whose :status equals STATUS."
+  (let ((count 0))
+    (dolist (row checks count)
+      (when (eq (plist-get row :status) status)
+        (setq count (1+ count))))))
+
+(defun anvil-pkg--tool-doctor ()
+  "MCP wrapper around `pkg-doctor'.
+
+MCP Parameters: (none)."
+  (let ((checks (pkg-doctor)))
+    (list :checks checks
+          :ok (anvil-pkg--doctor-status-count checks :ok)
+          :warn (anvil-pkg--doctor-status-count checks :warn)
+          :error (anvil-pkg--doctor-status-count checks :error)
+          :info (anvil-pkg--doctor-status-count checks :info))))
 
 (defun anvil-pkg--tool-list-generations ()
   "MCP wrapper around `pkg-list-generations'.
@@ -1590,6 +1718,19 @@ when no installed or searchable package matches.  Read-only."
    :read-only t)
 
   (anvil-server-register-tool
+   #'anvil-pkg--tool-doctor
+   :id "pkg-doctor"
+   :intent '(packages)
+   :layer 'io
+   :server-id anvil-pkg--server-id
+   :description
+   "Run a read-only environment health check for anvil-pkg.
+Returns :checks (list of plists with check, status, detail) plus
+tallies for :ok, :warn, :error, and :info.  Does not mutate the
+profile, refresh generations, or replay hooks."
+   :read-only t)
+
+  (anvil-server-register-tool
    #'anvil-pkg--tool-list-generations
    :id "pkg-list-generations"
    :intent '(packages)
@@ -1630,8 +1771,8 @@ call pkg-list-generations first for fresh data.  Read-only."
 (defun anvil-pkg--unregister-tools ()
   "Remove every pkg-* MCP tool from the shared anvil server."
   (dolist (id '("pkg-install" "pkg-search" "pkg-list"
-                "pkg-uninstall" "pkg-upgrade" "pkg-info" "pkg-list-generations"
-                "pkg-rollback" "pkg-history"))
+                "pkg-uninstall" "pkg-upgrade" "pkg-info" "pkg-doctor"
+                "pkg-list-generations" "pkg-rollback" "pkg-history"))
     (anvil-server-unregister-tool id anvil-pkg--server-id)))
 
 ;;;###autoload
@@ -1642,7 +1783,7 @@ repeatedly — re-registers idempotently."
   (interactive)
   (require 'anvil-server)
   (anvil-pkg--register-tools)
-  (message "anvil-pkg: enabled (9 MCP tools, profile = %s)"
+  (message "anvil-pkg: enabled (10 MCP tools, profile = %s)"
            anvil-pkg-profile-dir))
 
 (defun anvil-pkg-disable ()

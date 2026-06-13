@@ -1,0 +1,99 @@
+#+title: Phase 7-B: pkg-doctor (read-only environment health check)
+#+author: zawatton
+#+date: 2026-06-13
+#+property: status SHIPPED
+
+* STATUS
+
+SHIPPED 2026-06-13 on the current branch.
+
+Phase 7-B adds =pkg-doctor=, a read-only environment health check for
+the anvil-pkg runtime.  The new verb reports degradations as structured
+rows instead of aborting on the first failing probe.
+
+* Goal
+
+Provide one public query that answers "is this anvil-pkg environment
+basically healthy?" without mutating anything.
+
+The result is a list of plists:
+
+- =:check= — symbolic check id
+- =:status= — one of =:ok= / =:warn= / =:error= / =:info=
+- =:detail= — short human-readable summary
+
+The minimum Phase 7-B checks are:
+
+- =nix-version=
+- =profile-dir=
+- =installed-count=
+- =anvil-server=
+- =state-file=
+
+* Locked decisions
+
+** L71 — read-only by construction
+
+=pkg-doctor= may call read-only helpers such as =pkg-list= and
+=anvil-pkg--detect-nix-version=, but it must not:
+
+- mutate the profile
+- refresh generations
+- replay post-install hooks
+
+The MCP tool =pkg-doctor= is therefore registered with =:read-only t=.
+
+** L72 — one broken probe must not abort the whole report
+
+Each check runs under its own =condition-case=.  If a probe signals, the
+result degrades to a report row for that check with =:status :error= or
+=:warn=, rather than propagating the exception.
+
+This keeps the doctor output useful even when one backend surface is
+unavailable.
+
+** L73 — Nix version policy
+
+The =nix-version= check uses =anvil-pkg--detect-nix-version= for the
+version string and =anvil-pkg--nix-version-at-least-p= for the policy
+decision.
+
+- detected version >= 2.18 => =:ok=
+- detected version < 2.18 => =:warn=
+- undetectable version => =:error=
+
+This matches the repository's documented Nix 2.18+ baseline while still
+producing a total report.
+
+** L74 — MCP wrapper adds tallies, not a second schema
+
+The tool wrapper =anvil-pkg--tool-doctor= returns the full =:checks=
+list plus simple status tallies:
+
+- =:ok=
+- =:warn=
+- =:error=
+- =:info=
+
+The underlying per-check schema remains exactly the public =pkg-doctor=
+shape.
+
+* Files touched
+
+#+begin_src text
+anvil-pkg.el                    ← pkg-doctor, alias, MCP wrapper + registration
+test/anvil-pkg-doctor-test.el   ← deterministic mocked ERT coverage
+Makefile                        ← add the new ERT file to TEST_SRC
+docs/design/18-phase7b.org      ← this file
+#+end_src
+
+* Acceptance
+
+- [x] Public API =pkg-doctor= exists with autoload
+- [x] Long-form alias =anvil-pkg-doctor= exists with autoload
+- [x] Report rows use the =(:check SYMBOL :status STATUS :detail STRING)= shape
+- [x] The implementation stays read-only
+- [x] Each check degrades independently via =condition-case=
+- [x] MCP id parity is preserved with =pkg-doctor=
+- [x] MCP registration uses =:read-only t=
+- [x] Focused ERT coverage exists in =test/anvil-pkg-doctor-test.el=
