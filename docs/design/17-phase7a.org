@@ -1,0 +1,120 @@
+#+title: Phase 7-A: package pinning (pkg-pin / pkg-unpin / pkg-list-pins + pin-aware pkg-upgrade)
+#+author: zawatton
+#+date: 2026-06-13
+#+property: status SHIPPED
+
+* STATUS
+
+SHIPPED 2026-06-13.  Phase 7-A adds persistent package pinning on the
+current branch.
+
+Phase 6-A and Phase 6-B introduced explicit remove and upgrade verbs,
+but there was still no way to mark selected installed packages as
+"hands off" during upgrade-all operations.  Users who needed that had
+to remember an external allow/deny list and translate it manually into
+raw =nix profile upgrade= invocations.  Phase 7-A closes that gap with
+a tiny persistent pin store backed by =anvil-pkg-state= and a
+backwards-compatible =pkg-upgrade= refinement.
+
+* Goal
+
+| Before Phase 7-A                                  | After Phase 7-A                                              |
+|---------------------------------------------------+--------------------------------------------------------------|
+| No persistent "do not upgrade this package" flag  | =pkg-pin= / =pkg-unpin= manage persistent pin state         |
+| Upgrade-all always targets every installed item   | Upgrade-all skips pinned packages when pins exist           |
+| Direct upgrade of a sensitive package is allowed  | Direct upgrade of a pinned package signals =anvil-pkg-error= |
+| MCP cannot inspect or mutate pin state            | MCP exposes =pkg-pin= / =pkg-unpin= / =pkg-list-pins=        |
+
+* Locked decisions
+
+** L71 — pins live in a dedicated =anvil-pkg-state= namespace
+
+Pins are stored under the namespace string =\"pins\"=, one key per
+package name with a trivial true value.  This matches the existing
+KV-store API surface exactly:
+
+- =pkg-pin= writes the name with =anvil-pkg-state-put=
+- =pkg-unpin= removes it with =anvil-pkg-state-delete=
+- =pkg-pinned-p= reads it with =anvil-pkg-state-get=
+- =pkg-list-pins= enumerates it with =anvil-pkg-state-keys=
+
+The design deliberately avoids a single blob value because the state
+layer already provides efficient key enumeration and the one-key-per-pin
+shape keeps the implementation small and obvious.
+
+** L72 — upgrade-all keeps =".*"= when no pins exist
+
+Backwards compatibility matters because Phase 6-B already shipped tests
+and callers that assert the exact =nix profile upgrade ".*"= invocation.
+Therefore, when =NAME= is nil and the pin namespace is empty,
+=pkg-upgrade= keeps the current behavior exactly.
+
+Only the "pins exist" branch changes behavior: it calls =pkg-list=,
+drops any installed names found in =pkg-list-pins=, and passes the
+remaining installed names as explicit upgrade matchers.
+
+** L73 — all-pinned upgrade-all is a successful no-op
+
+When =NAME= is nil, pins exist, and every installed package is pinned,
+=pkg-upgrade= returns t without calling Nix.  There is nothing to
+upgrade, so a shell-out would only add noise and complicate error
+handling for a logically empty operation.
+
+** L74 — direct upgrade of a pinned name must be explicit
+
+When =NAME= is supplied and that package is pinned, =pkg-upgrade=
+signals =anvil-pkg-error= with a message telling the user to run
+=pkg-unpin= first.  This keeps pinning a real safety rail rather than
+an advisory hint that callers can accidentally ignore.
+
+** L75 — MCP tool ids stay equal to public API names
+
+The MCP wrappers are private functions:
+
+- =anvil-pkg--tool-pin=
+- =anvil-pkg--tool-unpin=
+- =anvil-pkg--tool-list-pins=
+
+but the registered tool ids are the exact public names =pkg-pin=,
+=pkg-unpin=, and =pkg-list-pins=.  =pkg-list-pins= is read-only; the
+other two are mutation tools.
+
+* ERT impact
+
+New file: =test/anvil-pkg-pin-test.el=
+
+- pin then pinned-p
+- unpin then pinned-p nil
+- list-pins
+- bad argument types
+- upgrade-all with no pins keeps =".*"=
+- upgrade-all with pins skips the pinned names
+- upgrade-all with only pins is a no-op
+- direct upgrade of a pinned name signals =anvil-pkg-error=
+- MCP wrapper plist shapes
+
+Phase 7-A adds 9 focused ERTs.
+
+* Files touched
+
+#+begin_src text
+anvil-pkg.el                    (mod)  ← pin API, pin-aware upgrade, aliases, MCP wiring
+test/anvil-pkg-pin-test.el      (new)  ← focused Phase 7-A ERT coverage
+Makefile                        (mod)  ← add the new ERT file to TEST_SRC
+docs/design/17-phase7a.org      (new)  ← this file
+#+end_src
+
+* Phase 7-A acceptance
+
+- [x] Public APIs =pkg-pin= / =pkg-unpin= / =pkg-pinned-p= / =pkg-list-pins=
+      exist and are autoloaded
+- [x] Long-form aliases =anvil-pkg-pin= / =anvil-pkg-unpin= /
+      =anvil-pkg-pinned-p= / =anvil-pkg-list-pins= exist and are autoloaded
+- [x] Pins persist via =anvil-pkg-state= under a dedicated namespace
+- [x] =pkg-upgrade nil= keeps the legacy =".*"= path when no pins exist
+- [x] =pkg-upgrade nil= skips pinned installed names when pins exist
+- [x] =pkg-upgrade nil= returns t without a nix call when every installed
+      package is pinned
+- [x] =pkg-upgrade NAME= rejects pinned names with an explicit unpin hint
+- [x] MCP exposes =pkg-pin= / =pkg-unpin= / =pkg-list-pins= with id parity
+- [x] Focused ERT coverage exists in a dedicated new test file
