@@ -207,8 +207,9 @@ Each value plist is serialised as
 `{\"value\": \"<prin1>\", \"expires-at\": NUMBER-OR-NULL}' so we can
 round-trip keywords / nested plists / symbols without lossy JSON
 mapping.  Uses hash-tables (per `feedback_emacs_json_empty_object_encoding'
-— empty alists serialize to `null') so `json-serialize' emits real
-JSON objects even for empty namespaces."
+— empty alists serialize to `null') so
+`anvil-pkg-compat-json-serialize' emits real JSON objects even for
+empty namespaces."
   (let ((outer (make-hash-table :test 'equal)))
     (dolist (ns-pair cache)
       (let ((ns-key (car ns-pair))
@@ -221,11 +222,11 @@ JSON objects even for empty namespaces."
                      (prin1-to-string (plist-get v :value))
                      entry)
             (puthash "expires-at"
-                     (or (plist-get v :expires-at) :null)
+                     (plist-get v :expires-at)
                      entry)
             (puthash k entry inner)))
         (puthash ns-key inner outer)))
-    (json-serialize outer :null-object :null :false-object :json-false)))
+    (anvil-pkg-compat-json-serialize outer)))
 
 ;;;; --- pure cache mutators ---------------------------------------------------
 

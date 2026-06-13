@@ -13,9 +13,10 @@
 ;; requires its backend implementations lazily, so loading anvil-pkg
 ;; on bare NeLisp does not error out at file load.
 ;;
-;; Runtime detection happens once at load via `fboundp' probes; the
-;; chosen implementations are stashed in defvars so tests can override
-;; the dispatch.
+;; Runtime detection starts with `fboundp' probes at load time and is
+;; refreshed lazily by `anvil-pkg-compat-runtime'.  This lets callers
+;; load anvil-pkg before package-split NeLisp backends without getting
+;; stuck on the Emacs branch for the rest of the session.
 ;;
 ;; Public surface (all `anvil-pkg-compat-' prefixed):
 ;;   call-process            - run cmd, return (:exit :stdout :stderr)
@@ -27,13 +28,17 @@
 ;;   file-exists-p           - existence probe
 ;;   executable-find         - PATH lookup
 ;;   getenv                  - environment variable
-;;   http-get                - synchronous HTTP GET (Emacs only in Phase 4-C)
+;;   http-get                - synchronous HTTP GET (Emacs + NeLisp hook)
 ;;                              (Phase 4-G: optional :auth-header keyword)
 ;;   http-get-binary         - synchronous binary HTTP GET (tarball)
+;;                              (Emacs + NeLisp hook / curl fallback)
 ;;                              (Phase 4-G: optional :auth-header keyword)
+;;   nelisp backend hooks    - Phase 5 extension points for process / HTTP
+;;   process/buffer helpers  - async process metadata + stderr buffers
 ;;   credential-for-url      - host -> "Bearer TOKEN" / nil (Phase 4-G)
 ;;   mask-credentials        - redact token-like patterns in strings
 ;;   json-parse              - JSON string -> alist tree (Phase 1 schema)
+;;   json-serialize          - Lisp tree -> JSON string
 ;;   string-trim             - trim ASCII whitespace
 ;;   define-error-symbol     - install (sym 'error-conditions . msg) properties
 
@@ -52,8 +57,19 @@
 ;; declare them here without committing to an arity.
 (declare-function nelisp-syscall-getenv         "ext:nelisp-runtime" t t)
 (declare-function nelisp-syscall-getpid         "ext:nelisp-runtime" t t)
+(declare-function nelisp-sys-getenv             "ext:nelisp-sys" t t)
+(declare-function nelisp-sys-executable-find    "ext:nelisp-sys" t t)
 (declare-function nelisp-call-process           "ext:nelisp-process" t t)
+(declare-function nelisp-make-process           "ext:nelisp-process" t t)
+(declare-function nelisp-process-current-status "ext:nelisp-process" t t)
+(declare-function nelisp-process-exit-code-value "ext:nelisp-process" t t)
+(declare-function nelisp-process-get           "ext:nelisp-process" t t)
+(declare-function nelisp-process-put           "ext:nelisp-process" t t)
+(declare-function nelisp-http-get               "ext:nelisp-network" t t)
+(declare-function nelisp-http-get-binary        "ext:nelisp-network" t t)
+(declare-function nelisp-http-fetch             "ext:nelisp-http"    t t)
 (declare-function nelisp-json-parse-string      "ext:nelisp-json"    t t)
+(declare-function nelisp-json-serialize         "ext:nelisp-json"    t t)
 (declare-function nelisp-ec-getenv              "ext:nelisp-emacs-compat" t t)
 (declare-function nelisp-ec-executable-find     "ext:nelisp-emacs-compat" t t)
 (declare-function nelisp-ec-file-exists-p       "ext:nelisp-emacs-compat-fileio" t t)
@@ -64,11 +80,83 @@
 (declare-function nelisp-ec-generate-new-buffer "ext:nelisp-emacs-compat" t t)
 (declare-function nelisp-ec-kill-buffer         "ext:nelisp-emacs-compat" t t)
 (declare-function nelisp-ec-buffer-string       "ext:nelisp-emacs-compat" t t)
+(declare-function nelisp-ec-current-buffer      "ext:nelisp-emacs-compat" t t)
+(declare-function nelisp-ec-set-buffer          "ext:nelisp-emacs-compat" t t)
 (declare-function nelisp-ec-with-current-buffer "ext:nelisp-emacs-compat" t t)
 
+(defvar nelisp-ec--current-buffer)
+
+(defvar anvil-pkg-compat--nelisp-backend-require-attempted nil
+  "Non-nil after a lazy require probe for package-split NeLisp backends.")
+
+(defvar anvil-pkg-compat--nelisp-json-require-attempted nil
+  "Non-nil after a lazy require probe for package-split NeLisp JSON.")
+
+(defvar anvil-pkg-compat--nelisp-emacs-compat-require-attempted nil
+  "Non-nil after a lazy require probe for NeLisp Emacs-compat helpers.")
+
+(defun anvil-pkg-compat--try-require-nelisp-backends ()
+  "Try to load optional package-split NeLisp backends once.
+
+All requires are noerror probes.  anvil-pkg must remain loadable in
+plain Emacs and on bare NeLisp bootstrap images, so failure here is
+not exceptional."
+  (unless anvil-pkg-compat--nelisp-backend-require-attempted
+    (setq anvil-pkg-compat--nelisp-backend-require-attempted t)
+    (when (fboundp 'require)
+      (require 'nelisp-sys nil t)
+      (require 'nelisp-process nil t)
+      (require 'nelisp-network nil t)
+      (require 'nelisp-http nil t))))
+
+(defun anvil-pkg-compat--try-require-nelisp-json ()
+  "Try to load optional package-split NeLisp JSON once."
+  (unless anvil-pkg-compat--nelisp-json-require-attempted
+    (setq anvil-pkg-compat--nelisp-json-require-attempted t)
+    (when (fboundp 'require)
+      (require 'nelisp-json nil t))))
+
+(defun anvil-pkg-compat--try-require-nelisp-emacs-compat ()
+  "Try to load optional package-split NeLisp Emacs-compat helpers once."
+  (unless anvil-pkg-compat--nelisp-emacs-compat-require-attempted
+    (setq anvil-pkg-compat--nelisp-emacs-compat-require-attempted t)
+    (when (fboundp 'require)
+      (require 'nelisp-runtime nil t)
+      (require 'nelisp-emacs-compat nil t)
+      (require 'nelisp-emacs-compat-fileio nil t))))
+
+(defun anvil-pkg-compat--functions-bound-p (symbols)
+  "Return non-nil when every symbol in SYMBOLS is fbound."
+  (let ((ok t))
+    (while (and ok symbols)
+      (unless (fboundp (car symbols))
+        (setq ok nil))
+      (setq symbols (cdr symbols)))
+    ok))
+
+(defun anvil-pkg-compat--detect-nelisp-runtime-p ()
+  "Return non-nil when NeLisp Layer-2 runtime primitives are loaded.
+
+Older anvil-pkg releases detected NeLisp via `nelisp-call-process'
+only.  Package-split NeLisp can load the async or HTTP substrate
+independently, so Phase 5 treats any backend primitive that
+anvil-pkg can directly use as sufficient evidence."
+  (or (fboundp 'nelisp-call-process)
+      (fboundp 'nelisp-make-process)
+      (fboundp 'nelisp-http-get)
+      (fboundp 'nelisp-http-fetch)
+      (fboundp 'nelisp-http-get-binary)
+      (progn
+        (anvil-pkg-compat--try-require-nelisp-backends)
+        (or (fboundp 'nelisp-call-process)
+            (fboundp 'nelisp-make-process)
+            (fboundp 'nelisp-http-get)
+            (fboundp 'nelisp-http-fetch)
+            (fboundp 'nelisp-http-get-binary)))))
+
 (defvar anvil-pkg-compat--nelisp-runtime-p
-  (fboundp 'nelisp-call-process)
-  "Non-nil when nelisp-process is loaded — choose Layer 2 backends.
+  (anvil-pkg-compat--detect-nelisp-runtime-p)
+  "Non-nil when NeLisp Layer-2 backend primitives are loaded.
 
 Defined as a defvar (not defconst) so tests can override the value
 via `cl-letf' / `let'.  Production code should consult
@@ -81,63 +169,358 @@ single, mockable runtime decision point.")
 Sole authority for runtime branching outside this file.  Tests
 can override via `cl-letf' on this function (preferred) or by
 let-binding `anvil-pkg-compat--nelisp-runtime-p'."
+  (when (and (not anvil-pkg-compat--nelisp-runtime-p)
+             (anvil-pkg-compat--detect-nelisp-runtime-p))
+    (setq anvil-pkg-compat--nelisp-runtime-p t))
   (if anvil-pkg-compat--nelisp-runtime-p 'nelisp 'emacs))
+
+(defun anvil-pkg-compat--emacs-runtime-p ()
+  "Return non-nil when the current runtime branch is Emacs.
+
+Use this instead of reading `anvil-pkg-compat--nelisp-runtime-p'
+directly so package-split NeLisp backends loaded after this file can
+refresh the runtime decision before low-level I/O dispatch."
+  (eq (anvil-pkg-compat-runtime) 'emacs))
+
+(defun anvil-pkg-compat--runtime-nelisp-p ()
+  "Return non-nil when the current runtime branch is NeLisp."
+  (eq (anvil-pkg-compat-runtime) 'nelisp))
+
+(defvar anvil-pkg-compat-nelisp-make-process-function nil
+  "Optional NeLisp backend for `anvil-pkg-compat-make-process-async'.
+
+When non-nil, this must be a function accepting the same keyword
+plist accepted by `anvil-pkg-compat-make-process-async'.  It is
+called only when `anvil-pkg-compat-runtime' returns `nelisp'.
+When nil, the NeLisp path keeps the Phase 4-C behaviour and
+signals `anvil-pkg-async-not-supported' unless the runtime already
+provides `nelisp-make-process'.")
+
+(defvar anvil-pkg-compat-nelisp-call-process-function nil
+  "Optional NeLisp backend for `anvil-pkg-compat-call-process'.
+
+When non-nil, this must be a function called as (PROGRAM ARGS) and
+must return (:exit INT :stdout STRING :stderr STRING).  It is called
+only when `anvil-pkg-compat-runtime' returns `nelisp'.  When nil, the
+NeLisp path auto-detects `nelisp-call-process' when loaded.")
+
+(defvar anvil-pkg-compat-nelisp-getenv-function nil
+  "Optional NeLisp backend for `anvil-pkg-compat-getenv'.
+
+When non-nil, this must be a function called as (VAR) and must return
+a string or nil.  It is called only when `anvil-pkg-compat-runtime'
+returns `nelisp'.")
+
+(defvar anvil-pkg-compat-nelisp-executable-find-function nil
+  "Optional NeLisp backend for `anvil-pkg-compat-executable-find'.
+
+When non-nil, this must be a function called as (CMD) and must return
+an executable path string or nil.  It is called only when
+`anvil-pkg-compat-runtime' returns `nelisp'.")
+
+(defvar anvil-pkg-compat-nelisp-http-get-function nil
+  "Optional NeLisp backend for `anvil-pkg-compat-http-get'.
+
+When non-nil, this must be a function called as
+\(URL TIMEOUT AUTH-HEADER) and must return (:status INT :body
+STRING).  It is called only when `anvil-pkg-compat-runtime'
+returns `nelisp'.  When nil, the NeLisp path keeps the Phase 4-C
+behaviour and signals `anvil-pkg-http-not-supported' unless the
+runtime already provides `nelisp-http-get' or the higher-level
+`nelisp-http-fetch'.")
+
+(defvar anvil-pkg-compat-nelisp-http-get-binary-function nil
+  "Optional NeLisp backend for `anvil-pkg-compat-http-get-binary'.
+
+When non-nil, this must be a function called as
+\(URL TIMEOUT AUTH-HEADER) and must return (:status INT :body
+STRING :content-length INT-OR-NIL).  It is called only when
+`anvil-pkg-compat-runtime' returns `nelisp'.  When nil, the
+NeLisp path auto-detects `nelisp-http-get-binary' when loaded, then
+uses `curl' as a binary download fallback when available; without a
+native backend or curl it keeps the Phase 4-D behaviour and signals
+`anvil-pkg-http-not-supported'.")
+
+(defcustom anvil-pkg-compat-curl-program "curl"
+  "Curl executable used as a NeLisp fallback for binary HTTP downloads.
+
+`anvil-pkg-compat-http-get-binary' prefers an explicit
+`anvil-pkg-compat-nelisp-http-get-binary-function', then a loaded
+`nelisp-http-get-binary' backend.  When neither native path exists
+and the runtime is NeLisp, this executable is used only if it is
+present on PATH.  If it is absent, the NeLisp binary HTTP path keeps
+signalling `anvil-pkg-http-not-supported'."
+  :type 'string
+  :group 'anvil-pkg)
+
+(defun anvil-pkg-compat--validate-call-process-result (resp backend)
+  "Validate RESP from BACKEND as a call-process result plist."
+  (unless (and (listp resp)
+               (integerp (plist-get resp :exit))
+               (stringp (plist-get resp :stdout))
+               (stringp (plist-get resp :stderr)))
+    (error "%s returned invalid call-process result: %S" backend resp))
+  resp)
+
+(defun anvil-pkg-compat--validate-http-result (resp backend)
+  "Validate RESP from BACKEND as a text HTTP result plist."
+  (unless (and (listp resp)
+               (integerp (plist-get resp :status))
+               (stringp (plist-get resp :body)))
+    (error "%s returned invalid HTTP result: %S" backend resp))
+  resp)
+
+(defun anvil-pkg-compat--validate-binary-http-result (resp backend)
+  "Validate RESP from BACKEND as a binary HTTP result plist."
+  (unless (and (listp resp)
+               (integerp (plist-get resp :status))
+               (stringp (plist-get resp :body))
+               (let ((len (plist-get resp :content-length)))
+                 (or (null len) (integerp len))))
+    (error "%s returned invalid binary HTTP result: %S" backend resp))
+  resp)
+
+;;;; --- process object helpers ----------------------------------------------
+
+(defun anvil-pkg-compat-process-get (proc key)
+  "Return PROC's property value for KEY across Emacs and NeLisp wraps."
+  (cond
+   ((fboundp 'process-get)
+    (process-get proc key))
+   ((fboundp 'nelisp-process-get)
+    (nelisp-process-get proc key))
+   (t
+    (error "no process property getter backend available"))))
+
+(defun anvil-pkg-compat-process-put (proc key value)
+  "Store VALUE under KEY on PROC across Emacs and NeLisp wraps."
+  (cond
+   ((fboundp 'process-put)
+    (process-put proc key value))
+   ((fboundp 'nelisp-process-put)
+    (nelisp-process-put proc key value))
+   (t
+    (error "no process property setter backend available"))))
+
+(defun anvil-pkg-compat-process-status (proc)
+  "Return PROC's status across Emacs and NeLisp wraps."
+  (cond
+   ((fboundp 'process-status)
+    (process-status proc))
+   ((fboundp 'nelisp-process-current-status)
+    (nelisp-process-current-status proc))
+   (t
+    (error "no process status backend available"))))
+
+(defun anvil-pkg-compat-process-exit-status (proc)
+  "Return PROC's exit status across Emacs and NeLisp wraps."
+  (cond
+   ((fboundp 'process-exit-status)
+    (process-exit-status proc))
+   ((fboundp 'nelisp-process-exit-code-value)
+    (nelisp-process-exit-code-value proc))
+   (t
+    (error "no process exit-status backend available"))))
+
+;;;; --- buffer helpers -------------------------------------------------------
+
+(defun anvil-pkg-compat-generate-buffer (name)
+  "Return a new buffer named from NAME across Emacs and NeLisp."
+  (cond
+   ((and (anvil-pkg-compat--runtime-nelisp-p)
+         (progn
+           (anvil-pkg-compat--try-require-nelisp-emacs-compat)
+           (fboundp 'nelisp-ec-generate-new-buffer)))
+    (nelisp-ec-generate-new-buffer name))
+   ((fboundp 'generate-new-buffer)
+    (generate-new-buffer name))
+   (t
+    (anvil-pkg-compat--try-require-nelisp-emacs-compat)
+    (cond
+     ((fboundp 'nelisp-ec-generate-new-buffer)
+      (nelisp-ec-generate-new-buffer name))
+     (t (error "no generate-buffer backend available"))))))
+
+(defun anvil-pkg-compat-buffer-live-p (buffer)
+  "Return non-nil when BUFFER can still be inspected.
+NeLisp's current `nelisp-ec' surface has no public live predicate, so
+NeLisp callers treat a non-nil buffer as live and let read/kill helpers
+swallow backend errors."
+  (cond
+   ((fboundp 'buffer-live-p)
+    (buffer-live-p buffer))
+   (t
+    (and buffer t))))
+
+(defun anvil-pkg-compat--buffer-string-nelisp (buffer)
+  "Return BUFFER contents through NeLisp Emacs-compat helpers."
+  (condition-case _
+      (cond
+       ((anvil-pkg-compat--functions-bound-p
+         '(nelisp-ec-current-buffer
+           nelisp-ec-set-buffer
+           nelisp-ec-buffer-string))
+        (let ((saved (nelisp-ec-current-buffer)))
+          (unwind-protect
+              (progn
+                (nelisp-ec-set-buffer buffer)
+                (nelisp-ec-buffer-string))
+            (cond
+             (saved (nelisp-ec-set-buffer saved))
+             ((boundp 'nelisp-ec--current-buffer)
+              (setq nelisp-ec--current-buffer nil))))))
+       ((anvil-pkg-compat--functions-bound-p
+         '(nelisp-ec-with-current-buffer nelisp-ec-buffer-string))
+        (nelisp-ec-with-current-buffer buffer
+          (nelisp-ec-buffer-string)))
+       (t ""))
+    (error "")))
+
+(defun anvil-pkg-compat-buffer-string (buffer)
+  "Return BUFFER contents as a string, or empty string if unavailable."
+  (cond
+   ((and (anvil-pkg-compat--runtime-nelisp-p)
+         (progn
+           (anvil-pkg-compat--try-require-nelisp-emacs-compat)
+           (or (anvil-pkg-compat--functions-bound-p
+                '(nelisp-ec-current-buffer
+                  nelisp-ec-set-buffer
+                  nelisp-ec-buffer-string))
+               (anvil-pkg-compat--functions-bound-p
+                '(nelisp-ec-with-current-buffer nelisp-ec-buffer-string)))))
+    (anvil-pkg-compat--buffer-string-nelisp buffer))
+   ((and (fboundp 'with-current-buffer)
+         (fboundp 'buffer-string)
+         (anvil-pkg-compat-buffer-live-p buffer))
+    (with-current-buffer buffer
+      (buffer-string)))
+   (t
+    (anvil-pkg-compat--try-require-nelisp-emacs-compat)
+    (cond
+     ((anvil-pkg-compat--functions-bound-p
+       '(nelisp-ec-current-buffer
+         nelisp-ec-set-buffer
+         nelisp-ec-buffer-string))
+      (anvil-pkg-compat--buffer-string-nelisp buffer))
+     ((anvil-pkg-compat--functions-bound-p
+       '(nelisp-ec-with-current-buffer nelisp-ec-buffer-string))
+      (anvil-pkg-compat--buffer-string-nelisp buffer))
+     (t "")))))
+
+(defun anvil-pkg-compat-kill-buffer (buffer)
+  "Kill BUFFER if possible; ignore already-dead or missing buffers."
+  (cond
+   ((and (anvil-pkg-compat--runtime-nelisp-p)
+         (progn
+           (anvil-pkg-compat--try-require-nelisp-emacs-compat)
+           (fboundp 'nelisp-ec-kill-buffer)))
+    (condition-case _ (nelisp-ec-kill-buffer buffer) (error nil)))
+   ((and (fboundp 'kill-buffer)
+         (anvil-pkg-compat-buffer-live-p buffer))
+    (condition-case _ (kill-buffer buffer) (error nil)))
+   (t
+    (anvil-pkg-compat--try-require-nelisp-emacs-compat)
+    (when (fboundp 'nelisp-ec-kill-buffer)
+      (condition-case _ (nelisp-ec-kill-buffer buffer) (error nil))))))
 
 ;;;; --- environment / path helpers -------------------------------------------
 
 (defun anvil-pkg-compat-getenv (var &optional default)
   "Return env var VAR or DEFAULT.
 Tries Emacs `getenv', then NeLisp Layer-2 alternatives."
-  (let ((v (cond
-            ((fboundp 'getenv) (getenv var))
-            ((fboundp 'nelisp-syscall-getenv) (nelisp-syscall-getenv var))
-            ((fboundp 'nelisp-ec-getenv) (nelisp-ec-getenv var))
-            (t nil))))
+  (let ((v (and (anvil-pkg-compat--runtime-nelisp-p)
+                anvil-pkg-compat-nelisp-getenv-function
+                (funcall anvil-pkg-compat-nelisp-getenv-function var))))
+    (unless v
+      (setq v (and (fboundp 'getenv) (getenv var))))
+    (unless v
+      (anvil-pkg-compat--try-require-nelisp-backends)
+      (setq v
+            (cond
+             ((fboundp 'nelisp-sys-getenv) (nelisp-sys-getenv var))
+             ((fboundp 'nelisp-syscall-getenv) (nelisp-syscall-getenv var)))))
+    (unless v
+      (anvil-pkg-compat--try-require-nelisp-emacs-compat)
+      (setq v
+            (cond
+             ((fboundp 'nelisp-syscall-getenv) (nelisp-syscall-getenv var))
+             ((fboundp 'nelisp-ec-getenv) (nelisp-ec-getenv var)))))
     (or v default)))
 
 (defun anvil-pkg-compat-executable-find (cmd)
   "Find executable CMD on PATH; return absolute path or nil."
-  (cond
-   ((fboundp 'executable-find) (executable-find cmd))
-   ((fboundp 'nelisp-ec-executable-find) (nelisp-ec-executable-find cmd))
-   (t nil)))
+  (or (and (anvil-pkg-compat--runtime-nelisp-p)
+           anvil-pkg-compat-nelisp-executable-find-function
+           (funcall anvil-pkg-compat-nelisp-executable-find-function cmd))
+      (and (fboundp 'executable-find) (executable-find cmd))
+      (progn
+        (anvil-pkg-compat--try-require-nelisp-backends)
+        (and (fboundp 'nelisp-sys-executable-find)
+             (nelisp-sys-executable-find cmd)))
+      (progn
+        (anvil-pkg-compat--try-require-nelisp-emacs-compat)
+        (and (fboundp 'nelisp-ec-executable-find)
+             (nelisp-ec-executable-find cmd)))))
 
 ;;;; --- filesystem ----------------------------------------------------------
 
 (defun anvil-pkg-compat-file-exists-p (path)
   "Return non-nil if PATH exists."
   (cond
+   ((and (anvil-pkg-compat--runtime-nelisp-p)
+         (progn
+           (anvil-pkg-compat--try-require-nelisp-emacs-compat)
+           (fboundp 'nelisp-ec-file-exists-p)))
+    (nelisp-ec-file-exists-p path))
    ((fboundp 'file-exists-p) (file-exists-p path))
-   ((fboundp 'nelisp-ec-file-exists-p) (nelisp-ec-file-exists-p path))
-   (t nil)))
+   (t
+    (anvil-pkg-compat--try-require-nelisp-emacs-compat)
+    (cond
+     ((fboundp 'nelisp-ec-file-exists-p) (nelisp-ec-file-exists-p path))))))
 
 (defun anvil-pkg-compat-make-directory (path &optional parents)
   "Create directory PATH; non-nil PARENTS makes -p style."
   (cond
+   ((and (anvil-pkg-compat--runtime-nelisp-p)
+         (progn
+           (anvil-pkg-compat--try-require-nelisp-emacs-compat)
+           (fboundp 'nelisp-ec-make-directory)))
+    (nelisp-ec-make-directory path (or parents t)))
    ((fboundp 'make-directory) (make-directory path (or parents t)))
-   ((fboundp 'nelisp-ec-make-directory) (nelisp-ec-make-directory path (or parents t)))
-   (t (error "no make-directory implementation available"))))
+   (t
+    (anvil-pkg-compat--try-require-nelisp-emacs-compat)
+    (cond
+     ((fboundp 'nelisp-ec-make-directory)
+      (nelisp-ec-make-directory path (or parents t)))
+     (t (error "no make-directory implementation available"))))))
 
 (defun anvil-pkg-compat-delete-file-quietly (path)
   "Delete PATH if it exists; ignore failures."
   (when (anvil-pkg-compat-file-exists-p path)
     (cond
+     ((and (anvil-pkg-compat--runtime-nelisp-p)
+           (progn
+             (anvil-pkg-compat--try-require-nelisp-emacs-compat)
+             (fboundp 'nelisp-ec-delete-file)))
+      (condition-case _ (nelisp-ec-delete-file path) (error nil)))
      ((fboundp 'delete-file)
       (condition-case _ (delete-file path) (error nil)))
-     ((fboundp 'nelisp-ec-delete-file)
-      (condition-case _ (nelisp-ec-delete-file path) (error nil))))))
+     (t
+      (anvil-pkg-compat--try-require-nelisp-emacs-compat)
+      (when (fboundp 'nelisp-ec-delete-file)
+        (condition-case _ (nelisp-ec-delete-file path) (error nil)))))))
 
 (defun anvil-pkg-compat-read-file (path)
   "Return the entire contents of PATH as a string."
   (cond
-   ((and (not anvil-pkg-compat--nelisp-runtime-p)
-         (fboundp 'with-temp-buffer)
-         (fboundp 'insert-file-contents))
-    ;; Emacs path
-    (with-temp-buffer
-      (insert-file-contents path)
-      (buffer-string)))
-   ((fboundp 'nelisp-ec-insert-file-contents)
+   ((and (anvil-pkg-compat--runtime-nelisp-p)
+         (progn
+           (anvil-pkg-compat--try-require-nelisp-emacs-compat)
+           (anvil-pkg-compat--functions-bound-p
+            '(nelisp-ec-insert-file-contents
+              nelisp-ec-generate-new-buffer
+              nelisp-ec-with-current-buffer
+              nelisp-ec-buffer-string))))
     ;; NeLisp Layer-2 path
     (let ((buf (nelisp-ec-generate-new-buffer "*anvil-pkg-read*")))
       (unwind-protect
@@ -147,19 +530,67 @@ Tries Emacs `getenv', then NeLisp Layer-2 alternatives."
               (nelisp-ec-buffer-string)))
         (when (fboundp 'nelisp-ec-kill-buffer)
           (nelisp-ec-kill-buffer buf)))))
-   (t (error "no read-file backend available for %S" path))))
+   ((and (fboundp 'with-temp-buffer)
+         (fboundp 'insert-file-contents))
+    ;; Emacs path, or Emacs-compatible fallback under test / bootstrap images.
+    (with-temp-buffer
+      (insert-file-contents path)
+      (buffer-string)))
+   (t
+    (anvil-pkg-compat--try-require-nelisp-emacs-compat)
+    (cond
+     ((anvil-pkg-compat--functions-bound-p
+       '(nelisp-ec-insert-file-contents
+         nelisp-ec-generate-new-buffer
+         nelisp-ec-with-current-buffer
+         nelisp-ec-buffer-string))
+      (let ((buf (nelisp-ec-generate-new-buffer "*anvil-pkg-read*")))
+        (unwind-protect
+            (progn
+              (nelisp-ec-with-current-buffer buf
+                (nelisp-ec-insert-file-contents path)
+                (nelisp-ec-buffer-string)))
+          (when (fboundp 'nelisp-ec-kill-buffer)
+            (nelisp-ec-kill-buffer buf)))))
+     (t (error "no read-file backend available for %S" path))))))
+
+(defun anvil-pkg-compat--read-file-binary (path)
+  "Return PATH contents as a raw byte string where the host supports it."
+  (cond
+   ((and (fboundp 'with-temp-buffer)
+         (fboundp 'insert-file-contents-literally))
+    (with-temp-buffer
+      (set-buffer-multibyte nil)
+      (insert-file-contents-literally path)
+      (buffer-string)))
+   ((and (fboundp 'with-temp-buffer)
+         (fboundp 'insert-file-contents))
+    (let ((coding-system-for-read 'binary))
+      (with-temp-buffer
+        (set-buffer-multibyte nil)
+        (insert-file-contents path)
+        (buffer-string))))
+   (t
+    (anvil-pkg-compat-read-file path))))
 
 (defun anvil-pkg-compat-write-file (path content)
   "Write CONTENT (string) to PATH, overwriting."
   (cond
-   ((and (not anvil-pkg-compat--nelisp-runtime-p)
-         (fboundp 'with-temp-file))
-    (with-temp-file path
-      (insert content)))
-   ((fboundp 'nelisp-ec-write-region)
+   ((and (anvil-pkg-compat--runtime-nelisp-p)
+         (progn
+           (anvil-pkg-compat--try-require-nelisp-emacs-compat)
+           (fboundp 'nelisp-ec-write-region)))
     ;; nelisp-ec-write-region is the Layer-2 equivalent
     (nelisp-ec-write-region content nil path nil 'silent))
-   (t (error "no write-file backend available for %S" path))))
+   ((fboundp 'with-temp-file)
+    (with-temp-file path
+      (insert content)))
+   (t
+    (anvil-pkg-compat--try-require-nelisp-emacs-compat)
+    (cond
+     ((fboundp 'nelisp-ec-write-region)
+      (nelisp-ec-write-region content nil path nil 'silent))
+     (t (error "no write-file backend available for %S" path))))))
 
 (defun anvil-pkg-compat-make-temp-file (prefix)
   "Create a unique writable file with PREFIX under TMPDIR; return path."
@@ -187,10 +618,15 @@ path uses two temp files since nelisp-call-process accepts string
 filenames as destinations.  Either way the caller sees the same
 plist."
   (cond
-   ((and (not anvil-pkg-compat--nelisp-runtime-p)
+   ((and (anvil-pkg-compat--emacs-runtime-p)
          (fboundp 'generate-new-buffer)
          (fboundp 'call-process))
     (anvil-pkg-compat--call-process-emacs program args))
+   ((and (anvil-pkg-compat--runtime-nelisp-p)
+         anvil-pkg-compat-nelisp-call-process-function)
+    (anvil-pkg-compat--validate-call-process-result
+     (funcall anvil-pkg-compat-nelisp-call-process-function program args)
+     "anvil-pkg-compat-nelisp-call-process-function"))
    ((fboundp 'nelisp-call-process)
     (anvil-pkg-compat--call-process-nelisp program args))
    (t (error "no call-process backend available"))))
@@ -243,20 +679,40 @@ Object -> alist, array -> list, null/false -> nil."
                            :array-type 'list
                            :null-object nil
                            :false-object nil))
-       ((fboundp 'nelisp-json-parse-string)
-        (nelisp-json-parse-string trimmed
-                                  :object-type 'alist
-                                  :array-type 'list
-                                  :null-object nil
-                                  :false-object nil))
-       (t (error "no JSON parser backend available"))))))
+       (t
+        (anvil-pkg-compat--try-require-nelisp-json)
+        (cond
+         ((fboundp 'nelisp-json-parse-string)
+          (nelisp-json-parse-string trimmed
+                                    :object-type 'alist
+                                    :array-type 'list
+                                    :null-object nil
+                                    :false-object nil))
+         (t (error "no JSON parser backend available"))))))))
+
+(defun anvil-pkg-compat-json-serialize (obj)
+  "Serialize OBJ to a JSON string.
+
+Uses Emacs `json-serialize' when available, otherwise the
+package-split NeLisp `nelisp-json-serialize' backend.  Hash tables
+are the recommended representation for JSON objects because both
+backends preserve empty objects that way."
+  (cond
+   ((fboundp 'json-serialize)
+    (json-serialize obj :null-object :null :false-object :json-false))
+   (t
+    (anvil-pkg-compat--try-require-nelisp-json)
+    (cond
+     ((fboundp 'nelisp-json-serialize)
+      (nelisp-json-serialize obj))
+     (t (error "no JSON serializer backend available"))))))
 
 ;;;; --- string utility -------------------------------------------------------
 
 (defun anvil-pkg-compat-string-trim (str)
   "Remove leading and trailing ASCII whitespace from STR."
   (cond
-   ((fboundp 'string-trim) (string-trim str))
+   ((fboundp 'string-trim) (string-trim (or str "")))
    (t
     ;; Implementation uses only `substring' + `length' + prefix
     ;; comparison.  Avoids `aref' (not yet a NeLisp Rust builtin)
@@ -374,10 +830,14 @@ auto-detection runs via `anvil-pkg-compat-credential-for-url'
 so existing callers transparently pick up credentials from
 environment variables.
 
-Returns plist (:status INT :body STRING).  Signals
-`anvil-pkg-http-not-supported' on NeLisp until Phase 5 lands an
-HTTP backend.  Network errors / non-2xx responses return :status
-N (the actual code or 0 on connection failure) with :body empty.
+Returns plist (:status INT :body STRING).  On NeLisp, an explicit
+backend hook wins; otherwise a loaded `nelisp-http-get' or
+`nelisp-http-fetch' backend is used.  If neither exists, the NeLisp
+branch falls back to `curl'
+through the binary HTTP curl adapter.  If no native backend and no
+curl path are available, signals `anvil-pkg-http-not-supported'.
+Network errors / non-2xx responses return :status N (the actual code
+or 0 on connection failure) with :body empty.
 
 Phase 4-C: Emacs implementation uses `url-retrieve-synchronously'
 and parses the HTTP status line out of the response buffer's first
@@ -390,9 +850,28 @@ buffer may not have full HTTP metadata in some Emacs versions)."
       (or timeout 5)
       (or auth-header (anvil-pkg-compat-credential-for-url url))))
     ('nelisp
-     (signal 'anvil-pkg-http-not-supported
-             (list (format "anvil-pkg-compat-http-get: NeLisp HTTP backend not yet implemented (url=%s)"
-                           url))))
+     (if anvil-pkg-compat-nelisp-http-get-function
+         (anvil-pkg-compat--validate-http-result
+          (funcall anvil-pkg-compat-nelisp-http-get-function
+                   url
+                   (or timeout 5)
+                   (or auth-header (anvil-pkg-compat-credential-for-url url)))
+          "anvil-pkg-compat-nelisp-http-get-function")
+       (anvil-pkg-compat--try-require-nelisp-backends)
+       (if (or (fboundp 'nelisp-http-get)
+               (fboundp 'nelisp-http-fetch))
+           (let ((timeout (or timeout 5))
+                 (auth (or auth-header
+                           (anvil-pkg-compat-credential-for-url url))))
+             (anvil-pkg-compat--http-get-curl-after-native-zero
+              (anvil-pkg-compat--http-get-nelisp url timeout auth)
+              url
+              timeout
+              auth))
+         (anvil-pkg-compat--http-get-curl
+          url
+          (or timeout 5)
+          (or auth-header (anvil-pkg-compat-credential-for-url url))))))
     (_
      (signal 'anvil-pkg-http-not-supported
              (list (format "anvil-pkg-compat-http-get: no backend for runtime %S"
@@ -451,6 +930,167 @@ the duration of the call."
              body "")))
     (list :status status :body body)))
 
+(defun anvil-pkg-compat--headers-for-auth (auth-header)
+  "Return HTTP header alist for AUTH-HEADER, or nil."
+  (when auth-header
+    (list (cons "Authorization" auth-header))))
+
+(defun anvil-pkg-compat--http-get-nelisp (url timeout &optional auth-header)
+  "NeLisp backend adapter for `anvil-pkg-compat-http-get'.
+
+Uses `nelisp-http-get' when the NeLisp network package is already
+loaded, or `nelisp-http-fetch' when the higher-level NeLisp HTTP
+package is available.  The adapter normalizes the result into
+anvil-pkg's small (:status INT :body STRING) contract and degrades
+backend errors to status 0, matching the Emacs backend's
+network-failure behaviour."
+  (condition-case _err
+      (let* ((headers (anvil-pkg-compat--headers-for-auth auth-header))
+             (resp (if (fboundp 'nelisp-http-get)
+                       (nelisp-http-get
+                        url
+                        :headers headers
+                        :timeout timeout
+                        :cache-ttl 0)
+                     (nelisp-http-fetch
+                      url
+                      :headers headers
+                      :timeout-sec timeout
+                      :ttl 0
+                      :no-cache t
+                      :skip-robots-check t)))
+             (status (plist-get resp :status))
+             (body (plist-get resp :body)))
+        (list :status (if (integerp status) status 0)
+              :body (if (stringp body) body "")))
+    (error
+     (list :status 0 :body ""))))
+
+(defun anvil-pkg-compat--http-get-curl (url timeout &optional auth-header)
+  "Text HTTP fallback for NeLisp via the binary curl adapter.
+
+This keeps the text HTTP contract (:status INT :body STRING) while
+reusing the tested curl header/body split path from
+`anvil-pkg-compat--http-get-binary-curl'.  Unsupported-runtime
+signals from the underlying curl path are intentionally preserved."
+  (let ((resp (anvil-pkg-compat--http-get-binary-curl
+               url timeout auth-header)))
+    (list :status (plist-get resp :status)
+          :body (plist-get resp :body))))
+
+(defun anvil-pkg-compat--http-get-curl-after-native-zero
+    (resp url timeout auth-header)
+  "Return RESP or retry text HTTP through curl after native status 0.
+
+Auto-detected NeLisp HTTP packages can be loadable before their lower
+runtime primitives are executable.  In that case the normalized native
+adapter returns status 0; use the curl fallback if it is available,
+but keep RESP when curl itself is unsupported."
+  (if (eq (plist-get resp :status) 0)
+      (condition-case _
+          (anvil-pkg-compat--http-get-curl url timeout auth-header)
+        (anvil-pkg-http-not-supported resp))
+    resp))
+
+(defun anvil-pkg-compat--http-get-binary-nelisp (url timeout &optional auth-header)
+  "NeLisp backend adapter for `anvil-pkg-compat-http-get-binary'.
+
+Uses `nelisp-http-get-binary' when the NeLisp network package exposes
+a raw-byte download primitive.  The adapter normalizes the result into
+(:status INT :body STRING :content-length INT-OR-NIL) and degrades
+backend errors to status 0, matching the Emacs binary HTTP backend's
+network-failure behaviour."
+  (condition-case _err
+      (let* ((resp (nelisp-http-get-binary
+                    url
+                    :headers (anvil-pkg-compat--headers-for-auth auth-header)
+                    :timeout timeout
+                    :cache-ttl 0))
+             (status (plist-get resp :status))
+             (body (plist-get resp :body))
+             (content-length (plist-get resp :content-length)))
+        (list :status (if (integerp status) status 0)
+              :body (if (stringp body) body "")
+              :content-length (and (integerp content-length)
+                                   content-length)))
+    (error
+     (list :status 0 :body "" :content-length nil))))
+
+(defun anvil-pkg-compat--http-get-binary-curl-after-native-zero
+    (resp url timeout auth-header)
+  "Return RESP or retry binary HTTP through curl after native status 0."
+  (if (eq (plist-get resp :status) 0)
+      (condition-case _
+          (anvil-pkg-compat--http-get-binary-curl url timeout auth-header)
+        (anvil-pkg-http-not-supported resp))
+    resp))
+
+(defun anvil-pkg-compat--parse-curl-headers (headers)
+  "Parse curl --dump-header HEADERS.
+
+Returns (:status INT :content-length INT-OR-NIL) for the final
+HTTP response block.  Curl writes one header block per redirect when
+`-L' is used, so this parser resets Content-Length each time it
+sees a new HTTP status line and keeps the last block."
+  (let ((lines (split-string (or headers "") "\r?\n"))
+        (status 0)
+        (content-length nil))
+    (dolist (line lines)
+      (cond
+       ((string-match "\\`HTTP/[0-9.]+[ \t]+\\([0-9]+\\)" line)
+        (setq status (string-to-number (match-string 1 line))
+              content-length nil))
+       ((string-match "\\`[Cc]ontent-[Ll]ength:[ \t]*\\([0-9]+\\)" line)
+        (setq content-length (string-to-number (match-string 1 line))))))
+    (list :status status :content-length content-length)))
+
+(defun anvil-pkg-compat--http-get-binary-curl (url timeout &optional auth-header)
+  "Fetch URL as raw bytes using curl.
+
+This is the NeLisp fallback when no native binary HTTP hook is
+installed.  It writes headers and body to separate temp files so the
+binary response is never mixed with textual HTTP metadata."
+  (let ((curl (anvil-pkg-compat-executable-find anvil-pkg-compat-curl-program)))
+    (unless curl
+      (signal 'anvil-pkg-http-not-supported
+              (list (format "anvil-pkg-compat-http-get-binary: no NeLisp binary HTTP backend and %s not found"
+                            anvil-pkg-compat-curl-program))))
+    (let ((headers-file (anvil-pkg-compat-make-temp-file "anvil-pkg-curl-headers-"))
+          (body-file (anvil-pkg-compat-make-temp-file "anvil-pkg-curl-body-")))
+      (unwind-protect
+          (let* ((args (append
+                        (list "-L"
+                              "--silent"
+                              "--show-error"
+                              "--max-time" (number-to-string (or timeout 30))
+                              "--dump-header" headers-file
+                              "--output" body-file)
+                        (when auth-header
+                          (list "-H" (concat "Authorization: " auth-header)))
+                        (list url)))
+                 (resp (condition-case err
+                           (anvil-pkg-compat-call-process curl args)
+                         (error
+                          (signal 'anvil-pkg-http-not-supported
+                                  (list (format "anvil-pkg-compat-http-get-binary: curl fallback cannot run %s (%s)"
+                                                curl
+                                                (error-message-string err)))))))
+                 (exit (plist-get resp :exit)))
+            (if (not (eq exit 0))
+                (list :status 0 :body "" :content-length nil)
+              (let* ((header-info
+                      (anvil-pkg-compat--parse-curl-headers
+                       (anvil-pkg-compat-read-file headers-file)))
+                     (status (plist-get header-info :status)))
+                (list :status status
+                      :body (if (eq status 0)
+                                ""
+                              (anvil-pkg-compat--read-file-binary body-file))
+                      :content-length
+                      (plist-get header-info :content-length)))))
+        (anvil-pkg-compat-delete-file-quietly headers-file)
+        (anvil-pkg-compat-delete-file-quietly body-file)))))
+
 (defun anvil-pkg-compat-http-get-binary (url &optional timeout auth-header)
   "Synchronously fetch URL preserving raw bytes (no coding conversion).
 
@@ -468,8 +1108,10 @@ The :content-length slot is parsed from the response headers when
 present, so callers can refuse oversize payloads without keeping
 the whole body in memory afterwards.
 
-Signals `anvil-pkg-http-not-supported' on the NeLisp standalone
-runtime; Phase 5 will land a real NeLisp HTTP backend."
+On NeLisp, an explicit backend hook wins; otherwise the helper falls
+back to a loaded `nelisp-http-get-binary' backend, then to `curl' when
+it is available on PATH.  If neither exists, signals
+`anvil-pkg-http-not-supported'."
   (pcase (anvil-pkg-compat-runtime)
     ('emacs
      (anvil-pkg-compat--http-get-binary-emacs
@@ -477,9 +1119,27 @@ runtime; Phase 5 will land a real NeLisp HTTP backend."
       (or timeout 30)
       (or auth-header (anvil-pkg-compat-credential-for-url url))))
     ('nelisp
-     (signal 'anvil-pkg-http-not-supported
-             (list (format "anvil-pkg-compat-http-get-binary: NeLisp HTTP backend not yet implemented (url=%s)"
-                           url))))
+     (if anvil-pkg-compat-nelisp-http-get-binary-function
+         (anvil-pkg-compat--validate-binary-http-result
+          (funcall anvil-pkg-compat-nelisp-http-get-binary-function
+                   url
+                   (or timeout 30)
+                   (or auth-header (anvil-pkg-compat-credential-for-url url)))
+          "anvil-pkg-compat-nelisp-http-get-binary-function")
+       (anvil-pkg-compat--try-require-nelisp-backends)
+       (if (fboundp 'nelisp-http-get-binary)
+           (let ((timeout (or timeout 30))
+                 (auth (or auth-header
+                           (anvil-pkg-compat-credential-for-url url))))
+             (anvil-pkg-compat--http-get-binary-curl-after-native-zero
+              (anvil-pkg-compat--http-get-binary-nelisp url timeout auth)
+              url
+              timeout
+              auth))
+         (anvil-pkg-compat--http-get-binary-curl
+          url
+          (or timeout 30)
+          (or auth-header (anvil-pkg-compat-credential-for-url url))))))
     (_
      (signal 'anvil-pkg-http-not-supported
              (list (format "anvil-pkg-compat-http-get-binary: no backend for runtime %S"
@@ -590,8 +1250,9 @@ Functional equivalent of `define-error', but works without it
 PLIST mirrors the keyword arguments accepted by Emacs `make-process'
 \(:name :command :sentinel :stderr :connection-type :noquery :buffer\).
 Returns a process object on Emacs.  Signals
-`anvil-pkg-async-not-supported' on the NeLisp standalone runtime —
-Phase 5 will land a real NeLisp backend.
+`anvil-pkg-async-not-supported' on NeLisp only when neither an
+explicit backend hook nor a loaded `nelisp-make-process' backend is
+available.
 
 This is the sole runtime-aware async-spawn entry point for
 anvil-pkg sub-modules; consult `anvil-pkg-compat-runtime' for the
@@ -600,8 +1261,19 @@ underlying decision."
     ('emacs
      (apply #'make-process plist))
     ('nelisp
-     (signal 'anvil-pkg-async-not-supported
-             (list "anvil-pkg-compat-make-process-async: NeLisp runtime has no async backend (Phase 5)")))
+     (if anvil-pkg-compat-nelisp-make-process-function
+         (apply anvil-pkg-compat-nelisp-make-process-function plist)
+       (anvil-pkg-compat--try-require-nelisp-backends)
+       (if (fboundp 'nelisp-make-process)
+           (condition-case err
+               (apply #'nelisp-make-process plist)
+             (error
+              (signal 'anvil-pkg-async-not-supported
+                      (list
+                       (format "anvil-pkg-compat-make-process-async: NeLisp async backend failed (%s)"
+                               (error-message-string err))))))
+         (signal 'anvil-pkg-async-not-supported
+                 (list "anvil-pkg-compat-make-process-async: NeLisp runtime has no async backend (Phase 5)")))))
     (other
      (signal 'anvil-pkg-async-not-supported
              (list (format "anvil-pkg-compat-make-process-async: unknown runtime %S" other))))))

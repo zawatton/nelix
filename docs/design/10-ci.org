@@ -1,13 +1,20 @@
 #+title: anvil-pkg — CI integration (GitHub Actions)
 #+author: zawatton
 #+date: 2026-05-06
-#+property: status DRAFT
+#+property: status SHIPPED
 
 * STATUS
 
-DRAFT 2026-05-06.  Single-task scope.  Lands a GitHub Actions
-workflow that gates =push= / =pull_request= against =main= on
-ERT 91/91 PASS + byte-compile clean.
+SHIPPED 2026-05-06.  Single-task scope.  Lands a GitHub Actions
+workflow that gates =push= / =pull_request= against =main=.
+
+Current audit note (2026-06-08): this CI baseline is now superseded by
+later phases.  The current local mock suite is 182/182, Phase 4-H added
+a separate =smoke.yml= workflow for real-Nix =make smoke-eval=, and
+the same smoke workflow also runs =make nix-check= for the repository
+flake.  The main =test.yml= gate now runs =make lint=, =make test=,
+=make smoke-pairs-check=, and =make smoke-render=.  The equivalent
+local aggregate target is =make check=.
 
 Not a feature phase — infrastructure only.  Phase 4-G (private
 repo) and Phase 5 (NeLisp backend) remain the next *feature*
@@ -38,11 +45,26 @@ milestones; CI is meta.
 
 1. =actions/checkout@v4=
 2. =purcell/setup-emacs@master= with =version: 30.1=
-3. =make compile= (warnings-as-errors)
-4. =make test= (ERT 91/91 expected)
+3. =make lint= (source/script/test byte-compile warnings-as-errors +
+   source/script/test =check-declare=)
+4. =make test= (ERT 182/182 expected in the current suite)
+5. =make smoke-pairs-check= (=SMOKE_EVAL_PAIRS= /
+   =SMOKE_BUILD_PAIRS= are non-empty, use =example-file:nix-attr=
+   form, reference existing example files, and expose the requested
+   attrs in rendered flakes; no Nix)
+6. =make smoke-render= (all =examples/*.el= recipes register at
+   least one package, render to =flake.nix=, and pass a flake-shape
+   check, no Nix; zero examples is an error)
 
 No caching of =.elc= — the build is fast enough that cache
 invalidation cost outweighs the saving.
+
+Local equivalent: =make check= runs the same no-Nix gate
+(=make lint= + =make test= + =make smoke-pairs-check= +
+=make smoke-render=) while the workflow keeps the steps split for
+readable GitHub logs.  =make lint= includes runtime source, smoke
+helper script, and ERT byte-compilation plus declaration checks for
+all three source sets.
 
 ** L37 — triggers: push / pull_request against main
 
@@ -64,6 +86,11 @@ tiny example that does build.
 Decision: defer Nix-in-CI to its own phase.  This phase keeps
 CI scope to the host-side Elisp gate.
 
+Superseded by Phase 4-H and the later repository-flake gate:
+=.github/workflows/smoke.yml= now installs Nix, runs =make nix-check=
+for the top-level flake, and runs =make smoke-eval= against the four
+real-hash examples.
+
 ** L39 — README badge
 
 Add a single-line badge at the top of =README.org= linking to
@@ -79,27 +106,28 @@ a visitor sees.
 * Open questions / non-goals
 
 - *OQ24.* Do we want to fail CI on byte-compile warnings even
-  when =make test= passes?  Decision: yes — =make compile= already
-  uses =byte-compile-error-on-warn t=, and =lint= adds
-  =check-declare-file=.  Run =make compile= as a distinct step
-  before =make test= so a failed compile is reported separately
-  in the run log.
-- *OQ25.* Should =lint= be required to pass?  Decision: yes,
-  but bundled inside =make compile= — =check-declare= surfaces
-  void-function regressions that ERT misses (we hit one in
-  Phase 4-D).  Keep the explicit =make lint= target, but call
-  =make compile= in CI for now; promote to =make lint= once we
-  audit current =check-declare= output for false positives.
+  when =make test= passes?  Decision: yes.  The current =make lint=
+  gate runs source, smoke helper script, and ERT byte-compile with
+  =byte-compile-error-on-warn= and checks declarations in all three
+  source sets.
+- *OQ25.* Should =lint= be required to pass?  Decision: yes.  The
+  current local audit passes =make lint= without false positives, so
+  =test.yml= runs =make lint= before =make test=.
+- *OQ30.* Should example rendering be part of the no-Nix CI gate?
+  Decision: yes.  =make smoke-render= is fast, does not require Nix,
+  auto-discovers =examples/*.el=, and catches stale example DSL before
+  the real-Nix =smoke.yml= job.
 - *Non-goal.* Multi-Emacs matrix.  Adding 28/29/30 triples
   runtime + runs into setup-emacs binary availability gaps on
   older versions.  Re-evaluate when we get a 28/29 bug report.
 - *Non-goal.* macOS / Windows runners.  GitHub free minutes
   multiplier (10× macOS, 2× Windows) makes this expensive
   before we have a known cross-platform issue.
-- *Non-goal.* Real-Nix smoke / build cache.  Separate phase.
-- *Non-goal.* Coverage upload (Codecov etc.).  91 tests, no
-  coverage tooling currently — additive complexity for unclear
-  ROI.
+- *Non-goal for this phase.* Real-Nix smoke / build cache.  Completed
+  later by Phase 4-H's separate =smoke.yml=.
+- *Non-goal.* Coverage upload (Codecov etc.).  The suite was 91 tests
+  when this CI phase landed and is 182/182 in the current audit; no
+  coverage tooling currently — additive complexity for unclear ROI.
 - *Non-goal.* Auto-format / commit-message gate.  Out of scope.
 
 * Sub-task decomposition
@@ -133,7 +161,9 @@ Manual verification only:
 * Acceptance
 
 - =.github/workflows/test.yml= exists and validates on push.
-- First post-merge run is green (ERT 91/91, compile clean).
+- Current local equivalent of the workflow gate is green:
+  =make check= (=make lint= + =make test= (=182/182=) +
+  =make smoke-pairs-check= + =make smoke-render=).
 - README badge renders.
 - Future PRs cannot be merged without green CI (branch
   protection rule is *separate* — not configured by this phase,
@@ -144,5 +174,18 @@ Manual verification only:
 - Branch protection rule on =main= requiring CI green
   (Settings → Branches → Add rule).
 - Emacs 29 fallback once a 29.x user reports a bug.
-- Nix-in-CI smoke phase.
-- =make lint= promotion (after =check-declare= audit).
+- Nix-in-CI smoke phase.  Completed by Phase 4-H.
+- Repository flake check.  Completed: =smoke.yml= runs
+  =make nix-check=, which evaluates the pinned development shell and
+  builds the flake's =checks.<system>.check= derivation running
+  =make check=.
+- =make lint= promotion (after =check-declare= audit).  Completed:
+  current local audit passes =make lint= without warnings, including
+  smoke helper / ERT byte-compilation and script/test declaration
+  checks, and =test.yml= runs it before =make test=.
+- No-Nix example render gate.  Completed: =test.yml= runs
+  =make smoke-pairs-check= and =make smoke-render= after the ERT
+  suite, including smoke pair metadata / rendered-attr validation,
+  generated =flake.nix= shape checks for every =examples/*.el= recipe,
+  and a guard against accidentally rendering zero examples or
+  package-empty examples.

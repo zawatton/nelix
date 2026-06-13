@@ -22,6 +22,12 @@
 (require 'anvil-pkg)
 (require 'anvil-pkg-state)
 
+(defvar anvil-pkg--write-flake-fn)
+
+(declare-function anvil-pkg--render-flake "anvil-pkg-dsl")
+(declare-function anvil-pkg--register "anvil-pkg-dsl")
+(declare-function anvil-pkg--registry-clear "anvil-pkg-dsl")
+
 (defmacro anvil-pkg-test--with-mock (mock-fn &rest body)
   "Run BODY with `anvil-pkg--call-nix-fn' bound to MOCK-FN.
 

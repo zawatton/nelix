@@ -37,5 +37,8 @@ jobs:
           emacs --version | head -1
           nix --version
 
+      - name: Check repository flake
+        run: make nix-check
+
       - name: Render examples + flake check
         run: make smoke-eval

@@ -8,7 +8,7 @@ on:
 
 jobs:
   ert:
-    name: ERT + byte-compile (Emacs ${{ matrix.emacs }} on ${{ matrix.os }})
+    name: ERT + lint + smoke metadata + render (Emacs ${{ matrix.emacs }} on ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -26,8 +26,14 @@ jobs:
       - name: Show Emacs version
         run: emacs --version | head -1
 
-      - name: Byte-compile (warnings-as-errors)
-        run: make compile
+      - name: Lint (byte-compile + check-declare)
+        run: make lint
 
       - name: Run ERT suite
         run: make test
+
+      - name: Validate smoke pair lists
+        run: make smoke-pairs-check
+
+      - name: Render examples
+        run: make smoke-render

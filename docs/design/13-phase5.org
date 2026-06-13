@@ -1,0 +1,341 @@
+#+title: anvil-pkg — Phase 5: NeLisp compat backend groundwork
+#+author: zawatton
+#+date: 2026-06-08
+#+property: status SHIPPED
+
+* STATUS
+
+SHIPPED 2026-06-08.  Phase 5 groundwork on canonical =main=.
+
+Phase 4-C introduced =anvil-pkg-compat= as the runtime boundary but
+left NeLisp async / HTTP as unsupported branches.  This Phase 5
+groundwork closes the integration gap without changing the public
+=pkg-= API: call sites keep using compat primitives, while NeLisp can
+provide native process / network backends as its Layer-2 packages
+become available.
+
+* Goal
+
+| Before Phase 5 groundwork                                      | After Phase 5 groundwork                                           |
+|----------------------------------------------------------------+---------------------------------------------------------------------|
+| NeLisp runtime detection depended on =nelisp-call-process= only | Any usable split backend (=call-process= / async / HTTP) is enough  |
+| Async and HTTP required future edits at call sites              | Compat hook vars let NeLisp plug in implementations                 |
+| Loaded NeLisp process / HTTP backends were ignored              | Loaded backends are auto-detected when hooks are unset              |
+| HTTP fallback had only the Emacs =url= backend                  | NeLisp can use native backends or =curl= fallback for text / bytes   |
+| State JSON wrote through Emacs =json-serialize= directly        | State writes go through =anvil-pkg-compat-json-serialize=           |
+| File / PATH helpers assumed loaded Emacs-compat functions       | Helpers lazy-require NeLisp runtime / Emacs-compat / fileio packages |
+| Async sentinels used raw Emacs process property/status APIs     | Async process metadata / status / exit access goes through compat   |
+| Async stderr buffers used raw Emacs buffer APIs                  | Buffer create / read / live / kill helpers go through compat        |
+
+* Locked decisions
+
+** L51 — hooks first, backend probe second, auto-detect third
+
+The NeLisp branch checks explicit hooks before auto-detection:
+
+- =anvil-pkg-compat-nelisp-make-process-function=
+- =anvil-pkg-compat-nelisp-call-process-function=
+- =anvil-pkg-compat-nelisp-getenv-function=
+- =anvil-pkg-compat-nelisp-executable-find-function=
+- =anvil-pkg-compat-nelisp-http-get-function=
+- =anvil-pkg-compat-nelisp-http-get-binary-function=
+
+Hooks are the stable integration point for NeLisp while its Layer-2
+APIs are still moving.  When a hook is unset, compat probes
+=nelisp-process= / =nelisp-network= / =nelisp-http= with noerror
+require once, then auto-detects =nelisp-make-process=,
+=nelisp-http-get=, =nelisp-http-fetch=, and
+=nelisp-http-get-binary= if they are available.  This keeps the
+mainline package useful with both explicit embedding and package-split
+NeLisp images.
+
+** L52 — lazy runtime refresh
+
+Runtime detection starts at load time, but =anvil-pkg-compat-runtime=
+refreshes a stale nil result.  The detection probe also attempts
+noerror requires for =nelisp-process=, =nelisp-network=, and
+=nelisp-http= once.
+
+Subprocess dispatch must consult =anvil-pkg-compat-runtime=, not read
+=anvil-pkg-compat--nelisp-runtime-p= directly.  This prevents a session
+that loaded =anvil-pkg= before NeLisp backends from staying stuck on
+the Emacs branch after those backends appear.  File I/O is slightly
+more permissive: it probes =nelisp-runtime=,
+=nelisp-emacs-compat=, and =nelisp-emacs-compat-fileio= once, prefers
+NeLisp Layer-2 file primitives when the runtime is NeLisp, and still
+allows Emacs-compatible file primitives as a bootstrap / test fallback
+when no NeLisp fileio package is loaded.
+
+Async process sentinels store and read their metadata through
+=anvil-pkg-compat-process-get= / =anvil-pkg-compat-process-put= and
+query status / exit code through compat wrappers.  This keeps the
+Emacs process path unchanged while allowing future native
+=nelisp-process= wraps to use their own property and status APIs.
+
+Async stderr buffers are created, inspected, and cleaned up through
+=anvil-pkg-compat-generate-buffer=,
+=anvil-pkg-compat-buffer-string=,
+=anvil-pkg-compat-buffer-live-p=, and
+=anvil-pkg-compat-kill-buffer=.  NeLisp can route those operations via
+=nelisp-ec-*= without requiring async call sites to use raw Emacs
+buffer functions.
+
+** L53 — binary HTTP native backend, then =curl=
+
+Native binary HTTP is still preferred via
+=anvil-pkg-compat-nelisp-http-get-binary-function=.  When no explicit
+hook is installed, the NeLisp branch auto-detects
+=nelisp-http-get-binary=.  If neither native path exists, it uses
+=curl= when present on PATH.
+
+Text HTTP follows the same fallback policy after checking
+=anvil-pkg-compat-nelisp-http-get-function= and a loaded
+=nelisp-http-get= backend, then the higher-level
+=nelisp-http-fetch= package.  The text adapter reuses the binary curl
+path and returns only =:status= and =:body= to preserve the existing
+contract.
+
+Auto-detected native HTTP backends are treated as preferred but not
+infallible.  If a loaded =nelisp-http-get= / =nelisp-http-fetch= /
+=nelisp-http-get-binary= path normalizes to status 0 because the
+standalone image lacks its lower runtime primitives, compat retries
+through =curl= when available.  If =curl= is unavailable, the original
+status 0 response is preserved.
+
+The fallback writes headers and body to separate temp files using:
+
+#+begin_src shell
+curl -L --silent --show-error --max-time TIMEOUT \
+  --dump-header HEADERS --output BODY [-H "Authorization: ..."] URL
+#+end_src
+
+The final redirect response block determines =:status= and
+=:content-length=.  If =curl= is absent, compat preserves the existing
+=anvil-pkg-http-not-supported= signal.
+
+** L54 — JSON serialization is a compat primitive
+
+=anvil-pkg-state= no longer calls =json-serialize= directly.  It writes
+through =anvil-pkg-compat-json-serialize=, which prefers Emacs
+=json-serialize= and falls back to =nelisp-json-serialize=.
+
+State entries store missing =expires-at= as nil.  That keeps the JSON
+shape portable because NeLisp JSON encoders can represent nil as
+=null= without needing Emacs's =:null= sentinel object.
+
+* ERT impact
+
+| Test area                  | Coverage added                                                    |
+|----------------------------+-------------------------------------------------------------------|
+| Runtime detection          | Split process / HTTP / binary HTTP backends, lazy require, stale nil refresh |
+| Sync process               | Explicit NeLisp hook, =nelisp-call-process= auto-detect           |
+| Backend hook contracts     | Explicit hook result shape validation for process / HTTP plists   |
+| Async dispatch             | NeLisp hook, backend probe, =nelisp-make-process= auto-detect     |
+| Async process metadata     | Compat process get / put / status / exit wrappers                 |
+| Async stderr buffers       | Compat buffer generate / string / live / kill wrappers            |
+| Text HTTP                  | NeLisp hook, backend probe, =nelisp-http-get= / =nelisp-http-fetch=, =curl= fallback, error degradation |
+| Binary HTTP                | NeLisp hook, backend probe, =nelisp-http-get-binary=, =curl= fallback, unsupported signals |
+| JSON parser / serializer   | Emacs backend, lazy NeLisp JSON require, state encode via compat  |
+| File / env / PATH helpers  | Explicit env/PATH hooks, lazy NeLisp runtime / Emacs-compat / fileio probes, nil fallback |
+
+Target ERT count after this groundwork: 130.  Current suite count after
+adding NeLisp JSON lazy-require coverage, dispatch-time backend probes,
+NeLisp fileio lazy-require / nil-fallback coverage, and the Phase 4-H
+render-script / pair-attr / all-example ERTs, plus Phase 5
+suite-readiness / suite-runner / loadability contract coverage, plus
+importer default clone path coverage: 182/182.
+
+* Files touched
+
+#+begin_src text
+anvil-pkg-compat.el                 ← hooks, lazy detection, fileio probes, curl fallback, JSON serializer
+anvil-pkg-state.el                  ← state encode via compat JSON serializer
+Makefile                            ← smoke-nelisp target for local standalone checks
+scripts/anvil-pkg-nelisp-smoke.el   ← narrow real-NeLisp load smoke
+scripts/anvil-pkg-nelisp-ert-shim.el ← local registration / runner shim for NeLisp smoke
+test/anvil-pkg-compat-test.el       ← Phase 5 dispatch / fallback coverage
+test/anvil-pkg-state-test.el        ← state serializer coverage
+README.org                         ← status and Phase 5 groundwork notes
+docs/design/13-phase5.org          ← this file
+#+end_src
+
+* Phase 5 groundwork acceptance
+
+- [x] Explicit NeLisp backend hooks exist for sync process, async,
+      env lookup, PATH lookup, text HTTP, and binary HTTP
+- [x] Explicit sync / text HTTP / binary HTTP hook returns are
+      validated against their documented plist shapes
+- [x] Loaded or lazy-required =nelisp-make-process=,
+      =nelisp-http-get=, =nelisp-http-fetch=, and
+      =nelisp-http-get-binary= are auto-detected
+- [x] Runtime detection refreshes after package-split backends load
+- [x] Async process metadata, status, and exit-code access use compat
+      wrappers rather than raw Emacs process APIs
+- [x] Async stderr buffer create / read / live / kill operations use
+      compat wrappers rather than raw Emacs buffer APIs at async call
+      sites
+- [x] Binary HTTP has a usable NeLisp fallback via =curl=
+- [x] Text HTTP has a usable NeLisp fallback via =curl= when no native
+      backend is loaded
+- [x] Auto-detected but unusable NeLisp HTTP backends can fall back to
+      =curl= after a normalized status 0 result
+- [x] State JSON serialization no longer depends directly on Emacs
+      =json-serialize=
+- [x] JSON parse / serialize lazy-require =nelisp-json= when Emacs JSON
+      primitives are absent
+- [x] File / PATH helpers lazy-require =nelisp-runtime=,
+      =nelisp-emacs-compat=, and =nelisp-emacs-compat-fileio= when
+      Emacs primitives are absent or the runtime is NeLisp
+- [x] Env / PATH helpers fall through to NeLisp backends when an
+      Emacs-compatible shim exists but returns nil
+- [x] Env / PATH helpers can be supplied explicitly by standalone
+      NeLisp embedders before compat falls back to Emacs shims
+- [x] =make test= passes with the Phase 5 groundwork coverage
+      (=182/182= current suite)
+- [x] =make lint= passes without warnings, including runtime source,
+      smoke helper, and ERT byte-compilation plus source/script/test
+      declaration checks
+- [x] =make smoke-nelisp= loads =anvil-pkg-compat.el= under a real
+      standalone NeLisp binary and verifies the pure fallback surface
+      currently available through that CLI.  When the local
+      =nelisp-json.el= source is discoverable, the same target loads it
+      and verifies compat JSON parsing through the real backend.  When
+      local =nelisp-emacs-compat= dependency sources are discoverable,
+      it loads them and verifies compat buffer create / live /
+      empty-read dispatch through the real =nelisp-ec= backend.  It
+      also forces no-backend NeLisp runtime branches and verifies the
+      async / text HTTP / binary HTTP unsupported-runtime signals under
+      the real standalone evaluator.  It also verifies explicit hook
+      dispatch for sync process, async process, env lookup, PATH
+      lookup, text HTTP, and binary HTTP under that same standalone
+      evaluator.  Native process / HTTP source probing is handled by
+      =make smoke-nelisp-capabilities= so core compat smoke stays
+      stable when definitions load before their lower runtime
+      primitives can execute.
+- [x] =make smoke-nelisp-capabilities= prints the local standalone
+      capability snapshot and checks =:native-gap-accounted t=.  The
+      current local image reports present local ERT shim / =cl-letf= /
+      =cl-defun= after loading =nelisp-stdlib-eval-special.el= and
+      =scripts/anvil-pkg-nelisp-ert-shim.el=, no lower
+      =make-process=, no =url-retrieve-synchronously=, loaded but not
+      executable =nelisp-call-process= after optional process source
+      probing, loaded =nelisp-make-process= / =nelisp-http-get= /
+      =nelisp-http-fetch= definitions, no =nelisp-http-get-binary=,
+      and no executable native async / text HTTP lower primitive yet.
+- [x] =make smoke-nelisp-suite-readiness= audits whether the current
+      standalone image can run the full anvil-pkg ERT suite.  The
+      current local image reports =:suite-ready nil= with blockers
+      =native-async-lower-primitive= and
+      =native-text-http-lower-primitive=, and reports
+      =:readiness-audit-ok t= so the incomplete production suite state
+      is mechanically visible without pretending the suite passes.
+- [x] =make smoke-nelisp-suite-loadability= loads runtime sources and
+      each ERT file in a fresh standalone NeLisp process with the local
+      ERT shim in registration-only mode.  This proves the current CLI
+      can parse and register every test file in NeLisp runtime mode,
+      and asserts the registered total is 182 tests, before the lower
+      process / URL primitives required for execution exist.
+- [x] =make smoke-nelisp-suite= is wired as the final real-NeLisp
+      suite command.  It currently exits non-zero before loading ERT
+      files when readiness reports blockers; once
+      =:suite-ready t= is true, the same target loads runtime source,
+      helper scripts, and all ERT files under standalone NeLisp and
+      delegates to =ert-run-tests-batch-and-exit=.
+- [x] =make smoke-nelisp-local= is the aggregate local NeLisp gate.  It
+      runs the compat smoke, capability audit, suite readiness audit,
+      suite loadability probe, and then treats the current full-suite
+      not-ready result as expected until the lower process / HTTP
+      primitives land.
+- [x] =make verify-local= is the full local release gate: no-Nix
+      =make check=, top-level repository =nix flake check=,
+      real-Nix eval/build smoke, aggregate NeLisp smoke, and
+      =git diff --check=.
+- [x] Keep =curl= fallback after adding loaded native binary HTTP detection
+
+* Remaining external completion blockers
+
+** Ownership boundary
+
+These blockers are intentionally classified as NeLisp runtime /
+Layer-2 backend work, not anvil-pkg application work.
+
+anvil-pkg owns:
+
+- Stable compat entry points and hook variables:
+  =anvil-pkg-compat-nelisp-call-process-function=,
+  =anvil-pkg-compat-nelisp-make-process-function=,
+  =anvil-pkg-compat-nelisp-http-get-function=, and
+  =anvil-pkg-compat-nelisp-http-get-binary-function=.
+- Result-shape validation for those hooks before anvil-pkg consumes
+  the returned plists.
+- Lazy detection of loaded NeLisp package functions such as
+  =nelisp-make-process=, =nelisp-http-get=, and
+  =nelisp-http-fetch=.
+- Graceful unsupported-runtime signals when no executable backend is
+  available.
+- Opportunistic =curl= fallback for HTTP when a process backend can run
+  =curl=.
+- Smoke/readiness tests that report whether the current standalone
+  image can execute the full anvil-pkg suite.
+
+NeLisp owns:
+
+- The executable process lower primitive: either a standalone
+  =make-process= equivalent or a native =nelisp-make-process= path
+  backed by syscall / FFI primitives such as spawn, pipe, and wait.
+- The executable HTTP lower primitive: either a standalone
+  =url-retrieve-synchronously= equivalent or a native
+  =nelisp-http-get= / =nelisp-http-fetch= transport that does not
+  depend on Emacs's host URL library.
+- Runtime semantics for process objects, status, exit code, buffers,
+  and network I/O that NeLisp packages expose upward.
+
+The boundary is deliberately narrow: anvil-pkg must not grow its own
+Rust syscall bridge, process scheduler, socket/TLS stack, or host-URL
+implementation.  Doing so would duplicate NeLisp runtime ownership and
+would not help other NeLisp packages.  Conversely, NeLisp does not need
+to know anvil-pkg's install DSL; it only needs to provide executable
+process / HTTP primitives matching the small compat contracts above.
+
+- [ ] Replace the async hook with a production NeLisp native backend
+      backed by an executable lower process primitive.  The current
+      local NeLisp checkout has =nelisp-make-process= /
+      =nelisp-call-process= definitions in =nelisp-process.el=, but
+      until the syscall FFI bridge is wired those definitions fall
+      through to host =make-process=.  The standalone image used by
+      the smoke target currently reports no lower =make-process=
+      primitive, so the loaded definitions are useful for
+      auto-detection / contract probing but not yet executable.  This
+      blocker is cleared by either routing =nelisp-make-process=
+      through the native =nl-syscall-posix-spawn= /
+      =nl-syscall-waitpid= / =nl-syscall-pipe2= path, or by exposing a
+      standalone =make-process= equivalent that can run subprocesses.
+- [ ] Replace the text HTTP hook with a production NeLisp native
+      backend backed by an executable lower HTTP primitive.  The
+      current local NeLisp =nelisp-network.el= and =nelisp-http.el=
+      sources provide =nelisp-http-get= / =nelisp-http-fetch=
+      definitions, but those paths delegate to host
+      =url-retrieve-synchronously=.  The standalone image used by the
+      smoke target currently reports no lower
+      =url-retrieve-synchronously= primitive, so the definitions are
+      loadable and visible to anvil-pkg compat probing but not yet a
+      production standalone HTTP transport.  This blocker is cleared by
+      adding a standalone URL / HTTP primitive or by routing
+      =nelisp-http-fetch= through a native transport that does not
+      depend on the host URL library.
+- [ ] Run the suite under a real NeLisp standalone image.  The local
+      ERT shim, =cl-letf= support, runtime-mode test registration, and
+      per-file loadability are already green for all 182 tests.  Full
+      execution is intentionally held behind the two native lower
+      primitive blockers above so =make smoke-nelisp-suite= cannot
+      report a misleading pass on a runtime that can load definitions
+      but cannot execute process / HTTP behavior.
+
+* Out of scope
+
+- Changing the public =pkg-= API.
+- Reworking the Emacs =url= backend.
+- Persisting credentials.  Phase 4-G's env-var-only credential model
+  remains unchanged.
+- Removing unsupported-runtime signals.  They remain the correct result
+  when no native backend and no fallback exists.

@@ -15,6 +15,11 @@
 (require 'cl-lib)
 (require 'anvil-pkg-dsl)
 
+(defvar anvil-pkg-emacs--render-fetch-fn)
+
+(declare-function anvil-pkg-render-example "scripts/anvil-pkg-render")
+(declare-function anvil-pkg-render-example-attr "scripts/anvil-pkg-render")
+
 (defmacro anvil-pkg-dsl-test--with-clean-registry (&rest body)
   "Run BODY against an empty registry, restored on exit."
   (declare (indent 0))
@@ -746,6 +751,108 @@ MELPA\" signal."
     (should (string-match-p
              "(magit :fetcher git :url \"https://github\\.com/magit/magit\""
              out))))
+
+;;;; --- render script (Phase 4-H) -------------------------------------------
+
+(defun anvil-pkg-dsl-test--load-render-script ()
+  "Load the batch render helper used by smoke tests."
+  (load (expand-file-name "scripts/anvil-pkg-render.el" default-directory)
+        nil :nomessage))
+
+(ert-deftest anvil-pkg-render-script-test-write-flake ()
+  "Render script writes a non-empty flake.nix for the stdenv example."
+  (anvil-pkg-dsl-test--load-render-script)
+  (let ((dir (make-temp-file "anvil-pkg-render-test-" t)))
+    (unwind-protect
+        (let ((flake (anvil-pkg-render-example
+                      "examples/stdenv-hello.el" dir)))
+          (should (file-exists-p flake))
+          (let ((contents (with-temp-buffer
+                            (insert-file-contents flake)
+                            (buffer-string))))
+            (should (string-match-p "gnu-hello" contents))
+            (should (string-match-p "pkgs.stdenv.mkDerivation" contents))))
+      (delete-directory dir t))))
+
+(ert-deftest anvil-pkg-render-script-test-rust-no-cargo-sha256 ()
+  "Rendered rust example uses nixpkgs' modern cargoHash attribute."
+  (anvil-pkg-dsl-test--load-render-script)
+  (let ((dir (make-temp-file "anvil-pkg-render-test-" t)))
+    (unwind-protect
+        (let ((flake (anvil-pkg-render-example
+                      "examples/rust-ripgrep.el" dir)))
+          (let ((contents (with-temp-buffer
+                            (insert-file-contents flake)
+                            (buffer-string))))
+            (should (string-match-p "cargoHash =" contents))
+            (should-not (string-match-p "cargoSha256" contents))))
+      (delete-directory dir t))))
+
+(ert-deftest anvil-pkg-render-script-test-empty-example-errors ()
+  "Render script rejects example files that register no packages."
+  (anvil-pkg-dsl-test--load-render-script)
+  (let ((dir (make-temp-file "anvil-pkg-render-test-empty-" t))
+        (example (make-temp-file "anvil-pkg-empty-example-" nil ".el")))
+    (unwind-protect
+        (progn
+          (with-temp-file example
+            (insert ";;; empty example\n"))
+          (should-error (anvil-pkg-render-example example dir))
+          (should-not (file-exists-p (expand-file-name "flake.nix" dir))))
+      (when (file-exists-p example)
+        (delete-file example))
+      (when (file-exists-p dir)
+        (delete-directory dir t)))))
+
+(ert-deftest anvil-pkg-render-script-test-example-attr-writes-flake ()
+  "Render script pair helper writes a flake when ATTR is registered."
+  (anvil-pkg-dsl-test--load-render-script)
+  (let ((dir (make-temp-file "anvil-pkg-render-test-attr-" t)))
+    (unwind-protect
+        (let ((flake (anvil-pkg-render-example-attr
+                      "examples/stdenv-hello.el" "gnu-hello" dir)))
+          (should (file-exists-p flake))
+          (let ((contents (with-temp-buffer
+                            (insert-file-contents flake)
+                            (buffer-string))))
+            (should (string-match-p "gnu-hello =" contents))))
+      (delete-directory dir t))))
+
+(ert-deftest anvil-pkg-render-script-test-example-attr-errors-on-missing ()
+  "Render script pair helper rejects stale example-file:attr metadata."
+  (anvil-pkg-dsl-test--load-render-script)
+  (let ((dir (make-temp-file "anvil-pkg-render-test-attr-missing-" t)))
+    (unwind-protect
+        (progn
+          (should-error
+           (anvil-pkg-render-example-attr
+            "examples/stdenv-hello.el" "not-there" dir))
+          (should-not (file-exists-p (expand-file-name "flake.nix" dir))))
+      (delete-directory dir t))))
+
+(ert-deftest anvil-pkg-render-script-test-all-examples-render ()
+  "Every example file loads and renders a non-empty flake.nix.
+
+This does not invoke Nix or require real hashes.  It catches stale
+example forms whenever the DSL surface changes."
+  (anvil-pkg-dsl-test--load-render-script)
+  (let ((examples (sort (directory-files "examples" t "\\.el\\'")
+                        #'string<))
+        (dir (make-temp-file "anvil-pkg-render-test-all-" t)))
+    (should examples)
+    (unwind-protect
+        (dolist (example examples)
+          (let* ((out-dir (expand-file-name
+                           (file-name-base example) dir))
+                 (flake (anvil-pkg-render-example example out-dir)))
+            (should (file-exists-p flake))
+            (let ((contents (with-temp-buffer
+                              (insert-file-contents flake)
+                              (buffer-string))))
+              (should (> (length contents) 0))
+              (should (string-match-p "packages.x86_64-linux ="
+                                      contents)))))
+      (delete-directory dir t))))
 
 (provide 'anvil-pkg-dsl-test)
 ;;; anvil-pkg-dsl-test.el ends here

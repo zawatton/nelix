@@ -315,7 +315,9 @@ Caller can override via the `:clone-dir-fn' keyword to
   (let ((basename (plist-get entry-info :name)))
     (when (and (stringp basename) (> (length basename) 0))
       (expand-file-name (format "external-packages/%s" basename)
-                        (or (anvil-pkg-compat-getenv "HOME") "~/.emacs.d/..")))))
+                        (expand-file-name
+                         ".emacs.d"
+                         (or (anvil-pkg-compat-getenv "HOME") "~"))))))
 
 (declare-function anvil-pkg-emacs-derive-deps-from-dir "anvil-pkg-emacs")
 (declare-function anvil-pkg-emacs-derive-deps "anvil-pkg-emacs")

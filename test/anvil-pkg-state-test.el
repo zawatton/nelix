@@ -115,6 +115,26 @@ TTL math is exercised end-to-end without sleeping in the test."
                            #'string<)))
            (should (equal keys '("b" "c")))))))))
 
+(ert-deftest anvil-pkg-state-test-encode-uses-compat-json-serializer ()
+  "`anvil-pkg-state--encode' must not call `json-serialize' directly."
+  (let ((seen nil))
+    (cl-letf (((symbol-function 'anvil-pkg-compat-json-serialize)
+               (lambda (obj)
+                 (setq seen obj)
+                 "encoded")))
+      (should (equal "encoded"
+                     (anvil-pkg-state--encode
+                      '(("ns" . (("key" :value (:deps (dash))
+                                  :expires-at nil)))))))
+      (should (hash-table-p seen))
+      (let* ((inner (gethash "ns" seen))
+             (entry (and (hash-table-p inner)
+                         (gethash "key" inner))))
+        (should (hash-table-p inner))
+        (should (hash-table-p entry))
+        (should (equal "(:deps (dash))" (gethash "value" entry)))
+        (should (null (gethash "expires-at" entry)))))))
+
 (ert-deftest anvil-pkg-state-test-mock-dispatch-fluid ()
   "`anvil-pkg--call-state-fn' can be `cl-letf'-rebound for mocking.
 

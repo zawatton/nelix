@@ -453,16 +453,16 @@ Internal helper called by `pkg-install' when NAME is a string."
 
 (defun anvil-pkg--async-stderr-string (proc)
   "Return the accumulated stderr string for PROC, or empty string."
-  (let ((buf (process-get proc 'anvil-pkg--stderr-buf)))
-    (if (and buf (buffer-live-p buf))
-        (with-current-buffer buf (buffer-string))
+  (let ((buf (anvil-pkg-compat-process-get proc 'anvil-pkg--stderr-buf)))
+    (if (and buf (anvil-pkg-compat-buffer-live-p buf))
+        (anvil-pkg-compat-buffer-string buf)
       "")))
 
 (defun anvil-pkg--async-cleanup (proc)
   "Kill the stderr buffer attached to PROC, if any."
-  (let ((buf (process-get proc 'anvil-pkg--stderr-buf)))
-    (when (and buf (buffer-live-p buf))
-      (kill-buffer buf))))
+  (let ((buf (anvil-pkg-compat-process-get proc 'anvil-pkg--stderr-buf)))
+    (when (and buf (anvil-pkg-compat-buffer-live-p buf))
+      (anvil-pkg-compat-kill-buffer buf))))
 
 (defun anvil-pkg--async-on-success (proc)
   "Sentinel happy path: post-install hook + :require + :on-success.
@@ -473,12 +473,12 @@ load-path augment over every emacs-package symbol and surface
 `:names NAMES' to the callback instead of `:name NAME'.
 `:require' is rejected at dispatch for list NAME so we never need
 to call `require' here in the multi case."
-  (let* ((names       (process-get proc 'anvil-pkg--names))
-         (name        (process-get proc 'anvil-pkg--name))
-         (build-type  (process-get proc 'anvil-pkg--build-system-type))
-         (require-supplied (process-get proc 'anvil-pkg--require-supplied))
-         (require-sym (process-get proc 'anvil-pkg--require-sym))
-         (on-success  (process-get proc 'anvil-pkg--on-success)))
+  (let* ((names       (anvil-pkg-compat-process-get proc 'anvil-pkg--names))
+         (name        (anvil-pkg-compat-process-get proc 'anvil-pkg--name))
+         (build-type  (anvil-pkg-compat-process-get proc 'anvil-pkg--build-system-type))
+         (require-supplied (anvil-pkg-compat-process-get proc 'anvil-pkg--require-supplied))
+         (require-sym (anvil-pkg-compat-process-get proc 'anvil-pkg--require-sym))
+         (on-success  (anvil-pkg-compat-process-get proc 'anvil-pkg--on-success)))
     (cond
      (names
       ;; Multi-install: augment load-path for every emacs-package symbol.
@@ -512,10 +512,10 @@ swallows silently).
 Phase 4-F: multi-install errors surface `:names NAMES' instead of
 `:name NAME'.  The error covers the whole bulk transaction since
 Nix profile install/add is atomic."
-  (let* ((names     (process-get proc 'anvil-pkg--names))
-         (name      (process-get proc 'anvil-pkg--name))
+  (let* ((names     (anvil-pkg-compat-process-get proc 'anvil-pkg--names))
+         (name      (anvil-pkg-compat-process-get proc 'anvil-pkg--name))
          (stderr    (anvil-pkg--async-stderr-string proc))
-         (on-error  (process-get proc 'anvil-pkg--on-error))
+         (on-error  (anvil-pkg-compat-process-get proc 'anvil-pkg--on-error))
          (err-plist (cond
                      (names (list :error 'anvil-pkg-nix-failed
                                   :exit  exit
@@ -550,9 +550,9 @@ Dispatches to `anvil-pkg--async-on-success' on `finished' (exit
 0) or `anvil-pkg--async-on-error' on any other terminal EVENT.
 Always cleans up the stderr buffer once the process is no longer
 live."
-  (when (memq (process-status proc) '(exit signal))
+  (when (memq (anvil-pkg-compat-process-status proc) '(exit signal))
     (unwind-protect
-        (let ((exit (process-exit-status proc)))
+        (let ((exit (anvil-pkg-compat-process-exit-status proc)))
           (cond
            ((and (stringp event)
                  (string-prefix-p "finished" event)
@@ -566,7 +566,7 @@ live."
   "Spawn `nix' with ARGS asynchronously and wire up the sentinel.
 
 NAME, PLIST and BUILD-SYSTEM-TYPE are stashed on the process via
-`process-put' so the sentinel can route post-install + user
+compat process properties so the sentinel can route post-install + user
 callbacks without a closure (closures over PLIST are awkward to
 mock).
 
@@ -580,14 +580,16 @@ re-resolved inside `anvil-pkg--multi-after-install')."
          (process-label
           (cond (multi (format "multi-%d" (length name)))
                 (t     (format "%s" name))))
-         (stderr-buf (generate-new-buffer " *anvil-pkg-async-stderr*"))
+         (stderr-buf
+          (anvil-pkg-compat-generate-buffer " *anvil-pkg-async-stderr*"))
          (require-supplied (anvil-pkg--plist-has-key-p plist :require))
          (require-sym      (plist-get plist :require))
          (on-success       (plist-get plist :on-success))
          (on-error         (plist-get plist :on-error))
-         ;; compat-make-process-async signals
-         ;; `anvil-pkg-async-not-supported' on NeLisp; Emacs gets a real
-         ;; process object back from `make-process'.
+         ;; compat-make-process-async returns a real process object on
+         ;; Emacs and can delegate to a NeLisp backend when one is
+         ;; loaded; otherwise the NeLisp branch signals
+         ;; `anvil-pkg-async-not-supported'.
          ;; Phase 4-G L43: prepend credential args so async installs
          ;; against private fetchers see the same access tokens as
          ;; the sync `anvil-pkg--call-nix-default' path.
@@ -601,17 +603,19 @@ re-resolved inside `anvil-pkg--multi-after-install')."
                 :noquery t
                 :stderr stderr-buf
                 :sentinel #'anvil-pkg--async-sentinel)))
-    (process-put proc 'anvil-pkg--stderr-buf       stderr-buf)
+    (anvil-pkg-compat-process-put proc 'anvil-pkg--stderr-buf stderr-buf)
     (cond
      (multi
-      (process-put proc 'anvil-pkg--names name))
+      (anvil-pkg-compat-process-put proc 'anvil-pkg--names name))
      (t
-      (process-put proc 'anvil-pkg--name name)
-      (process-put proc 'anvil-pkg--build-system-type build-system-type)
-      (process-put proc 'anvil-pkg--require-supplied require-supplied)
-      (process-put proc 'anvil-pkg--require-sym      require-sym)))
-    (process-put proc 'anvil-pkg--on-success       on-success)
-    (process-put proc 'anvil-pkg--on-error         on-error)
+      (anvil-pkg-compat-process-put proc 'anvil-pkg--name name)
+      (anvil-pkg-compat-process-put proc 'anvil-pkg--build-system-type
+                                    build-system-type)
+      (anvil-pkg-compat-process-put proc 'anvil-pkg--require-supplied
+                                    require-supplied)
+      (anvil-pkg-compat-process-put proc 'anvil-pkg--require-sym require-sym)))
+    (anvil-pkg-compat-process-put proc 'anvil-pkg--on-success on-success)
+    (anvil-pkg-compat-process-put proc 'anvil-pkg--on-error on-error)
     proc))
 
 ;;;; --- multi-install helpers (Phase 4-F L29-L34) ---------------------------
@@ -715,10 +719,12 @@ Recognised PLIST keys:
     After a successful `emacs-package' symbol install, augment
     `load-path' and call `(require SYMBOL)'.
   :async BOOL
-    When non-nil, spawn `nix profile install' via `make-process'
-    and return the process object immediately (Emacs runtime
-    only).  NeLisp standalone signals
-    `anvil-pkg-async-not-supported'.  Phase 4-B sub-task C.
+    When non-nil, spawn `nix profile install' asynchronously and
+    return the process object immediately.  Emacs uses
+    `make-process'; NeLisp can provide a native backend through
+    `anvil-pkg-compat'.  If no NeLisp backend is available, signals
+    `anvil-pkg-async-not-supported'.  Phase 4-B sub-task C +
+    Phase 5 compat groundwork.
   :on-success FN
     Called as (FN (:status :installed :name NAME)) after a
     successful async install (post-install hook + :require run
@@ -1254,8 +1260,8 @@ notice typos rather than silently clearing the wrong namespace."
 
 ;;;; --- MCP tool surface ------------------------------------------------------
 
-(declare-function anvil-server-register-tool "anvil-server")
-(declare-function anvil-server-unregister-tool "anvil-server")
+(declare-function anvil-server-register-tool "ext:anvil-server")
+(declare-function anvil-server-unregister-tool "ext:anvil-server")
 
 (defun anvil-pkg--tool-install (name)
   "MCP wrapper around `pkg-install'.

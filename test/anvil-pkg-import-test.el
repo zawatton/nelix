@@ -164,5 +164,54 @@ clone to win."
       (when (file-directory-p tmpdir)
         (delete-directory tmpdir t)))))
 
+(ert-deftest anvil-pkg-import-test-default-clone-dir-uses-emacs-directory ()
+  "Default clone lookup uses ~/.emacs.d/external-packages/<pkg>."
+  (let ((tmp-home (make-temp-file "anvil-pkg-import-home-" t)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'anvil-pkg-compat-getenv)
+                   (lambda (name)
+                     (and (equal name "HOME") tmp-home))))
+          (should
+           (equal (anvil-pkg-import-default-clone-dir '(:name "foo"))
+                  (expand-file-name ".emacs.d/external-packages/foo"
+                                    tmp-home))))
+      (when (file-directory-p tmp-home)
+        (delete-directory tmp-home t)))))
+
+(ert-deftest anvil-pkg-import-test-scrape-deps-from-default-clone-dir ()
+  "Importer reads deps from the documented default clone directory."
+  (let* ((tmp-home (make-temp-file "anvil-pkg-import-home-" t))
+         (foo-dir (expand-file-name ".emacs.d/external-packages/foo" tmp-home))
+         (foo-pkg-el (expand-file-name "foo-pkg.el" foo-dir))
+         (tmpfile (expand-file-name "imported.el" tmp-home))
+         (async-installer-test-list
+          '(("owner/foo" :tag "1.0.0"))))
+    (unwind-protect
+        (progn
+          (make-directory foo-dir t)
+          (with-temp-file foo-pkg-el
+            (insert
+             "(define-package \"foo\" \"1.0\" \"d\" "
+             "'((dash \"2.0\") (s \"1.0\")))\n"))
+          (cl-letf (((symbol-function 'anvil-pkg-compat-getenv)
+                     (lambda (name)
+                       (and (equal name "HOME") tmp-home)))
+                    ((symbol-function 'anvil-pkg-compat-http-get)
+                     (lambda (&rest _)
+                       (ert-fail "HTTP fetch must NOT happen when default clone exists")
+                       (list :status 0 :body ""))))
+            (anvil-pkg-import-async-installer
+             :var 'async-installer-test-list
+             :emit tmpfile
+             :scrape-deps t))
+          (let ((content (with-temp-buffer
+                           (insert-file-contents tmpfile)
+                           (buffer-string))))
+            (should (string-match-p
+                     "(depends-on (list dash s))"
+                     content))))
+      (when (file-directory-p tmp-home)
+        (delete-directory tmp-home t)))))
+
 (provide 'anvil-pkg-import-test)
 ;;; anvil-pkg-import-test.el ends here

@@ -20,7 +20,7 @@ agents can install anything by writing one Lisp form.
 
 * Status
 
-*Phase 1+2+3+4-A+4-B+4-C+4-D+4-E+4-F+4-G+4-H SHIPPED + REAL-NIX VERIFIED* (2026-05-06) —
+*Phase 1+2+3+4-A+4-B+4-C+4-D+4-E+4-F+4-G+4-H SHIPPED + REAL-NIX VERIFIED; Phase 5 compat groundwork local-verified* (2026-06-08) —
 Full DSL stack on top of the Nix store with multiple fetcher /
 build-system support, an =emacs-package= backend that round-trips
 Elisp libraries through =trivialBuild= / =melpaBuild= with optional
@@ -37,16 +37,90 @@ importer that auto-populates =:depends-on= from local clones, and
 the L18 pre-fetch, git HTTPS clone, and =nix --option
 extra-access-tokens= paths.
 
-- ERT 112/112 PASS (mocked, runs without a nix binary).
-- /Real-nix smoke test/ runs on every push (Phase 4-H, =smoke.yml=):
+- ERT 182/182 PASS (mocked, runs without a nix binary).
+- /Smoke tests/ run on every push:
+  - =make nix-check= runs in =smoke.yml= and verifies the repository
+    flake itself.  The flake provides a pinned =nix develop=
+    environment and a Nix-packaged =make check= derivation.
+  - =make smoke-render= runs in =test.yml= and renders all examples
+    discovered under =examples/*.el= without requiring a =nix= binary,
+    then checks that each generated =flake.nix= exposes the expected
+    flake output shape.  It fails if no examples are present or if an
+    example registers no packages; this is the quick guard against
+    stale example DSL.
+  - =make smoke-pairs-check= validates the no-Nix smoke metadata:
+    eval / build pair lists must be non-empty, use
+    =example-file:nix-attr= form, and reference existing example
+    files whose rendered flakes expose the requested attr.
   - =make smoke-eval= renders four examples
     (=stdenv-hello=, =rust-ripgrep=, =python-black=, =go-hugo=)
     and runs =nix flake check --no-build= on each
-    (Determinate Nix on =ubuntu-latest=).
+    (=smoke.yml=, Determinate Nix on =ubuntu-latest=; locally
+    verified with Nix 2.34.7 on 2026-06-08); an empty, malformed, or
+    stale smoke-eval pair list is treated as an error before invoking
+    Nix.
   - =make smoke-build= (local-only) actually =nix build= s the
-    cheap subset (=gnu-hello= + =black=) end-to-end.
-  - Real source / cargo / vendor hashes ship in the recipes —
-    no =sha256-PLACEHOLDER= literals to swap out before install.
+    cheap subset (=gnu-hello= + =black=) end-to-end; locally verified
+    with Nix 2.34.7 on 2026-06-08.  An empty, malformed, or stale
+    smoke-build pair list is treated as an error before invoking Nix.
+  - =make smoke-nelisp= (local-only) loads
+    =anvil-pkg-compat.el= under a real standalone NeLisp binary and
+    checks the narrow pure fallback surface that the current CLI can
+    exercise.  When local NeLisp package sources are discoverable, it
+    also loads the real =nelisp-json.el= package and verifies compat
+    JSON parsing through that backend.  When the local
+    =nelisp-emacs-compat= dependency sources are discoverable, it loads
+    those too and verifies compat buffer create / live / empty-read
+    dispatch through the real =nelisp-ec= backend.  It also forces the
+    no-backend NeLisp runtime branch and verifies async / text HTTP /
+    binary HTTP unsupported-runtime signals under the real standalone
+    evaluator.  It also verifies explicit hook dispatch for sync
+    process, async process, env lookup, PATH lookup, text HTTP, and
+    binary HTTP under that same standalone evaluator.  Native process /
+    HTTP source probing is kept in =make smoke-nelisp-capabilities=
+    because those definitions can load before the standalone image has
+    the lower runtime primitives needed to execute them.  This is not
+    yet a full NeLisp ERT run.
+  - =make smoke-nelisp-capabilities= (local-only) prints the current
+    standalone NeLisp capability snapshot used to explain native
+    backend gaps.  With local NeLisp sources discoverable, it loads
+    =nelisp-stdlib-eval-special.el= first, the local ERT shim, then
+    the native process / network / HTTP package sources.  Locally this
+    reports present =ert= / =ert-shim= / =cl-letf= / =cl-defun=,
+    missing lower =make-process= /
+    =url-retrieve-synchronously= primitives, loaded but not executable
+    =nelisp-call-process=, loaded =nelisp-make-process= /
+    =nelisp-http-get= / =nelisp-http-fetch= definitions, absent
+    =nelisp-http-get-binary=, =:native-async-lower-primitive nil=,
+    =:native-text-http-lower-primitive nil=, and
+    =:native-gap-accounted t=.
+  - =make smoke-nelisp-suite-readiness= (local-only) audits whether
+    the standalone image is ready to run the full anvil-pkg ERT suite.
+    The current local image reports =:suite-ready nil= with blockers
+    =native-async-lower-primitive= and
+    =native-text-http-lower-primitive=, while keeping the audit itself
+    green via =:readiness-audit-ok t=.
+  - =make smoke-nelisp-suite-loadability= (local-only) loads the
+    runtime sources and each ERT file in a fresh standalone NeLisp
+    process with the local ERT shim in registration-only mode.  This
+    proves the current CLI can parse and register every test file in
+    NeLisp runtime mode, and asserts the registered total is 182 tests,
+    before the lower primitives required for execution exist.
+  - =make smoke-nelisp-suite= (local-only) is the final standalone
+    suite command.  It currently stops before loading the ERT files and
+    exits non-zero with the same blockers; once readiness flips to
+    =:suite-ready t=, it loads the runtime sources, helper scripts, and
+    all ERT files under NeLisp and delegates to
+    =ert-run-tests-batch-and-exit=.
+  - =make smoke-nelisp-local= (local-only) is the aggregate NeLisp
+    gate.  It runs the compat smoke, capability audit, suite readiness
+    audit, suite loadability probe, and then treats the current
+    full-suite not-ready result as expected until the lower process /
+    HTTP primitives land.
+  - Real source / cargo / vendor hashes ship in the four smoke-built
+    recipes, so those examples need no =sha256-PLACEHOLDER= swap before
+    install.  The remaining examples are shape / private-repo examples
+    and still mark user-specific hashes with placeholders.
 - Generated =flake.nix= validated by Nix as well-formed
   on every push (matrix: Emacs 30.1 × Linux).
 
@@ -65,7 +139,8 @@ Public Elisp API uses the short =pkg-= prefix:
   =pkg-list-generations= / =pkg-rollback= / =pkg-history= — Phase 4-C
 - =anvil-pkg-compat-make-process-async= /
   =anvil-pkg-compat-http-get= portability primitives (Emacs path
-  shipped; NeLisp signals until Phase 5) — Phase 4-C
+  shipped; Phase 5 NeLisp hooks / auto-detect groundwork landed) —
+  Phase 4-C / Phase 5 groundwork
 - =anvil-pkg-state= namespaced KV with TTL (deps cache + Nix-version
   cache + generations mirror persist across Emacs sessions),
   =pkg-clear-cache= scope arg, =:melpa-synth= / =:melpa-recipe= /
@@ -88,14 +163,63 @@ Public Elisp API uses the short =pkg-= prefix:
   Mixed registry symbols + nixpkgs strings supported.  Async
   callbacks receive =:names NAMES= instead of =:name NAME=.
   =:require= rejected with list NAME (ambiguous) — Phase 4-F
+- Phase 5 groundwork: =anvil-pkg-compat= exposes NeLisp backend
+  hooks for synchronous process calls, async process spawn, text HTTP
+  GET, binary HTTP GET, env lookup, and PATH lookup
+  so the real NeLisp runtime can plug in native implementations
+  without changing call sites.  When hooks are unset,
+  =nelisp-make-process=, =nelisp-http-get=,
+  =nelisp-http-fetch=, and =nelisp-http-get-binary= are auto-detected
+  when loaded or available
+  through the package-split noerror require probe, including NeLisp
+  images where these may be present without =nelisp-call-process=.
+  Detection also refreshes lazily after load and probes
+  =nelisp-process= / =nelisp-network= / =nelisp-http= once before
+  falling back.  Binary
+  HTTP uses a native binary backend when available, then falls back to
+  =curl=; otherwise the existing unsupported-runtime signals are
+  preserved.  File / env / PATH helpers also lazy-require
+  =nelisp-runtime=, =nelisp-emacs-compat=, and
+  =nelisp-emacs-compat-fileio= so package-split NeLisp images can
+  load state and helper I/O backends after =anvil-pkg= itself.
+  Text HTTP can use either the low-level =nelisp-http-get= backend or
+  the higher-level =nelisp-http-fetch= package, then falls back through
+  the same =curl= adapter used by binary HTTP when neither native text
+  backend is present.  Auto-detected native HTTP backends that are
+  loadable but return status 0 because their lower runtime primitives
+  are absent also retry through =curl= when that fallback is available.
+  Explicit backend hook returns are validated against their documented
+  plist shapes before anvil-pkg consumes them.
+  Async process metadata, status, and exit-code access now go through
+  compat wrappers so future NeLisp process wraps do not have to mimic
+  Emacs =process-get= / =process-put= directly.
+  Async stderr buffer creation, reading, liveness probing, and cleanup
+  also go through compat wrappers, so the async path no longer depends
+  on raw Emacs buffer APIs at its call sites.
+  A local =make smoke-nelisp= target now verifies that the compat
+  layer loads under a real NeLisp standalone binary and that explicit
+  sync process / async / HTTP hooks dispatch there.
+- =anvil-pkg-state= serializes through
+  =anvil-pkg-compat-json-serialize=, so the persistent JSON cache no
+  longer depends directly on Emacs-only =json-serialize= when running
+  on NeLisp.
 
 Long-form aliases (=anvil-pkg-install= etc.) are provided via
 =defalias= for Emacs-prefix purists.
 
 Phase 5 focuses on the NeLisp async backend that makes
 =anvil-pkg-compat-make-process-async= work outside Emacs and a
-NeLisp-native HTTP backend so =anvil-pkg-compat-http-get-binary= no
-longer signals on standalone runtimes.
+NeLisp-native HTTP backend.  The compat layer already probes and
+auto-detects NeLisp process / text HTTP / binary HTTP primitives and
+uses =curl= as the HTTP fallback when no native text / binary backend
+is installed and a process backend can run =curl=.
+
+The remaining Phase 5 completion blockers are NeLisp runtime /
+Layer-2 ownership, not anvil-pkg DSL ownership.  anvil-pkg owns the
+compat contracts, hook variables, auto-detection, fallback behavior,
+and readiness tests.  NeLisp owns the executable lower primitives:
+subprocess spawn / wait / pipe semantics for process backends, and a
+standalone URL / HTTP transport for text HTTP backends.
 
 * Why?
 
@@ -165,9 +289,9 @@ your config should not require learning a new macro language.
 | 4-E   | MELPA upstream recipe fetch (opt-in) + better :melpa-files default     | *SHIPPED*      |
 | 4-F   | pkg-install multi-package dispatch (atomic bulk install)               | *SHIPPED*      |
 | 4-G   | private repo: env-var credentials → HTTP / git / nix CLI auth          | *SHIPPED*      |
-| CI    | GitHub Actions — Emacs 30 × Linux, =make compile= + =make test= gate    | *SHIPPED*      |
+| CI    | GitHub Actions — Emacs 30 × Linux, =make lint= + =make test= + render gate | *SHIPPED*   |
 | 4-H   | Real-Nix smoke (=make smoke-eval=) + cargoSha256→cargoHash renderer fix | *SHIPPED*      |
-| 5+    | NeLisp async backend + HTTP backend (replaces Phase 4-C/4-D stubs)     | research       |
+| 5+    | NeLisp async backend + HTTP backend (compat hooks + smoke landed)      | research       |
 
 See =docs/design/01-overview.org= for the full Phase 1 contract.
 
@@ -448,9 +572,32 @@ to any of its own log lines.
 ** Run the test suite
 
 #+begin_src shell
-make test       # 111 ERT tests, no nix binary required (all mocked)
-make compile    # byte-compile, warnings-as-errors
+nix develop   # optional: enter the pinned development environment
+nix flake check  # run the Nix-packaged no-Nix local gate
+make check      # local no-Nix gate: lint + test + smoke-pairs-check + smoke-render
+make verify-local  # full local gate: check + repository flake + real Nix + NeLisp + whitespace
+make check-whitespace  # git diff --check
+make nix-check  # same top-level Nix flake check via Makefile
+make test       # 182 ERT tests, no nix binary required (all mocked)
+make compile    # byte-compile runtime source/scripts, warnings-as-errors
+make compile-tests  # byte-compile ERT files, warnings-as-errors
+make check-declare  # check declarations in runtime source/scripts + ERT files
+make lint       # byte-compile source/scripts/tests + check-declare
+make smoke-pairs-check  # validate smoke example pair metadata; no nix required
+make smoke-render  # render every non-empty example + flake shape check; no nix required
+make smoke-eval    # real Nix evaluator check for real-hash examples
+make smoke-build   # local real Nix build for cheap examples
+make smoke-nelisp  # load compat layer under local standalone NeLisp
+make smoke-nelisp-capabilities  # print local NeLisp backend capability snapshot
+make smoke-nelisp-suite-readiness  # audit real NeLisp full-suite readiness
+make smoke-nelisp-suite-loadability  # load each ERT file under real NeLisp
+make smoke-nelisp-suite  # run real NeLisp full suite once readiness passes
+make smoke-nelisp-local  # aggregate local NeLisp gate, expected-not-ready aware
 #+end_src
+
+The Makefile auto-detects =/nix/var/nix/profiles/default/bin/nix= when
+=nix= is not on =PATH= and passes =NIX_CONFIG='experimental-features =
+nix-command flakes'= for the smoke targets.
 
 * Requirements (planned)
 

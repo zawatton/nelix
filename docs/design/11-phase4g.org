@@ -1,12 +1,12 @@
 #+title: anvil-pkg — Phase 4-G: private repo support
 #+author: zawatton
 #+date: 2026-05-06
-#+property: status DRAFT
+#+property: status SHIPPED
 
 * STATUS
 
-DRAFT 2026-05-06.  Single-task scope on canonical =main=.
-Closes the carry-over from Phase 4-D / 4-E that left
+SHIPPED 2026-05-06.  Single-task scope on canonical =main=.
+Closed the carry-over from Phase 4-D / 4-E that left
 =url-fetch= / =git-fetch= / =github-fetch= public-only.
 
 After this phase, the same DSL forms work against private
@@ -190,17 +190,27 @@ Single sub-task; touches three files plus tests.
 | =call-nix-default-prepends-credential-args=                          | mock subprocess sees the option                           |
 
 ERT delta target: +12 (compat ×6, emacs ×3, install ×3 actual delta —
-some helpers may merge tests).
+some helpers may merge tests).  Current suite count after later phases:
+179/179.
 
 * Acceptance
 
-- All Phase 4-F ERTs pass unchanged.
-- New ERTs pass.  ERT total ≥ 100.
-- Byte-compile clean (warnings-as-errors).
-- =examples/private-github.el= renders with masked token in any
-  debug print.
-- README.org gains a *Phase 4-G* row in the phase plan and a
+- [x] All Phase 4-F ERTs pass unchanged.
+- [x] New ERTs pass.  Current ERT total: 179/179.
+- [x] =make lint= passes cleanly (runtime source + smoke helper +
+      ERT byte-compile warnings-as-errors + source/script/test
+      =check-declare=).
+- [x] Credential masking helpers cover Bearer headers, Nix
+      =extra-access-tokens=, and =x-access-token= URLs.
+- [x] =examples/private-github.el= is included in the all-example render
+      smoke coverage.
+- [x] README.org gains a *Phase 4-G* row in the phase plan and a
   =Security notes= subsection covering env-var precedence and
   the =ps= visibility caveat.
-- Memory file =project_anvil_pkg_phase0.md= updated with commit
-  pair + frontmatter "Phase 1〜4-G SHIPPED".
+
+* External handoff note
+
+=project_anvil_pkg_phase0.md= is an external memory file, not present
+in this repo checkout.  Updating it with the Phase 4-G commit pair and
+frontmatter "Phase 1〜4-G SHIPPED" is therefore not part of this repo's
+acceptance evidence.

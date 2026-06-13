@@ -1,11 +1,25 @@
 #+title: anvil-pkg — Phase 4-H: real-Nix smoke (renderer end-to-end)
 #+author: zawatton
 #+date: 2026-05-06
-#+property: status DRAFT
+#+property: status SHIPPED
 
 * STATUS
 
-DRAFT 2026-05-06.  Single-task scope on canonical =main=.
+SHIPPED 2026-05-06.  Single-task scope on canonical =main=.
+
+Current audit note (2026-06-08): the render-script ERTs described
+below now exist in =test/anvil-pkg-dsl-test.el=.  The local machine
+has Nix 2.34.7 at =/nix/var/nix/profiles/default/bin/nix=; =make
+smoke-eval= passes for the four real-hash examples and =make
+smoke-build= passes for the cheap hello + black subset when run with
+=NIX_CONFIG='experimental-features = nix-command flakes'=.  A new
+=make smoke-pairs-check= target validates smoke eval/build metadata
+and rendered attrs without Nix, and =make smoke-render= covers the
+no-Nix render path by rendering every recipe discovered under
+=examples/*.el= to =flake.nix= and checking the generated flake output
+shape.  If no =examples/*.el= recipes are found, or if a recipe
+registers no packages, the target fails instead of reporting a
+vacuous pass.
 
 Until now, every example in =examples/= shipped with
 =sha256-PLACEHOLDER-...= literals — copy/paste users would
@@ -39,12 +53,16 @@ Two =make= targets, two cost profiles:
   run =nix flake check --no-build= on each.  Eval-only, never
   fetches sources, never builds derivations.  Catches DSL →
   flake.nix renderer regressions.  Cost: ~10s/example after
-  the nixpkgs flake input is locked in the runner cache.
+  the nixpkgs flake input is locked in the runner cache.  An empty,
+  malformed, missing-file, or rendered-attr-stale eval pair list is an
+  error before invoking Nix, not a vacuous pass.
 - =make smoke-build= — actually =nix build= the rendered
   flake for the small examples (=gnu-hello= + =black=).
   Real hashes required.  Cost: ~5s + ~30s.  Local-only by
   default; rust/go are *not* part of =smoke-build= because of
-  the multi-minute cargo / go-mod download even on warm cache.
+  the multi-minute cargo / go-mod download even on warm cache.  An
+  empty, malformed, missing-file, or rendered-attr-stale build pair
+  list is an error before invoking Nix.
 
 CI runs =smoke-eval= only.  If a contributor wants to verify
 real builds end-to-end, =make smoke-build= is the local gate.
@@ -124,7 +142,8 @@ already does the work — the script is a thin wrapper for
 
 Two reasons for separation:
 
-1. =test.yml= is the green-light gate (Emacs ERT + byte-compile).
+1. =test.yml= is the no-Nix green-light gate (Emacs ERT + lint +
+   smoke metadata/render).
    =smoke.yml= depends on Nix install (~30s) + nixpkgs flake
    eval (~2s) which is qualitatively a different kind of
    check — keeping them separate makes failure attribution
@@ -139,6 +158,8 @@ Two reasons for separation:
 The smoke job runs:
 - =DeterminateSystems/nix-installer-action@main= (installs Nix 2.x)
 - =DeterminateSystems/magic-nix-cache-action@main= (warm cache, free)
+- =make nix-check= (top-level repository flake: pinned dev shell +
+  Nix-packaged =make check= derivation)
 - =make smoke-eval=
 
 * Open questions
@@ -160,7 +181,9 @@ Phase 4-H uses =magic-nix-cache-action= (free, GitHub-Actions-scoped).  If smoke
 | =anvil-pkg-render-script-test-write-flake=    | NEW: render script writes a non-empty =flake.nix= for stdenv-hello |
 | =anvil-pkg-render-script-test-rust-no-cargo-sha256= | NEW: rendered output never contains =cargoSha256= |
 
-Target ERT count: 111 → 114.
+Phase 4-H target ERT count: 111 → 114.  Current suite count after
+later phases, all-example render coverage, and importer default clone
+path coverage: 179/179.
 
 * Files touched
 
@@ -177,18 +200,41 @@ examples/go-hugo.el                         (mod)  ← real source + vendorHash
 examples/README.org                         (mod)  ← drop "every example uses placeholder"
 README.org                                  (mod)  ← Phase 4-H badge + status
 Makefile                                    (mod)  ← smoke-eval + smoke-build
+flake.nix                                  (new)  ← pinned dev shell + Nix-packaged make check
+flake.lock                                 (new)  ← pinned nixpkgs input for repository flake
 #+end_src
 
 * Phase 4-H exit criteria
 
-- [ ] =make smoke-eval= passes locally on Determinate Nix 3.19.1
-- [ ] =make smoke-build= passes locally for hello + black
-- [ ] =make test= still 111+/111+ green
-- [ ] CI =test= job green (no regression)
-- [ ] CI =smoke= job green (new)
-- [ ] Renderer outputs =cargoHash= for the rust path; golden ERT updated
-- [ ] README + examples/README reflect "real hashes shipped" reality
-- [ ] memory =project_anvil_pkg_phase0.md= bumped to "Phase 4-H SHIPPED"
+- [x] =make smoke-eval= target exists and is wired to
+      =.github/workflows/smoke.yml=; empty, malformed, missing-file,
+      or rendered-attr-stale pair list fails before invoking Nix
+- [x] =make smoke-pairs-check= validates smoke eval/build metadata
+      and rendered attrs without requiring Nix and is part of
+      =make check= / =test.yml=
+- [x] =make smoke-render= renders every example without requiring Nix
+      and checks generated flake shape; it auto-discovers
+      =examples/*.el= recipes and fails when the set is empty or a
+      recipe registers no packages
+- [x] =make smoke-build= target exists for hello + black local builds;
+      empty, malformed, missing-file, or rendered-attr-stale pair list
+      fails before invoking Nix
+- [x] =make test= remains green after the render-script coverage
+      (=179/179= in the current suite)
+- [x] CI =test= workflow exists and runs =make lint= + =make test= +
+      =make smoke-pairs-check= + =make smoke-render=
+- [x] CI =smoke= workflow exists and runs =make nix-check= +
+      =make smoke-eval=
+- [x] Renderer outputs =cargoHash= for the rust path; golden ERT updated
+- [x] Render script ERT writes a non-empty =flake.nix= for stdenv hello
+      and rejects package-empty example files
+- [x] README + examples/README reflect "real hashes shipped" reality
+- [x] Latest CI =test= / =smoke= run green on canonical =main= at
+      the Phase 4-H landing push: =test.yml= run =25436091982= and
+      =smoke.yml= run =25436092013= both completed with =success=
+      on 2026-05-06T12:46:22Z.
+- [x] =make smoke-eval= / =make smoke-build= re-run locally with
+      Nix 2.34.7 and =NIX_CONFIG='experimental-features = nix-command flakes'=
 
 * Out of scope
 
