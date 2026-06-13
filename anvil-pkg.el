@@ -43,6 +43,10 @@
 ;;   (pkg-install NAME)
 ;;   (pkg-search QUERY)
 ;;   (pkg-list)
+;;   (pkg-pin NAME)
+;;   (pkg-unpin NAME)
+;;   (pkg-pinned-p NAME)
+;;   (pkg-list-pins)
 ;;   (pkg-uninstall NAME)
 ;;   (pkg-upgrade &optional NAME)
 ;;   (pkg-info NAME)
@@ -52,12 +56,16 @@
 ;; provided via `defalias' for callers that prefer Emacs prefix style.
 ;;
 ;; MCP tools (registered by `anvil-pkg-enable'):
-;;   pkg-install / pkg-search / pkg-list / pkg-uninstall / pkg-upgrade / pkg-info
+;;   pkg-install / pkg-search / pkg-list / pkg-pin / pkg-unpin / pkg-list-pins
+;;   pkg-uninstall / pkg-upgrade / pkg-info
 ;;
 ;; CLI surface (out of scope for this repo; landed in anvil.el):
 ;;   anvil pkg install <name>
 ;;   anvil pkg search  <query>
 ;;   anvil pkg list
+;;   anvil pkg pin <name>
+;;   anvil pkg unpin <name>
+;;   anvil pkg list-pins
 ;;   anvil pkg uninstall <name>
 ;;   anvil pkg upgrade [name]
 ;;   anvil pkg info <name>
@@ -76,6 +84,9 @@
   "MCP server id that anvil-pkg tools register under.
 Shared with anvil-http / anvil-state / anvil-defs so a single
 Claude Code MCP session sees one unified tool list.")
+
+(defconst anvil-pkg--pins-namespace "pins"
+  "`anvil-pkg-state' namespace for package pin state.")
 
 (defcustom anvil-pkg-default-backend 'nix
   "Default backend used when `anvil-pkg-install' is called without :backend.
@@ -888,6 +899,59 @@ Returns a list of plists carrying :name :attr-path :original-url
                     :stderr (plist-get res :stderr))))
     (anvil-pkg--parse-list (plist-get res :stdout))))
 
+(defun anvil-pkg--normalize-pin-name (caller name)
+  "Return NAME as a non-empty string for CALLER, or signal an error."
+  (cond
+   ((stringp name)
+    (let ((trimmed (anvil-pkg-compat-string-trim name)))
+      (if (zerop (length trimmed))
+          (signal 'anvil-pkg-error
+                  (list (format "%s: NAME must be non-empty string or symbol, got %S"
+                                caller name)))
+        trimmed)))
+   ((symbolp name) (symbol-name name))
+   (t (signal 'anvil-pkg-error
+              (list (format "%s: NAME must be non-empty string or symbol, got %S"
+                            caller name))))))
+
+;;;; --- package pinning (Phase 7-A) ------------------------------------------
+
+;;;###autoload
+(defun pkg-pin (name)
+  "Record NAME as pinned in persistent anvil-pkg state.
+
+NAME must be a non-empty string or symbol.  Symbols are coerced
+via `symbol-name'.  Returns t."
+  (anvil-pkg-state-put anvil-pkg--pins-namespace
+                       (anvil-pkg--normalize-pin-name "pkg-pin" name)
+                       t)
+  t)
+
+;;;###autoload
+(defun pkg-unpin (name)
+  "Remove NAME from persistent anvil-pkg pin state.
+
+NAME must be a non-empty string or symbol.  Symbols are coerced
+via `symbol-name'.  Returns t."
+  (anvil-pkg-state-delete anvil-pkg--pins-namespace
+                          (anvil-pkg--normalize-pin-name "pkg-unpin" name))
+  t)
+
+;;;###autoload
+(defun pkg-pinned-p (name)
+  "Return non-nil when NAME is pinned in persistent anvil-pkg state.
+
+NAME must be a non-empty string or symbol.  Symbols are coerced
+via `symbol-name'."
+  (and (anvil-pkg-state-get anvil-pkg--pins-namespace
+                            (anvil-pkg--normalize-pin-name "pkg-pinned-p" name))
+       t))
+
+;;;###autoload
+(defun pkg-list-pins ()
+  "Return the list of pinned package names as strings."
+  (anvil-pkg-state-keys anvil-pkg--pins-namespace))
+
 ;;;###autoload
 (defun pkg-uninstall (name)
   "Uninstall NAME from the anvil-pkg Nix profile.
@@ -935,39 +999,64 @@ remove' exit."
 When NAME is nil upgrades every installed package by passing the
 portable \".*\" matcher to `nix profile upgrade'.  Otherwise NAME
 must be a string or symbol naming the single profile element to
-upgrade.
+upgrade.  Pinned packages are skipped during upgrade-all, and a
+pinned NAME must be unpinned before upgrading it directly.
 
 Returns t on success.  Signals `anvil-pkg-nix-failed' on a
 non-zero `nix profile upgrade' exit."
   (anvil-pkg--ensure-nix)
-  (let* ((matcher
+  (let* ((pins (pkg-list-pins))
+         (matchers
           (cond
-           ((null name) ".*")
+           ((null name)
+            (if (null pins)
+                '(".*")
+              (delq nil
+                    (mapcar
+                     (lambda (entry)
+                       (let ((entry-name (plist-get entry :name)))
+                         (when (and (stringp entry-name)
+                                    (not (member entry-name pins)))
+                           entry-name)))
+                     (pkg-list)))))
            ((stringp name)
             (let ((trimmed (anvil-pkg-compat-string-trim name)))
               (if (zerop (length trimmed))
                   (signal 'anvil-pkg-error
                           (list (format "pkg-upgrade: NAME must be non-empty string or symbol, got %S"
                                         name)))
-                name)))
-           ((symbolp name) (symbol-name name))
+                (when (member trimmed pins)
+                  (signal 'anvil-pkg-error
+                          (list (format "pkg-upgrade: %s is pinned; run pkg-unpin first"
+                                        trimmed))))
+                (list name))))
+           ((symbolp name)
+            (let ((name-str (symbol-name name)))
+              (when (member name-str pins)
+                (signal 'anvil-pkg-error
+                        (list (format "pkg-upgrade: %s is pinned; run pkg-unpin first"
+                                      name-str))))
+              (list name-str)))
            (t (signal 'anvil-pkg-error
                       (list (format "pkg-upgrade: NAME must be string, symbol, or nil, got %S"
                                     name))))))
-         (args (append (list "profile" "upgrade" matcher)
-                       (anvil-pkg--profile-args)))
-         (res (anvil-pkg--call-nix args)))
-    (unless (eq 0 (plist-get res :exit))
-      (signal 'anvil-pkg-nix-failed
-              (list (format "nix profile upgrade %s failed (exit %s): %s"
-                            matcher
-                            (plist-get res :exit)
-                            (anvil-pkg-compat-string-trim
-                             (or (plist-get res :stderr) "")))
-                    :stderr (plist-get res :stderr))))
-    (condition-case _ (pkg-list-generations) (error nil))
-    (anvil-pkg--rollback-replay-emacs-hooks)
-    t))
+         (display-name (mapconcat #'identity matchers " ")))
+    (if (null matchers)
+        t
+      (let* ((args (append (append (list "profile" "upgrade") matchers)
+                           (anvil-pkg--profile-args)))
+             (res (anvil-pkg--call-nix args)))
+        (unless (eq 0 (plist-get res :exit))
+          (signal 'anvil-pkg-nix-failed
+                  (list (format "nix profile upgrade %s failed (exit %s): %s"
+                                display-name
+                                (plist-get res :exit)
+                                (anvil-pkg-compat-string-trim
+                                 (or (plist-get res :stderr) "")))
+                        :stderr (plist-get res :stderr))))
+        (condition-case _ (pkg-list-generations) (error nil))
+        (anvil-pkg--rollback-replay-emacs-hooks)
+        t))))
 
 ;;;###autoload
 (defun pkg-info (name)
@@ -1378,6 +1467,14 @@ notice typos rather than silently clearing the wrong namespace."
 ;;;###autoload
 (defalias 'anvil-pkg-list #'pkg-list)
 ;;;###autoload
+(defalias 'anvil-pkg-pin #'pkg-pin)
+;;;###autoload
+(defalias 'anvil-pkg-unpin #'pkg-unpin)
+;;;###autoload
+(defalias 'anvil-pkg-pinned-p #'pkg-pinned-p)
+;;;###autoload
+(defalias 'anvil-pkg-list-pins #'pkg-list-pins)
+;;;###autoload
 (defalias 'anvil-pkg-uninstall #'pkg-uninstall)
 ;;;###autoload
 (defalias 'anvil-pkg-upgrade #'pkg-upgrade)
@@ -1423,6 +1520,32 @@ MCP Parameters: (none)."
   (let ((rows (pkg-list)))
     (list :count (length rows)
           :installed (or rows []))))
+
+(defun anvil-pkg--tool-pin (name)
+  "MCP wrapper around `pkg-pin'.
+
+MCP Parameters:
+  name - package name to pin (string or symbol)."
+  (let ((name-str (anvil-pkg--normalize-pin-name "pkg-pin" name)))
+    (pkg-pin name-str)
+    (list :status "ok" :name name-str)))
+
+(defun anvil-pkg--tool-unpin (name)
+  "MCP wrapper around `pkg-unpin'.
+
+MCP Parameters:
+  name - package name to unpin (string or symbol)."
+  (let ((name-str (anvil-pkg--normalize-pin-name "pkg-unpin" name)))
+    (pkg-unpin name-str)
+    (list :status "ok" :name name-str)))
+
+(defun anvil-pkg--tool-list-pins ()
+  "MCP wrapper around `pkg-list-pins'.
+
+MCP Parameters: (none)."
+  (let ((pins (pkg-list-pins)))
+    (list :count (length pins)
+          :pins (or pins []))))
 
 (defun anvil-pkg--tool-uninstall (name)
   "MCP wrapper around `pkg-uninstall'.
@@ -1553,6 +1676,39 @@ original-url, store-paths).  Read-only."
    :read-only t)
 
   (anvil-server-register-tool
+   #'anvil-pkg--tool-pin
+   :id "pkg-pin"
+   :intent '(packages)
+   :layer 'io
+   :server-id anvil-pkg--server-id
+   :description
+   "Record a package name as pinned in persistent anvil-pkg state.
+Pinned packages are excluded from upgrade-all, and direct upgrades
+of a pinned package are rejected until the package is unpinned.")
+
+  (anvil-server-register-tool
+   #'anvil-pkg--tool-unpin
+   :id "pkg-unpin"
+   :intent '(packages)
+   :layer 'io
+   :server-id anvil-pkg--server-id
+   :description
+   "Remove a package name from persistent anvil-pkg pin state.
+Once unpinned, pkg-upgrade may target that package directly or
+include it again in upgrade-all operations.")
+
+  (anvil-server-register-tool
+   #'anvil-pkg--tool-list-pins
+   :id "pkg-list-pins"
+   :intent '(packages)
+   :layer 'io
+   :server-id anvil-pkg--server-id
+   :description
+   "List pinned package names stored in persistent anvil-pkg state.
+Returns :count and :pins (list of strings).  Read-only."
+   :read-only t)
+
+  (anvil-server-register-tool
    #'anvil-pkg--tool-uninstall
    :id "pkg-uninstall"
    :intent '(packages)
@@ -1630,6 +1786,7 @@ call pkg-list-generations first for fresh data.  Read-only."
 (defun anvil-pkg--unregister-tools ()
   "Remove every pkg-* MCP tool from the shared anvil server."
   (dolist (id '("pkg-install" "pkg-search" "pkg-list"
+                "pkg-pin" "pkg-unpin" "pkg-list-pins"
                 "pkg-uninstall" "pkg-upgrade" "pkg-info" "pkg-list-generations"
                 "pkg-rollback" "pkg-history"))
     (anvil-server-unregister-tool id anvil-pkg--server-id)))
@@ -1642,7 +1799,7 @@ repeatedly — re-registers idempotently."
   (interactive)
   (require 'anvil-server)
   (anvil-pkg--register-tools)
-  (message "anvil-pkg: enabled (9 MCP tools, profile = %s)"
+  (message "anvil-pkg: enabled (12 MCP tools, profile = %s)"
            anvil-pkg-profile-dir))
 
 (defun anvil-pkg-disable ()
