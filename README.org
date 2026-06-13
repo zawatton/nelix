@@ -20,7 +20,7 @@ agents can install anything by writing one Lisp form.
 
 * Status
 
-*Phase 1+2+3+4-A+4-B+4-C+4-D+4-E+4-F+4-G+4-H SHIPPED + REAL-NIX VERIFIED; Phase 5 compat groundwork local-verified* (2026-06-08) —
+*Phase 1+2+3+4-A+4-B+4-C+4-D+4-E+4-F+4-G+4-H SHIPPED + REAL-NIX VERIFIED; Phase 5 compat groundwork local-verified; Phase 6 (=pkg-uninstall= / =pkg-upgrade= / =pkg-info=) SHIPPED* (2026-06-13) —
 Full DSL stack on top of the Nix store with multiple fetcher /
 build-system support, an =emacs-package= backend that round-trips
 Elisp libraries through =trivialBuild= / =melpaBuild= with optional
@@ -37,7 +37,7 @@ importer that auto-populates =:depends-on= from local clones, and
 the L18 pre-fetch, git HTTPS clone, and =nix --option
 extra-access-tokens= paths.
 
-- ERT 182/182 PASS (mocked, runs without a nix binary).
+- ERT 204/204 PASS (mocked, runs without a nix binary).
 - /Smoke tests/ run on every push:
   - =make nix-check= runs in =smoke.yml= and verifies the repository
     flake itself.  The flake provides a pinned =nix develop=
@@ -104,7 +104,7 @@ extra-access-tokens= paths.
     runtime sources and each ERT file in a fresh standalone NeLisp
     process with the local ERT shim in registration-only mode.  This
     proves the current CLI can parse and register every test file in
-    NeLisp runtime mode, and asserts the registered total is 182 tests,
+    NeLisp runtime mode, and asserts the registered total is 204 tests,
     before the lower primitives required for execution exist.
   - =make smoke-nelisp-suite= (local-only) is the final standalone
     suite command.  It currently stops before loading the ERT files and
@@ -163,6 +163,10 @@ Public Elisp API uses the short =pkg-= prefix:
   Mixed registry symbols + nixpkgs strings supported.  Async
   callbacks receive =:names NAMES= instead of =:name NAME=.
   =:require= rejected with list NAME (ambiguous) — Phase 4-F
+- =pkg-uninstall= (=nix profile remove=), =pkg-upgrade= (=nix profile
+  upgrade= — all via the portable =.*= matcher or a single element),
+  and =pkg-info= (read-only merged installed-profile + =nix search=
+  metadata) — Phase 6
 - Phase 5 groundwork: =anvil-pkg-compat= exposes NeLisp backend
   hooks for synchronous process calls, async process spawn, text HTTP
   GET, binary HTTP GET, env lookup, and PATH lookup
@@ -292,6 +296,7 @@ your config should not require learning a new macro language.
 | CI    | GitHub Actions — Emacs 30 × Linux, =make lint= + =make test= + render gate | *SHIPPED*   |
 | 4-H   | Real-Nix smoke (=make smoke-eval=) + cargoSha256→cargoHash renderer fix | *SHIPPED*      |
 | 5+    | NeLisp async backend + HTTP backend (compat hooks + smoke landed)      | research       |
+| 6     | =pkg-uninstall= / =pkg-upgrade= / =pkg-info= (remove / upgrade / query) | *SHIPPED*      |
 
 See =docs/design/01-overview.org= for the full Phase 1 contract.
 
@@ -578,7 +583,7 @@ make check      # local no-Nix gate: lint + test + smoke-pairs-check + smoke-ren
 make verify-local  # full local gate: check + repository flake + real Nix + NeLisp + whitespace
 make check-whitespace  # git diff --check
 make nix-check  # same top-level Nix flake check via Makefile
-make test       # 182 ERT tests, no nix binary required (all mocked)
+make test       # 204 ERT tests, no nix binary required (all mocked)
 make compile    # byte-compile runtime source/scripts, warnings-as-errors
 make compile-tests  # byte-compile ERT files, warnings-as-errors
 make check-declare  # check declarations in runtime source/scripts + ERT files

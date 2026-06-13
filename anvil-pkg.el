@@ -43,20 +43,24 @@
 ;;   (pkg-install NAME)
 ;;   (pkg-search QUERY)
 ;;   (pkg-list)
+;;   (pkg-uninstall NAME)
 ;;   (pkg-upgrade &optional NAME)
+;;   (pkg-info NAME)
 ;;   (pkg-define NAME &rest BODY)   ; Phase 2
 ;;
 ;; Backwards-compatible long-form aliases (`anvil-pkg-install' etc.) are
 ;; provided via `defalias' for callers that prefer Emacs prefix style.
 ;;
 ;; MCP tools (registered by `anvil-pkg-enable'):
-;;   pkg-install / pkg-search / pkg-list / pkg-upgrade
+;;   pkg-install / pkg-search / pkg-list / pkg-uninstall / pkg-upgrade / pkg-info
 ;;
 ;; CLI surface (out of scope for this repo; landed in anvil.el):
 ;;   anvil pkg install <name>
 ;;   anvil pkg search  <query>
 ;;   anvil pkg list
+;;   anvil pkg uninstall <name>
 ;;   anvil pkg upgrade [name]
+;;   anvil pkg info <name>
 
 ;;; Code:
 
@@ -1638,7 +1642,7 @@ repeatedly — re-registers idempotently."
   (interactive)
   (require 'anvil-server)
   (anvil-pkg--register-tools)
-  (message "anvil-pkg: enabled (7 MCP tools, profile = %s)"
+  (message "anvil-pkg: enabled (9 MCP tools, profile = %s)"
            anvil-pkg-profile-dir))
 
 (defun anvil-pkg-disable ()
