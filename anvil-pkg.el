@@ -871,6 +871,46 @@ Returns a list of plists carrying :name :attr-path :original-url
                     :stderr (plist-get res :stderr))))
     (anvil-pkg--parse-list (plist-get res :stdout))))
 
+;;;###autoload
+(defun pkg-uninstall (name)
+  "Uninstall NAME from the anvil-pkg Nix profile.
+
+NAME is a string or symbol naming an installed profile element as
+reported by `pkg-list'.  Returns t on success.  Signals
+`anvil-pkg-error' when NAME is not installed in the anvil-pkg
+profile, and `anvil-pkg-nix-failed' on a non-zero `nix profile
+remove' exit."
+  (anvil-pkg--ensure-nix)
+  (let ((name-str (cond
+                   ((stringp name) name)
+                   ((symbolp name) (symbol-name name))
+                   (t (signal 'anvil-pkg-error
+                              (list (format "pkg-uninstall: NAME must be string or symbol, got %S"
+                                            name)))))))
+    (unless (let (installed)
+              (dolist (entry (pkg-list))
+                (when (and (null installed)
+                           (equal (plist-get entry :name) name-str))
+                  (setq installed t)))
+              installed)
+      (signal 'anvil-pkg-error
+              (list (format "pkg-uninstall: %s is not installed in the anvil-pkg profile"
+                            name-str))))
+    (let* ((args (append (list "profile" "remove" name-str)
+                         (anvil-pkg--profile-args)))
+           (res (anvil-pkg--call-nix args)))
+      (unless (eq 0 (plist-get res :exit))
+        (signal 'anvil-pkg-nix-failed
+                (list (format "nix profile remove %s failed (exit %s): %s"
+                              name-str
+                              (plist-get res :exit)
+                              (anvil-pkg-compat-string-trim
+                               (or (plist-get res :stderr) "")))
+                      :stderr (plist-get res :stderr))))
+      (condition-case _ (pkg-list-generations) (error nil))
+      (anvil-pkg--rollback-replay-emacs-hooks)
+      t)))
+
 ;;;; --- profile generation rollback (L19) ------------------------------------
 ;; Phase 4-C sub-task B: wrap `nix profile history --json' / `nix profile
 ;; rollback' so users can recover from a regressing install.  The local
@@ -1248,6 +1288,8 @@ notice typos rather than silently clearing the wrong namespace."
 ;;;###autoload
 (defalias 'anvil-pkg-list #'pkg-list)
 ;;;###autoload
+(defalias 'anvil-pkg-uninstall #'pkg-uninstall)
+;;;###autoload
 (defalias 'anvil-pkg-list-generations #'pkg-list-generations)
 ;;;###autoload
 (defalias 'anvil-pkg-rollback #'pkg-rollback)
@@ -1287,6 +1329,14 @@ MCP Parameters: (none)."
   (let ((rows (pkg-list)))
     (list :count (length rows)
           :installed (or rows []))))
+
+(defun anvil-pkg--tool-uninstall (name)
+  "MCP wrapper around `pkg-uninstall'.
+
+MCP Parameters:
+  name - installed profile element name (string or symbol)."
+  (pkg-uninstall name)
+  (list :status "ok" :name name))
 
 (defun anvil-pkg--tool-list-generations ()
   "MCP wrapper around `pkg-list-generations'.
@@ -1371,6 +1421,18 @@ original-url, store-paths).  Read-only."
    :read-only t)
 
   (anvil-server-register-tool
+   #'anvil-pkg--tool-uninstall
+   :id "pkg-uninstall"
+   :intent '(packages)
+   :layer 'io
+   :server-id anvil-pkg--server-id
+   :description
+   "Remove an installed package from the anvil-pkg Nix profile by
+name.  Wraps `nix profile remove <name>' against the isolated
+anvil-pkg profile, refreshes the generations mirror, and replays
+emacs-package hooks so load-path stays in sync.")
+
+  (anvil-server-register-tool
    #'anvil-pkg--tool-list-generations
    :id "pkg-list-generations"
    :intent '(packages)
@@ -1411,7 +1473,8 @@ call pkg-list-generations first for fresh data.  Read-only."
 (defun anvil-pkg--unregister-tools ()
   "Remove every pkg-* MCP tool from the shared anvil server."
   (dolist (id '("pkg-install" "pkg-search" "pkg-list"
-                "pkg-list-generations" "pkg-rollback" "pkg-history"))
+                "pkg-uninstall" "pkg-list-generations"
+                "pkg-rollback" "pkg-history"))
     (anvil-server-unregister-tool id anvil-pkg--server-id)))
 
 ;;;###autoload
@@ -1422,7 +1485,7 @@ repeatedly — re-registers idempotently."
   (interactive)
   (require 'anvil-server)
   (anvil-pkg--register-tools)
-  (message "anvil-pkg: enabled (6 MCP tools, profile = %s)"
+  (message "anvil-pkg: enabled (7 MCP tools, profile = %s)"
            anvil-pkg-profile-dir))
 
 (defun anvil-pkg-disable ()

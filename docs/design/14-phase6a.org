@@ -1,0 +1,91 @@
+#+title: Phase 6-A: pkg-uninstall (nix profile remove)
+#+author: zawatton
+#+date: 2026-06-13
+#+property: status SHIPPED
+
+* STATUS
+
+SHIPPED 2026-06-13.  Phase 6-A lands =pkg-uninstall= on canonical
+=main=.
+
+Phase 4-C added read-only profile inspection and generation rollback,
+but there was still no direct way to remove a single installed profile
+element by the same public =pkg-= surface that handles install, list,
+and search.  Users had to drop to raw =nix profile remove= against the
+anvil-pkg profile path, which bypassed the package API, the MCP tool
+surface, and the post-mutation refresh / hook replay invariants.
+
+* Goal
+
+| Before Phase 6-A                                            | After Phase 6-A                                                   |
+|-------------------------------------------------------------+-------------------------------------------------------------------|
+| No public API to remove one installed profile element       | =pkg-uninstall= removes a named installed element                 |
+| Users must shell out to raw =nix profile remove=            | Removal goes through =anvil-pkg--call-nix= + standard errors      |
+| MCP can install / list / search / rollback / history only  | MCP can also uninstall via tool id =pkg-uninstall=                |
+| Post-remove generations mirror refresh is manual            | Successful remove refreshes generations and replays emacs hooks   |
+| Symbol package names from =pkg-define= need ad hoc coercion | Symbols are accepted and coerced via =symbol-name=                |
+
+* Locked decisions
+
+** L55 — uninstall targets installed profile element names, not attrpaths
+
+=pkg-uninstall= accepts the =:name= field returned by =pkg-list=.
+That matches what users already see in the profile view and preserves
+the DSL symbol story: packages installed via =pkg-define= appear under
+their symbol name and can be removed by passing that symbol directly.
+
+The implementation coerces symbols with =symbol-name=, then checks the
+live =pkg-list= result for an exact =:name= match before invoking Nix.
+If the package is absent, it signals =anvil-pkg-error= with a profile-
+scoped message instead of letting raw =nix profile remove= produce a
+less precise failure.
+
+** L56 — same mutation invariant as rollback
+
+Any successful profile mutation must leave the in-process caches and
+Emacs package hooks in sync with the new active generation.
+
+For Phase 6-A that means: after a successful =nix profile remove=, call
+=pkg-list-generations= inside a =condition-case= that ignores errors,
+then call =anvil-pkg--rollback-replay-emacs-hooks=.  This mirrors the
+existing =pkg-rollback= contract exactly so removal does not become a
+special case with stale generation history or stale =load-path=
+entries.
+
+** L57 — MCP tool id matches the public API name
+
+The MCP wrapper is =anvil-pkg--tool-uninstall=, but the registered tool
+id is the exact public API name =pkg-uninstall=.  It is an =io= layer
+tool with ='(packages)= intent and is not marked read-only because it
+mutates the profile.
+
+The wrapper keeps the contract minimal: call =pkg-uninstall= and return
+a plist with =:status "ok"= and the =:name= argument.
+
+* Files touched
+
+#+begin_src text
+anvil-pkg.el                         ← pkg-uninstall, alias, MCP wrapper, registration
+test/anvil-pkg-uninstall-test.el     ← Phase 6-A uninstall coverage
+Makefile                             ← add the new ERT file to TEST_SRC
+docs/design/14-phase6a.org           ← this file
+#+end_src
+
+* Phase 6-A acceptance
+
+- [x] Public API =pkg-uninstall= exists with autoload cookie
+- [x] Long-form alias =anvil-pkg-uninstall= exists and is autoloaded
+- [x] NAME accepts string or symbol and symbols coerce via =symbol-name=
+- [x] Removal checks =pkg-list= first and signals =anvil-pkg-error=
+      when the package is not installed in the anvil-pkg profile
+- [x] The Nix call is =nix profile remove NAME --profile PROFILE=
+      through =anvil-pkg--call-nix=
+- [x] Non-zero remove exits signal =anvil-pkg-nix-failed= carrying
+      trimmed stderr and the raw =:stderr= plist key
+- [x] Successful removal refreshes the generations mirror with ignored
+      refresh failures and replays Emacs hooks afterward
+- [x] MCP wrapper =anvil-pkg--tool-uninstall= is registered as
+      =pkg-uninstall= and unregistered on disable
+- [x] Standalone ERT coverage exists for success, bad args, not-
+      installed, remove failure, symbol coercion, and the post-remove
+      refresh / hook replay path
