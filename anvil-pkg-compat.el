@@ -845,10 +845,20 @@ line (we do not rely on `url-http-response-status' because the
 buffer may not have full HTTP metadata in some Emacs versions)."
   (pcase (anvil-pkg-compat-runtime)
     ('emacs
-     (anvil-pkg-compat--http-get-emacs
-      url
-      (or timeout 5)
-      (or auth-header (anvil-pkg-compat-credential-for-url url))))
+     (let* ((to (or timeout 5))
+            (auth (or auth-header (anvil-pkg-compat-credential-for-url url)))
+            (res (anvil-pkg-compat--http-get-emacs url to auth)))
+       ;; On the standalone NeLisp reader (nemacs), `url-retrieve-synchronously'
+       ;; is non-functional (returns nil), so a :status 0 there means "no
+       ;; working url.el backend", not "connection failed".  Fall back to the
+       ;; tested curl path, which does work on nemacs (call-process + curl).
+       ;; Host Emacs (no reader primitive) keeps url.el authoritative -- a
+       ;; genuine status-0 connection failure is returned as-is.
+       (if (and (eq (plist-get res :status) 0)
+                (fboundp 'nelisp--write-stdout-bytes)
+                (anvil-pkg-compat-executable-find "curl"))
+           (anvil-pkg-compat--http-get-curl url to auth)
+         res)))
     ('nelisp
      (if anvil-pkg-compat-nelisp-http-get-function
          (anvil-pkg-compat--validate-http-result
