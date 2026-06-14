@@ -17,6 +17,17 @@
 (defvar anvil-pkg-nelisp-ert-register-only nil
   "When non-nil, register test names without retaining test bodies.")
 
+;; `should' / `should-not' / `should-error' signal `ert-test-failed', but
+;; that symbol is not error-derived unless declared.  Without an
+;; `error-conditions' property a `(signal 'ert-test-failed ...)' escapes a
+;; `(condition-case _ ... (error ...))' handler, so the very first failing
+;; test would abort the whole runner instead of being recorded as a
+;; failure.  Real ERT does this via `define-error'; we set the property
+;; directly because standalone NeLisp may lack `define-error'.
+(unless (get 'ert-test-failed 'error-conditions)
+  (put 'ert-test-failed 'error-conditions '(error ert-test-failed))
+  (put 'ert-test-failed 'error-message "Test failed"))
+
 (defun anvil-pkg-nelisp-ert--test-body (body)
   "Return BODY without an optional docstring."
   (if (and body (stringp (car body)))
