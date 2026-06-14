@@ -154,9 +154,15 @@
     anvil-pkg-nelisp-smoke-actor-source)))
 
 (defun anvil-pkg-nelisp-smoke--native-async-lower-primitive-p ()
-  "Return non-nil when loaded native async has a lower spawn primitive."
-  (and (fboundp 'nelisp-make-process)
-       (fboundp 'make-process)))
+  "Return non-nil when async has a real lower spawn primitive.
+Runtime-aware: on the Emacs / nemacs branch the lower primitive is
+`make-process' (which `anvil-pkg-compat-make-process-async' dispatches
+through); on the NeLisp branch it is `nelisp-make-process' paired with
+`make-process'."
+  (if (eq (anvil-pkg-compat-runtime) 'emacs)
+      (fboundp 'make-process)
+    (and (fboundp 'nelisp-make-process)
+         (fboundp 'make-process))))
 
 (defun anvil-pkg-nelisp-smoke--curl-process-lower-primitive-p ()
   "Return non-nil when curl can run through Emacs or Doc 44 NeLisp process APIs."
@@ -175,12 +181,21 @@
         t)))
 
 (defun anvil-pkg-nelisp-smoke--native-text-http-lower-primitive-p ()
-  "Return non-nil when loaded native text HTTP has a lower HTTP primitive."
-  (and (or (fboundp 'nelisp-http-get)
-           (fboundp 'nelisp-http-fetch)
-           (fboundp 'nelisp-http-get-binary))
-       (or (fboundp 'url-retrieve-synchronously)
-           (anvil-pkg-nelisp-smoke--curl-process-lower-primitive-p))))
+  "Return non-nil when text HTTP has a real lower primitive.
+Runtime-aware: on the Emacs / nemacs branch `anvil-pkg-compat-http-get'
+dispatches through `url-retrieve-synchronously', with a curl fallback for
+the standalone reader (where url.el is non-functional) -- so either a
+usable url.el or the curl process path satisfies the requirement.  On the
+NeLisp branch a native `nelisp-http-*' backend must be present, itself
+backed by url or curl."
+  (if (eq (anvil-pkg-compat-runtime) 'emacs)
+      (or (fboundp 'url-retrieve-synchronously)
+          (anvil-pkg-nelisp-smoke--curl-process-lower-primitive-p))
+    (and (or (fboundp 'nelisp-http-get)
+             (fboundp 'nelisp-http-fetch)
+             (fboundp 'nelisp-http-get-binary))
+         (or (fboundp 'url-retrieve-synchronously)
+             (anvil-pkg-nelisp-smoke--curl-process-lower-primitive-p)))))
 
 (defun anvil-pkg-nelisp-smoke--native-backend-probe-ok-p ()
   "Return non-nil when optional native backend source probes are sane.
