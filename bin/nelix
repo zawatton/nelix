@@ -908,20 +908,13 @@ nelix_try_nelisp_aot_cache_fast_lane() {
 
   if [ "$command" = "list" ]; then
     if [ "$json" -eq 1 ]; then
-      "$nix_program" profile list --profile "$profile" \
-        | sed -n 's/\x1b\[[0-9;]*m//g; s/^Name:[[:space:]]*//p' \
-        | awk '
-            BEGIN { printf "[" }
-            {
-              gsub(/\\/, "\\\\")
-              gsub(/"/, "\\\"")
-              gsub(/\r/, "\\r")
-              gsub(/\t/, "\\t")
-              if (n++) printf ","
-              printf "\"%s\"", $0
-            }
-            END { printf "]\n" }
-          '
+      command -v jq >/dev/null 2>&1 || return 1
+      "$nix_program" profile list --profile "$profile" --json \
+        | jq -c '[.elements | to_entries[] |
+                  {"name": .key,
+                   "attr-path": .value.attrPath,
+                   "original-url": .value.originalUrl,
+                   "store-paths": (.value.storePaths // [])}]'
     else
       "$nix_program" profile list --profile "$profile" \
         | sed -n 's/\x1b\[[0-9;]*m//g; s/^Name:[[:space:]]*//p'

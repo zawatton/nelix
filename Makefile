@@ -1002,7 +1002,14 @@ smoke-nelix-aot-cache-fast-lane:
 	    > "$$manifest.nelix-lock"; \
 	  printf '%s\n' \
 	    '#!/bin/sh' \
-	    "printf 'Name: magit\nName: ripgrep-1\nName: bat\n'" \
+	    'case " $$* " in' \
+	    '  *" --json "*)' \
+	    '    printf '\''%s\n'\'' '\''{"elements":{"magit":{"attrPath":"legacyPackages.x86_64-linux.emacsPackages.magit","originalUrl":"flake:nixpkgs","storePaths":["/nix/store/magit"]},"ripgrep-1":{"attrPath":"legacyPackages.x86_64-linux.ripgrep","originalUrl":"flake:nixpkgs","storePaths":["/nix/store/ripgrep"]},"bat":{"attrPath":"legacyPackages.x86_64-linux.bat","originalUrl":"flake:nixpkgs","storePaths":["/nix/store/bat"]}}}'\''' \
+	    '    ;;' \
+	    '  *)' \
+	    "    printf 'Name: magit\nName: ripgrep-1\nName: bat\n'" \
+	    '    ;;' \
+	    'esac' \
 	    > "$$fake_nix"; \
 	  chmod +x "$$fake_nix"; \
 	  printf '%s\n' \
@@ -1021,6 +1028,9 @@ smoke-nelix-aot-cache-fast-lane:
 	  printf '%s\n' "$$cache_cmd_out"; \
 	  test -f "$$cache_cmd_manifest.nelix-aot-targets" || { echo "error: --runtime nelisp aot-cache did not create cache"; rm -rf "$$tmp"; exit 1; }; \
 	  printf '%s\n' "$$cache_cmd_out" | grep -q ':status ok' || { echo "error: --runtime nelisp aot-cache did not report ok"; rm -rf "$$tmp"; exit 1; }; \
+	  list_json=$$(env $$common_env bin/nelix --json list); \
+	  printf '%s\n' "$$list_json"; \
+	  printf '%s\n' "$$list_json" | grep -q '"name":"magit","attr-path":"legacyPackages.x86_64-linux.emacsPackages.magit","original-url":"flake:nixpkgs","store-paths":\["/nix/store/magit"\]' || { echo "error: AOT cache fast-lane JSON list did not preserve profile object fields"; rm -rf "$$tmp"; exit 1; }; \
 	  audit_out=$$(env $$common_env bin/nelix audit "$$manifest"); \
 	  printf '%s\n' "$$audit_out"; \
 	  printf '%s\n' "$$audit_out" | grep -q '^present	magit$$' || { echo "error: AOT cache fast-lane audit missing magit"; rm -rf "$$tmp"; exit 1; }; \
