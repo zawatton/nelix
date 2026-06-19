@@ -7,6 +7,7 @@ nelisp_mode="${NELIX_USER_MANIFEST_NELISP:-auto}"
 locked_mode="${NELIX_USER_MANIFEST_LOCKED:-auto}"
 nelisp_max_seconds="${NELIX_USER_MANIFEST_NELISP_MAX_SECONDS:-5}"
 nelisp_min_targets="${NELIX_USER_MANIFEST_MIN_TARGETS:-0}"
+nelisp_max_remove="${NELIX_USER_MANIFEST_MAX_REMOVE:-}"
 
 if [ ! -f "$manifest" ]; then
   echo "Nelix user manifest is missing: $manifest" >&2
@@ -26,6 +27,15 @@ case "$nelisp_min_targets" in
   ''|*[!0-9]*)
     echo "invalid NELIX_USER_MANIFEST_MIN_TARGETS value: $nelisp_min_targets" >&2
     exit 64
+    ;;
+esac
+
+case "$nelisp_max_remove" in
+  ''|*[!0-9]*)
+    if [ -n "$nelisp_max_remove" ]; then
+      echo "invalid NELIX_USER_MANIFEST_MAX_REMOVE value: $nelisp_max_remove" >&2
+      exit 64
+    fi
     ;;
 esac
 
@@ -87,6 +97,63 @@ compare_runtime_json() {
   emacs -Q --batch \
     -l "$repo_dir/packaging/compare-nelix-json.el" \
     -- "$label" "$emacs_json" "$nelisp_json" "$@"
+}
+
+json_array_count() {
+  file="$1"
+  key="$2"
+  emacs -Q --batch \
+    --eval '(require (quote json))' \
+    --eval '(let* ((json-object-type (quote alist))
+                   (json-array-type (quote list))
+                   (json-key-type (quote string))
+                   (_ (when (equal (car command-line-args-left) "--")
+                        (pop command-line-args-left)))
+                   (file (pop command-line-args-left))
+                   (key (pop command-line-args-left))
+                   (obj (json-read-file file))
+                   (rows (alist-get key obj nil nil (function string=))))
+              (princ (length rows)))' \
+    -- "$file" "$key"
+}
+
+json_array_names() {
+  file="$1"
+  key="$2"
+  emacs -Q --batch \
+    --eval '(require (quote json))' \
+    --eval '(require (quote subr-x))' \
+    --eval '(let* ((json-object-type (quote alist))
+                   (json-array-type (quote list))
+                   (json-key-type (quote string))
+                   (_ (when (equal (car command-line-args-left) "--")
+                        (pop command-line-args-left)))
+                   (file (pop command-line-args-left))
+                   (key (pop command-line-args-left))
+                   (obj (json-read-file file))
+                   (rows (alist-get key obj nil nil (function string=))))
+              (princ
+               (string-join
+                (mapcar
+                 (lambda (row)
+                   (let ((name (and (listp row)
+                                    (alist-get "name" row nil nil (function string=)))))
+                     (if name (format "%s" name) (format "%S" row))))
+                 rows)
+                ",")))' \
+    -- "$file" "$key"
+}
+
+check_remove_candidates() {
+  file="$1"
+  remove_count="$(json_array_count "$file" remove)" || return 1
+  remove_names="$(json_array_names "$file" remove)" || return 1
+  printf 'nelix user manifest remove-count: %s max=%s names=%s\n' \
+    "$remove_count" "${nelisp_max_remove:-none}" "${remove_names:-none}" >&2
+  if [ -n "$nelisp_max_remove" ] && [ "$remove_count" -gt "$nelisp_max_remove" ]; then
+    echo "nelix user manifest remove count $remove_count exceeds NELIX_USER_MANIFEST_MAX_REMOVE=$nelisp_max_remove" >&2
+    return 1
+  fi
 }
 
 run_nelix_timed() {
@@ -282,6 +349,7 @@ run_nelisp_aot_readonly() {
     "$nelisp_tmp/apply-dry-run-emacs.json" \
     "$nelisp_tmp/apply-dry-run.json" \
     install remove keep protected commands || return 1
+  check_remove_candidates "$nelisp_tmp/apply-dry-run.json" || return 1
 
   if ! run_nelix_timed upgrade-plan "$nelisp_tmp/upgrade-plan.json" "$nelisp_tmp/upgrade-plan.err" \
     --runtime nelisp --json upgrade-plan "$manifest"; then

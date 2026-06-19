@@ -219,7 +219,9 @@ read-only commands and fails required mode when any command exceeds
 to 0 to disable the timing threshold during local diagnosis.  It records the
 AOT cache target count too; set =NELIX_USER_MANIFEST_MIN_TARGETS= when the
 gate must prove a large real manifest such as the current 200-package
-environment.  The verifier also supports
+environment.  It prints the =apply --dry-run= remove candidates as
+=nelix user manifest remove-count:= and can enforce a local safety threshold
+with =NELIX_USER_MANIFEST_MAX_REMOVE=N=.  The verifier also supports
 =NELIX_USER_MANIFEST_LOCKED=required=, which temporarily writes
 =MANIFEST.nelix-lock=, runs =apply --locked --dry-run=, and restores the
 previous lock file so the real profile is not mutated.  When combined with
