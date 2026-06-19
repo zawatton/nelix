@@ -1778,6 +1778,45 @@
                               (nelix-store-test--read-binary-file
                                path-fragment))))))
 
+(ert-deftest nelix-store-test-profile-activate-runtime-forces-posix-symlinks ()
+  "Runtime activation creates profile symlinks when POSIX symlink mode is set."
+  (when (eq system-type 'windows-nt)
+    (ert-skip "POSIX symlink activation is not used on Windows"))
+  (unless (and (fboundp 'make-symbolic-link)
+               (fboundp 'file-symlink-p))
+    (ert-skip "symbolic links are not available in this Emacs"))
+  (nelix-store-test--with-temp-roots
+    (let ((probe-target (expand-file-name "symlink-probe-target"
+                                          nelix-store-root))
+          (probe-link (expand-file-name "symlink-probe-link"
+                                        nelix-store-root))
+          (nelix-profile-activation-link-mode 'symlink))
+      (make-directory nelix-store-root t)
+      (with-temp-file probe-target
+        (insert "probe\n"))
+      (condition-case err
+          (make-symbolic-link probe-target probe-link t)
+        (error
+         (ert-skip (format "symbolic links are not permitted here: %s"
+                           (error-message-string err)))))
+      (let* ((archive (nelix-store-test--make-tar-fixture
+                       (file-name-directory nelix-store-root)
+                       "fixture-runtime-symlink"))
+             (recipe (nelix-store-test--fixture-recipe
+                      "fixture-runtime-symlink"
+                      archive))
+             (_report (nelix-native-install-recipe
+                       recipe "default" 'x86_64-linux))
+             (activation (nelix-profile-activate-runtime "default"))
+             (link-row (car (plist-get activation :links)))
+             (profile-link (plist-get link-row :link))
+             (target (plist-get link-row :target)))
+        (should (eq 'ok (plist-get activation :status)))
+        (should (eq 'symlink (plist-get link-row :mode)))
+        (should (file-symlink-p profile-link))
+        (should (equal (file-truename target)
+                       (file-truename profile-link)))))))
+
 (ert-deftest nelix-store-test-profile-activate-runtime-preserves-active-on-failure ()
   "Runtime activation leaves the previous active tree intact on failure."
   (nelix-store-test--with-temp-roots
