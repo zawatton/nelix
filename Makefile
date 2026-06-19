@@ -428,6 +428,8 @@ verify-deb-contents:
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'validate_transaction_schema_summary_contract'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq '"rollback-plan-available-required"'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'lock JSON package is missing schema-required key'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'bad_lock_validate lock validate'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'lock package row 1 is missing schema-required key :source'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'lock_check lock-check'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'plan "$$manifest" --dry-run'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'validate_plan_apply_dry_run_equivalence'

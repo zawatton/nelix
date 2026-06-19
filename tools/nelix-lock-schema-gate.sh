@@ -144,6 +144,25 @@ test -f "$LEGACY_MANIFEST.nelix-lock" || {
 run_nelix legacy_validate_after lock validate "$LEGACY_MANIFEST"
 expect_out legacy_validate_after '"schema-version":2'
 
+BAD_MANIFEST="$TMP_DIR/bad-lock-manifest.el"
+cat >"$BAD_MANIFEST" <<'EOF'
+(require 'nelix-manifest)
+(nelix-manifest
+ :name "bad-lock"
+ :linux '("ripgrep"))
+EOF
+run_nelix bad_lock lock "$BAD_MANIFEST"
+perl -0pi -e 's/[[:space:]]+:source nixpkgs//' "$BAD_MANIFEST.nelix-lock"
+run_nelix bad_lock_validate lock validate "$BAD_MANIFEST"
+run_nelix bad_lock_check lock-check "$BAD_MANIFEST"
+expect_out bad_lock_validate '"ok":null'
+expect_out bad_lock_validate '"shape-ok":null'
+expect_out bad_lock_validate \
+  'lock package row 1 is missing schema-required key :source'
+expect_out bad_lock_check '"ok":null'
+expect_out bad_lock_check \
+  'lock package row 1 is missing schema-required key :source'
+
 perl -0pi -e 's/:schema-version 2/:schema-version 999/; s/:version 2/:version 999/' "$LOCK_FILE"
 run_nelix future_schema_rejected lock validate "$MANIFEST"
 expect_out future_schema_rejected '"ok":null'

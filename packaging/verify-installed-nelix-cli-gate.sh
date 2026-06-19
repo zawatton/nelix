@@ -784,6 +784,25 @@ expect_json lock_check '"ok":true'
 expect_json lock_check '"schema-check":'
 expect_json lock_check '"schema-version":2'
 
+bad_lock_manifest="$tmp/bad-lock-manifest.el"
+cat >"$bad_lock_manifest" <<'EOF'
+(require 'nelix-manifest)
+(nelix-manifest
+ :name "installed-cli-bad-lock"
+ :linux '("ripgrep"))
+EOF
+run_json bad_lock lock "$bad_lock_manifest"
+perl -0pi -e 's/[[:space:]]+:source nixpkgs//' "$bad_lock_manifest.nelix-lock"
+run_json bad_lock_validate lock validate "$bad_lock_manifest"
+expect_json bad_lock_validate '"ok":null'
+expect_json bad_lock_validate '"shape-ok":null'
+expect_json bad_lock_validate \
+  'lock package row 1 is missing schema-required key :source'
+run_json bad_lock_check lock-check "$bad_lock_manifest"
+expect_json bad_lock_check '"ok":null'
+expect_json bad_lock_check \
+  'lock package row 1 is missing schema-required key :source'
+
 dry_run_record_count_before="$(transaction_record_count)"
 run_json plan plan "$manifest" --dry-run
 expect_json plan '"status":"planned"'

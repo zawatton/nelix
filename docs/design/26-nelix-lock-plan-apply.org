@@ -150,3 +150,30 @@ nelix_lock_gate_result label=dry_run rc=0
 nelix_lock_gate_result label=apply rc=0
 nelix_lock_gate_result label=nelix_lock_plan_apply_gate rc=0
 #+end_example
+
+* 7. Lock Schema Shape Enforcement
+
+Lock schema v2 is defined by =docs/schema/nelix-lock-v2.schema.json= and the
+runtime summary returned by:
+
+#+begin_src sh
+nelix --json schema lock-v2
+#+end_src
+
+Because the canonical on-disk format is still S-expression Elisp, Nelix must
+enforce the same public shape while reading =MANIFEST.nelix-lock=.  Current v2
+locks require the top-level schema keys documented by the JSON schema.  Legacy
+v2 locks without explicit =:schema= and =:schema-version= remain readable under
+the =legacy-v2-readable= compatibility label, but any package row present in a
+v2 lock must include:
+
+- =:name=
+- =:target=
+- =:backend=
+- =:system=
+- =:source=
+
+=nelix lock validate MANIFEST= and =nelix lock-check MANIFEST= both report
+=:ok nil= with =:schema-check :shape-ok nil= when a v2 lock is missing one of
+those required package row keys.  This keeps the S-expression lock reader,
+JSON schema contract, installed CLI gate, and Debian package gate aligned.

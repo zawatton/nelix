@@ -3347,6 +3347,80 @@ where large quoted package rows are still a runtime risk."
 This is the constructor used inside generated lock files."
   (setq nelix-lock-last plist))
 
+(defun nelix-lock--plist-has-key-p (plist key)
+  "Return non-nil when PLIST contains KEY, even when its value is nil."
+  (let ((rest plist)
+        found)
+    (while (and rest (not found))
+      (when (eq (car rest) key)
+        (setq found t))
+      (setq rest (cddr rest)))
+    found))
+
+(defun nelix-lock--json-key-keyword (key)
+  "Return plist keyword corresponding to public JSON schema KEY."
+  (intern (concat ":" key)))
+
+(defun nelix-lock--shape-missing-key (plist keys)
+  "Return the first required JSON key in KEYS missing from PLIST."
+  (let ((rest keys)
+        missing)
+    (while (and rest (null missing))
+      (unless (nelix-lock--plist-has-key-p
+               plist
+               (nelix-lock--json-key-keyword (car rest)))
+        (setq missing (car rest)))
+      (setq rest (cdr rest)))
+    missing))
+
+(defun nelix-lock--current-v2-required-keys (schema)
+  "Return top-level lock keys required for a current v2 lock with SCHEMA."
+  (let ((keys nelix-lock-schema-required-json-keys)
+        result)
+    (while keys
+      (let ((key (car keys)))
+        (unless (and (null schema)
+                     (or (equal key "schema")
+                         (equal key "schema-version")))
+          (push key result)))
+      (setq keys (cdr keys)))
+    (nreverse result)))
+
+(defun nelix-lock--schema-shape-error (lock schema schema-version)
+  "Return a stable v2 schema shape error for LOCK, or nil."
+  (when (and (integerp schema-version)
+             (= schema-version nelix-lock-schema-version))
+    (let ((missing (nelix-lock--shape-missing-key
+                    lock
+                    (nelix-lock--current-v2-required-keys schema))))
+      (cond
+       (missing
+        (format "lock is missing schema-required key :%s" missing))
+       ((not (listp (plist-get lock :packages)))
+        "lock packages is not a list")
+       (t
+        (let ((rows (plist-get lock :packages))
+              (index 0)
+              error)
+          (while (and rows (null error))
+            (let ((row (car rows)))
+              (setq index (1+ index))
+              (cond
+               ((not (listp row))
+                (setq error
+                      (format "lock package row %d is not a plist" index)))
+               ((setq missing
+                      (nelix-lock--shape-missing-key
+                       row
+                       nelix-lock-schema-package-required-json-keys))
+                (setq error
+                      (format
+                       "lock package row %d is missing schema-required key :%s"
+                       index
+                       missing)))))
+            (setq rows (cdr rows)))
+          error))))))
+
 ;;;###autoload
 (defun nelix-lock-schema-check (lock)
   "Return schema compatibility information for LOCK."
@@ -3354,18 +3428,23 @@ This is the constructor used inside generated lock files."
          (schema-version (or (plist-get lock :schema-version)
                              (plist-get lock :version)))
          (version (plist-get lock :version))
+         (shape-error (nelix-lock--schema-shape-error
+                       lock schema schema-version))
          (ok (and (or (null schema)
                       (equal schema nelix-lock-schema-name))
                   (integerp schema-version)
                   (<= schema-version nelix-lock-schema-version)
                   (integerp version)
-                  (>= version 1))))
+                  (>= version 1)
+                  (null shape-error))))
     (list :ok (and ok t)
           :schema (or schema nelix-lock-schema-name)
           :schema-version schema-version
           :current-schema nelix-lock-schema-name
           :current-schema-version nelix-lock-schema-version
-          :version version)))
+          :version version
+          :shape-ok (null shape-error)
+          :shape-error shape-error)))
 
 ;;;###autoload
 (defun nelix-lock-read (manifest-file)
