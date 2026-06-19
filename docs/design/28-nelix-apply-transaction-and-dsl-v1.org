@@ -165,6 +165,16 @@ Current lockfiles are Elisp/S-expression files with an explicit schema header:
 
 CLI =--json lock= serializes the same data for external tooling.
 
+The external JSON contract is fixed in:
+
+#+begin_example
+docs/schema/nelix-lock-v2.schema.json
+#+end_example
+
+This schema describes the JSON form emitted by =nelix --json lock=, while
+=MANIFEST.nelix-lock= remains the source-of-truth S-expression file that Emacs
+and NeLisp load directly.
+
 Current compatibility rule:
 
 - legacy v1 locks are readable for drift checks, but =apply --locked= refuses

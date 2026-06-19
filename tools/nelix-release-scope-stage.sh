@@ -47,6 +47,7 @@ commit_b=(
   nelix-store.el
   nelix-substitute.el
   registry/packages/system
+  docs/schema/nelix-lock-v2.schema.json
   scripts/nelix-aot-manifest-engine.el
   scripts/nelix-aot-native-cli-proof.el
   scripts/nelix-aot-native-subset.el

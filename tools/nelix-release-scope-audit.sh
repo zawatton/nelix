@@ -77,6 +77,7 @@ path_in_release_scope() {
     registry/packages/system/jq.el|\
     registry/packages/system/ripgrep.el|\
     registry/packages/system/tree.el|\
+    docs/schema/nelix-lock-v2.schema.json|\
     scripts/nelix-aot-manifest-engine.el|\
     scripts/nelix-aot-native-cli-proof.el|\
     scripts/nelix-aot-native-subset.el|\

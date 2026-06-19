@@ -1,0 +1,227 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nelix.example.invalid/schema/nelix-lock-v2.schema.json",
+  "title": "Nelix lockfile schema v2",
+  "type": "object",
+  "required": [
+    "schema",
+    "schema-version",
+    "version",
+    "format",
+    "lock",
+    "manifest-digest",
+    "manifest-files",
+    "profile",
+    "backend",
+    "system",
+    "nix-channel",
+    "nix-version",
+    "generated-at",
+    "packages"
+  ],
+  "properties": {
+    "schema": {
+      "const": "nelix-lock"
+    },
+    "schema-version": {
+      "const": 2
+    },
+    "version": {
+      "const": 2
+    },
+    "format": {
+      "const": "sexp"
+    },
+    "lock": {
+      "type": "string"
+    },
+    "manifest-digest": {
+      "type": "string",
+      "pattern": "^sha256-"
+    },
+    "manifest-files": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/manifest-file"
+      }
+    },
+    "profile": {
+      "type": "string"
+    },
+    "backend": {
+      "enum": [
+        "nix",
+        "nelix-native"
+      ]
+    },
+    "system": {
+      "type": "string"
+    },
+    "nix-channel": {
+      "type": "string"
+    },
+    "nix-version": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "generated-at": {
+      "type": "string"
+    },
+    "packages": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/package"
+      }
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "manifest-file": {
+      "type": "object",
+      "required": [
+        "role",
+        "path",
+        "digest"
+      ],
+      "properties": {
+        "role": {
+          "enum": [
+            "manifest",
+            "import"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256-"
+        }
+      },
+      "additionalProperties": true
+    },
+    "package": {
+      "type": "object",
+      "required": [
+        "name",
+        "target",
+        "backend",
+        "system",
+        "source"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "target": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resolved-target": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "installed-name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pinned": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "backend": {
+          "enum": [
+            "nix",
+            "nelix-native"
+          ]
+        },
+        "system": {
+          "type": "string"
+        },
+        "source": {
+          "enum": [
+            "nixpkgs",
+            "registry"
+          ]
+        },
+        "nix-channel": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "attr-path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "original-url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "store-path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "recipe-version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "recipe-source": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "recipe-install": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "recipe-dependencies": {
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "recipe-class": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

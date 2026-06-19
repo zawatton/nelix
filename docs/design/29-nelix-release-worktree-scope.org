@@ -73,6 +73,7 @@ Candidate files:
 - =test/fixtures/nelix-lock-v2-legacy.el=
 - =test/fixtures/nelix-lock-v2-current.el=
 - =test/fixtures/nelix-lock-v2-native-deps.el=
+- =docs/schema/nelix-lock-v2.schema.json=
 - =test/fixtures/nelix-registry/=
 - =tools/nelix-lock-plan-apply-gate.sh=
 - =tools/nelix-release-scope-audit.sh=
@@ -215,6 +216,7 @@ git add \
   nelix-store.el \
   nelix-substitute.el \
   registry/packages/system \
+  docs/schema/nelix-lock-v2.schema.json \
   scripts/nelix-aot-manifest-engine.el \
   scripts/nelix-aot-native-cli-proof.el \
   scripts/nelix-aot-native-subset.el \

@@ -22,6 +22,31 @@
   (expand-file-name (concat "fixtures/" name)
                     nelix-cli-test--directory))
 
+(defun nelix-cli-test--schema (name)
+  "Return the parsed JSON schema NAME from docs/schema."
+  (json-parse-string
+   (with-temp-buffer
+     (insert-file-contents
+      (expand-file-name (concat "../docs/schema/" name)
+                        nelix-cli-test--directory))
+     (buffer-string))
+   :object-type 'alist
+   :array-type 'list))
+
+(defun nelix-cli-test--alist-key-string (key)
+  "Return the JSON object key string represented by KEY."
+  (cond
+   ((symbolp key) (symbol-name key))
+   ((stringp key) key)
+   (t (format "%s" key))))
+
+(defun nelix-cli-test--alist-has-json-key-p (alist key)
+  "Return non-nil when ALIST has JSON object KEY."
+  (let (found)
+    (dolist (cell alist found)
+      (when (equal (nelix-cli-test--alist-key-string (car cell)) key)
+        (setq found t)))))
+
 (ert-deftest nelix-cli-test-parse-strips-emacs-separator-and-json ()
   (should (equal (nelix-cli-parse-args
                   '("--" "--json" "audit" "manifest.el"))
@@ -291,6 +316,56 @@
               (should (equal "ripgrep" (alist-get 'name package)))
               (should (equal "ripgrep" (alist-get 'target package)))
               (should (equal "nix" (alist-get 'backend package))))))
+      (delete-directory dir t))))
+
+(ert-deftest nelix-cli-test-lock-json-satisfies-v2-schema-contract ()
+  "The documented v2 schema required keys match real lock JSON output."
+  (let ((dir (make-temp-file "nelix-cli-real-lock-schema-" t)))
+    (unwind-protect
+        (let ((manifest (expand-file-name "manifest.el" dir)))
+          (with-temp-file manifest
+            (insert "(require 'nelix-manifest)\n"
+                    "(nelix-manifest :name \"default\""
+                    " :linux '(ripgrep))\n"))
+          (cl-letf (((symbol-function 'nelix-list)
+                     (lambda ()
+                       (list (list :name "ripgrep"
+                                   :attr-path "legacyPackages.x86_64-linux.ripgrep"))))
+                    ((symbol-function 'anvil-pkg-compat-executable-find)
+                     (lambda (program)
+                       (and (equal program "nix") "/usr/bin/nix")))
+                    ((symbol-function 'anvil-pkg--detect-nix-version)
+                     (lambda () "2.34.7")))
+            (let* ((schema (nelix-cli-test--schema
+                            "nelix-lock-v2.schema.json"))
+                   (json (nelix-cli-format-result
+                          (nelix-cli-dispatch
+                           (list :command "lock"
+                                 :args (list manifest)))
+                          t))
+                   (parsed (json-parse-string json :object-type 'alist
+                                              :array-type 'list))
+                   (package (car (alist-get 'packages parsed)))
+                   (properties (alist-get 'properties schema))
+                   (package-schema
+                    (alist-get
+                     'package
+                     (alist-get '$defs schema)))
+                   (required (alist-get 'required schema))
+                   (package-required (alist-get 'required package-schema)))
+              (should (equal nelix-lock-schema-name
+                             (alist-get 'const
+                                        (alist-get 'schema properties))))
+              (should (= nelix-lock-schema-version
+                         (alist-get 'const
+                                    (alist-get 'schema-version properties))))
+              (should (= nelix-lock-schema-version
+                         (alist-get 'const
+                                    (alist-get 'version properties))))
+              (dolist (key required)
+                (should (nelix-cli-test--alist-has-json-key-p parsed key)))
+              (dolist (key package-required)
+                (should (nelix-cli-test--alist-has-json-key-p package key))))))
       (delete-directory dir t))))
 
 (ert-deftest nelix-cli-test-lock-json-round-trips-native-dependencies ()
