@@ -255,6 +255,567 @@ nelix_nelisp_validate_fast_lane() {
   return 1
 }
 
+nelix_transaction_log_root_shell() {
+  if [ -n "${XDG_STATE_HOME:-}" ]; then
+    printf '%s/nelix/transactions\n' "$XDG_STATE_HOME"
+  elif [ -n "${HOME:-}" ]; then
+    printf '%s/.local/state/nelix/transactions\n' "$HOME"
+  else
+    printf '%s/.local/state/nelix/transactions\n' "$(pwd)"
+  fi
+}
+
+nelix_try_transaction_fast_lane() {
+  nelix_nelisp_aot_cache_enabled || return 1
+  command -v perl >/dev/null 2>&1 || return 1
+  [ "${1:-}" = "--json" ] || return 1
+  [ "${2:-}" = "transaction" ] || return 1
+  command=${3:-}
+  root=$(nelix_transaction_log_root_shell)
+  case "$command" in
+    list)
+      if [ "$#" -eq 3 ]; then
+        limit=
+      elif [ "$#" -eq 5 ] && [ "$4" = "--limit" ]; then
+        limit=$5
+      else
+        return 1
+      fi
+      perl - "$root" "$limit" <<'PERL'
+use strict;
+use warnings;
+
+my ($root, $limit) = @ARGV;
+$limit = "" unless defined $limit;
+if ($limit ne "" && $limit !~ /\A[0-9]+\z/) {
+  print STDERR "nelix transaction list: --limit requires a non-negative integer\n";
+  exit 2;
+}
+
+sub js {
+  my ($s) = @_;
+  $s = "" unless defined $s;
+  $s =~ s/\\/\\\\/g;
+  $s =~ s/"/\\"/g;
+  $s =~ s/\r/\\r/g;
+  $s =~ s/\n/\\n/g;
+  $s =~ s/\t/\\t/g;
+  return '"' . $s . '"';
+}
+
+sub read_record_text {
+  my ($file) = @_;
+  open my $fh, '<', $file or die "read $file: $!";
+  local $/;
+  my $text = <$fh>;
+  close $fh;
+  $text =~ s/\A(?:[^\n]*\n)*?\s*(?=\()//s;
+  return $text;
+}
+
+sub skip_ws {
+  my ($text, $pos) = @_;
+  my $len = length($$text);
+  while ($$pos < $len) {
+    my $ch = substr($$text, $$pos, 1);
+    if ($ch =~ /\s/) { $$pos++; next; }
+    if ($ch eq ';') {
+      $$pos++ while $$pos < $len && substr($$text, $$pos, 1) ne "\n";
+      next;
+    }
+    last;
+  }
+}
+
+sub parse_expr;
+sub parse_string {
+  my ($text, $pos) = @_;
+  $$pos++;
+  my $out = "";
+  my $len = length($$text);
+  while ($$pos < $len) {
+    my $ch = substr($$text, $$pos, 1);
+    $$pos++;
+    last if $ch eq '"';
+    if ($ch eq '\\' && $$pos < $len) {
+      my $esc = substr($$text, $$pos, 1);
+      $$pos++;
+      $out .= $esc eq 'n' ? "\n" : $esc eq 'r' ? "\r" : $esc eq 't' ? "\t" : $esc;
+    } else {
+      $out .= $ch;
+    }
+  }
+  return ['str', $out];
+}
+
+sub parse_atom {
+  my ($text, $pos) = @_;
+  my $start = $$pos;
+  my $len = length($$text);
+  $$pos++ while $$pos < $len && substr($$text, $$pos, 1) !~ /[\s()]/;
+  return ['sym', substr($$text, $start, $$pos - $start)];
+}
+
+sub parse_list {
+  my ($text, $pos) = @_;
+  $$pos++;
+  my @items;
+  while (1) {
+    skip_ws($text, $pos);
+    last if $$pos >= length($$text);
+    if (substr($$text, $$pos, 1) eq ')') {
+      $$pos++;
+      last;
+    }
+    push @items, parse_expr($text, $pos);
+  }
+  return \@items;
+}
+
+sub parse_expr {
+  my ($text, $pos) = @_;
+  skip_ws($text, $pos);
+  my $ch = substr($$text, $$pos, 1);
+  return parse_list($text, $pos) if $ch eq '(';
+  return parse_string($text, $pos) if $ch eq '"';
+  return parse_atom($text, $pos);
+}
+
+sub parse_record {
+  my ($file) = @_;
+  my $text = read_record_text($file);
+  my $pos = 0;
+  return parse_expr(\$text, \$pos);
+}
+
+sub sym {
+  my ($node) = @_;
+  return undef unless ref($node) eq 'ARRAY' && @$node == 2 && $node->[0] eq 'sym';
+  return $node->[1];
+}
+
+sub str_value {
+  my ($node) = @_;
+  return undef unless ref($node) eq 'ARRAY';
+  return $node->[1] if @$node == 2 && ($node->[0] eq 'str' || $node->[0] eq 'sym');
+  return undef;
+}
+
+sub plist_get {
+  my ($node, $key) = @_;
+  return undef unless ref($node) eq 'ARRAY';
+  for (my $i = 0; $i + 1 < @$node; $i += 2) {
+    my $k = sym($node->[$i]);
+    return $node->[$i + 1] if defined $k && $k eq $key;
+  }
+  return undef;
+}
+
+sub list_len {
+  my ($node) = @_;
+  return 0 unless ref($node) eq 'ARRAY';
+  return 0 if @$node == 2 && ($node->[0] eq 'sym' || $node->[0] eq 'str');
+  return scalar @$node;
+}
+
+sub bool_json {
+  my ($node) = @_;
+  my $s = sym($node);
+  return "true" if defined $s && $s eq "t";
+  return "false";
+}
+
+my @files;
+if (-d $root) {
+  opendir my $dh, $root or die "open $root: $!";
+  @files = map { "$root/$_" } grep { /\Aapply-.*\.el\z/ } readdir($dh);
+  closedir $dh;
+  @files = sort { (stat($b))[9] <=> (stat($a))[9] } @files;
+}
+@files = @files[0 .. $limit - 1] if $limit ne "" && @files > $limit;
+
+my @rows;
+for my $file (@files) {
+  my $record = eval { parse_record($file) };
+  next if $@ || !defined $record;
+  my $plan = plist_get($record, ':plan');
+  my $rollback = plist_get($record, ':rollback-plan');
+  my $error = plist_get($record, ':error');
+  my $mtime = (stat($file))[9] || 0;
+  push @rows, '{'
+    . '"id":' . js(str_value(plist_get($record, ':id')) || ($file =~ s!.*/!!r =~ s/\.el\z//r))
+    . ',"file":' . js($file)
+    . ',"schema":' . js(str_value(plist_get($record, ':schema')) || '')
+    . ',"schema-version":' . (str_value(plist_get($record, ':schema-version')) || 0)
+    . ',"status":' . js(str_value(plist_get($record, ':status')) || '')
+    . ',"manifest":' . js(str_value(plist_get($record, ':manifest')) || '')
+    . ',"profile":' . js(str_value(plist_get($record, ':profile')) || '')
+    . ',"started-at":' . js(str_value(plist_get($record, ':started-at')) || '')
+    . ',"updated-at":' . js(str_value(plist_get($record, ':updated-at')) || '')
+    . ',"mtime":' . $mtime
+    . ',"command-count":' . list_len(plist_get($plan, ':commands'))
+    . ',"executed-count":' . list_len(plist_get($record, ':executed'))
+    . ',"rollback-available":' . bool_json(plist_get($rollback, ':available'))
+    . (defined sym($error) && sym($error) eq 'nil' ? ',"error":null' : defined str_value($error) ? ',"error":' . js(str_value($error)) : ',"error":null')
+    . '}';
+}
+
+print '{"status":"ok","operation":"transaction-list","root":' . js($root)
+  . ',"count":' . scalar(@rows)
+  . ',"transactions":[' . join(',', @rows) . "]}\n";
+PERL
+      return $?
+      ;;
+    show)
+      [ "$#" -eq 4 ] || return 1
+      perl - "$root" "$4" show <<'PERL'
+use strict;
+use warnings;
+my ($root, $id, $mode) = @ARGV;
+
+sub js {
+  my ($s) = @_;
+  $s = "" unless defined $s;
+  $s =~ s/\\/\\\\/g; $s =~ s/"/\\"/g; $s =~ s/\r/\\r/g; $s =~ s/\n/\\n/g; $s =~ s/\t/\\t/g;
+  return '"' . $s . '"';
+}
+sub resolve_file {
+  my ($root, $id) = @_;
+  return $id if $id =~ m!\A/! || $id =~ m!/!;
+  return "$root/$id" if $id =~ /\.el\z/;
+  return "$root/$id.el";
+}
+sub read_record_text {
+  my ($file) = @_;
+  open my $fh, '<', $file or die "nelix transaction show: record not found: $id\n";
+  local $/; my $text = <$fh>; close $fh;
+  $text =~ s/\A(?:[^\n]*\n)*?\s*(?=\()//s;
+  return $text;
+}
+sub skip_ws {
+  my ($text, $pos) = @_;
+  my $len = length($$text);
+  while ($$pos < $len) {
+    my $ch = substr($$text, $$pos, 1);
+    if ($ch =~ /\s/) { $$pos++; next; }
+    if ($ch eq ';') { $$pos++ while $$pos < $len && substr($$text, $$pos, 1) ne "\n"; next; }
+    last;
+  }
+}
+sub parse_expr;
+sub parse_string {
+  my ($text, $pos) = @_;
+  $$pos++; my $out = ""; my $len = length($$text);
+  while ($$pos < $len) {
+    my $ch = substr($$text, $$pos, 1); $$pos++; last if $ch eq '"';
+    if ($ch eq '\\' && $$pos < $len) {
+      my $esc = substr($$text, $$pos, 1); $$pos++;
+      $out .= $esc eq 'n' ? "\n" : $esc eq 'r' ? "\r" : $esc eq 't' ? "\t" : $esc;
+    } else { $out .= $ch; }
+  }
+  return ['str', $out];
+}
+sub parse_atom {
+  my ($text, $pos) = @_;
+  my $start = $$pos; my $len = length($$text);
+  $$pos++ while $$pos < $len && substr($$text, $$pos, 1) !~ /[\s()]/;
+  return ['sym', substr($$text, $start, $$pos - $start)];
+}
+sub parse_list {
+  my ($text, $pos) = @_;
+  $$pos++; my @items;
+  while (1) {
+    skip_ws($text, $pos); last if $$pos >= length($$text);
+    if (substr($$text, $$pos, 1) eq ')') { $$pos++; last; }
+    push @items, parse_expr($text, $pos);
+  }
+  return \@items;
+}
+sub parse_expr {
+  my ($text, $pos) = @_;
+  skip_ws($text, $pos);
+  my $ch = substr($$text, $$pos, 1);
+  return parse_list($text, $pos) if $ch eq '(';
+  return parse_string($text, $pos) if $ch eq '"';
+  return parse_atom($text, $pos);
+}
+sub parse_record {
+  my ($file) = @_;
+  my $text = read_record_text($file); my $pos = 0;
+  return parse_expr(\$text, \$pos);
+}
+sub sym {
+  my ($node) = @_;
+  return undef unless ref($node) eq 'ARRAY' && @$node == 2 && $node->[0] eq 'sym';
+  return $node->[1];
+}
+sub sval {
+  my ($node) = @_;
+  return undef unless ref($node) eq 'ARRAY' && @$node == 2 && ($node->[0] eq 'str' || $node->[0] eq 'sym');
+  return $node->[1];
+}
+sub plist_p {
+  my ($node) = @_;
+  return 0 unless ref($node) eq 'ARRAY' && @$node % 2 == 0;
+  for (my $i = 0; $i < @$node; $i += 2) {
+    my $k = sym($node->[$i]);
+    return 0 unless defined $k && $k =~ /^:/;
+  }
+  return 1;
+}
+sub key_name {
+  my ($node) = @_;
+  my $k = sym($node); $k = "" unless defined $k; $k =~ s/^://;
+  return $k;
+}
+sub enc {
+  my ($node) = @_;
+  return 'null' unless defined $node;
+  if (ref($node) eq 'ARRAY' && @$node == 2 && $node->[0] eq 'str') { return js($node->[1]); }
+  if (ref($node) eq 'ARRAY' && @$node == 2 && $node->[0] eq 'sym') {
+    my $s = $node->[1];
+    return 'true' if $s eq 't';
+    return 'null' if $s eq 'nil';
+    return $s if $s =~ /\A-?[0-9]+(?:\.[0-9]+)?\z/;
+    return js($s);
+  }
+  if (plist_p($node)) {
+    my @fields;
+    for (my $i = 0; $i + 1 < @$node; $i += 2) {
+      push @fields, js(key_name($node->[$i])) . ':' . enc($node->[$i + 1]);
+    }
+    return '{' . join(',', @fields) . '}';
+  }
+  return '[' . join(',', map { enc($_) } @$node) . ']';
+}
+sub plist_get {
+  my ($node, $key) = @_;
+  return undef unless ref($node) eq 'ARRAY';
+  for (my $i = 0; $i + 1 < @$node; $i += 2) {
+    my $k = sym($node->[$i]);
+    return $node->[$i + 1] if defined $k && $k eq $key;
+  }
+  return undef;
+}
+sub list_len {
+  my ($node) = @_;
+  return 0 unless ref($node) eq 'ARRAY';
+  return 0 if @$node == 2 && ($node->[0] eq 'sym' || $node->[0] eq 'str');
+  return scalar @$node;
+}
+my $file = resolve_file($root, $id);
+my $record = parse_record($file);
+if ($mode eq 'show') {
+  print '{"status":"ok","operation":"transaction-show","file":' . js($file) . ',"record":' . enc($record) . "}\n";
+  exit 0;
+}
+my $rollback = plist_get($record, ':rollback-plan');
+my $available = sym(plist_get($rollback, ':available'));
+if (!defined($available) || $available ne 't') {
+  my $reason = sval(plist_get($rollback, ':reason')) || 'unknown';
+  print STDERR "nelix transaction recover: rollback unavailable for $id: $reason\n";
+  exit 2;
+}
+my $transaction = plist_get($record, ':transaction');
+my $backend = sval(plist_get($transaction, ':backend')) || '';
+my $profile = sval(plist_get($transaction, ':profile'));
+my $generation = sval(plist_get($rollback, ':generation'));
+my @manual = $backend eq 'nelix-native' ? ('native', 'rollback') : ('rollback');
+push @manual, '--profile', $profile if defined($profile) && $profile ne '' && $profile ne 'nil' && $backend eq 'nelix-native';
+push @manual, '--generation', $generation if $backend eq 'nelix-native' && defined($generation) && $generation ne '';
+@manual = ('rollback', $generation) if $backend ne 'nelix-native' && defined($generation) && $generation ne '';
+my $plan = plist_get($record, ':plan');
+print '{"status":"ok","operation":"transaction-recover","dry-run":true'
+  . ',"file":' . js($file)
+  . ',"record-id":' . js(sval(plist_get($record, ':id')) || '')
+  . ',"record-status":' . js(sval(plist_get($record, ':status')) || '')
+  . ',"backend":' . js($backend)
+  . ',"profile":' . (defined($profile) && $profile ne 'nil' ? js($profile) : 'null')
+  . ',"generation":' . (defined($generation) && $generation =~ /\A[0-9]+\z/ ? $generation : 'null')
+  . ',"rollback-plan":' . enc($rollback)
+  . ',"manual-command":[' . join(',', map { js($_) } @manual) . ']'
+  . ',"command-count":' . list_len(plist_get($plan, ':commands'))
+  . ',"executed-count":' . list_len(plist_get($record, ':executed'))
+  . "}\n";
+PERL
+      return $?
+      ;;
+    recover)
+      [ "$#" -eq 5 ] && [ "$5" = "--dry-run" ] || return 1
+      perl - "$root" "$4" recover <<'PERL'
+use strict;
+use warnings;
+my ($root, $id, $mode) = @ARGV;
+
+sub js {
+  my ($s) = @_;
+  $s = "" unless defined $s;
+  $s =~ s/\\/\\\\/g; $s =~ s/"/\\"/g; $s =~ s/\r/\\r/g; $s =~ s/\n/\\n/g; $s =~ s/\t/\\t/g;
+  return '"' . $s . '"';
+}
+sub resolve_file {
+  my ($root, $id) = @_;
+  return $id if $id =~ m!\A/! || $id =~ m!/!;
+  return "$root/$id" if $id =~ /\.el\z/;
+  return "$root/$id.el";
+}
+sub read_record_text {
+  my ($file) = @_;
+  open my $fh, '<', $file or die "nelix transaction show: record not found: $id\n";
+  local $/; my $text = <$fh>; close $fh;
+  $text =~ s/\A(?:[^\n]*\n)*?\s*(?=\()//s;
+  return $text;
+}
+sub skip_ws {
+  my ($text, $pos) = @_;
+  my $len = length($$text);
+  while ($$pos < $len) {
+    my $ch = substr($$text, $$pos, 1);
+    if ($ch =~ /\s/) { $$pos++; next; }
+    if ($ch eq ';') { $$pos++ while $$pos < $len && substr($$text, $$pos, 1) ne "\n"; next; }
+    last;
+  }
+}
+sub parse_expr;
+sub parse_string {
+  my ($text, $pos) = @_;
+  $$pos++; my $out = ""; my $len = length($$text);
+  while ($$pos < $len) {
+    my $ch = substr($$text, $$pos, 1); $$pos++; last if $ch eq '"';
+    if ($ch eq '\\' && $$pos < $len) {
+      my $esc = substr($$text, $$pos, 1); $$pos++;
+      $out .= $esc eq 'n' ? "\n" : $esc eq 'r' ? "\r" : $esc eq 't' ? "\t" : $esc;
+    } else { $out .= $ch; }
+  }
+  return ['str', $out];
+}
+sub parse_atom {
+  my ($text, $pos) = @_;
+  my $start = $$pos; my $len = length($$text);
+  $$pos++ while $$pos < $len && substr($$text, $$pos, 1) !~ /[\s()]/;
+  return ['sym', substr($$text, $start, $$pos - $start)];
+}
+sub parse_list {
+  my ($text, $pos) = @_;
+  $$pos++; my @items;
+  while (1) {
+    skip_ws($text, $pos); last if $$pos >= length($$text);
+    if (substr($$text, $$pos, 1) eq ')') { $$pos++; last; }
+    push @items, parse_expr($text, $pos);
+  }
+  return \@items;
+}
+sub parse_expr {
+  my ($text, $pos) = @_;
+  skip_ws($text, $pos);
+  my $ch = substr($$text, $$pos, 1);
+  return parse_list($text, $pos) if $ch eq '(';
+  return parse_string($text, $pos) if $ch eq '"';
+  return parse_atom($text, $pos);
+}
+sub parse_record {
+  my ($file) = @_;
+  my $text = read_record_text($file); my $pos = 0;
+  return parse_expr(\$text, \$pos);
+}
+sub sym {
+  my ($node) = @_;
+  return undef unless ref($node) eq 'ARRAY' && @$node == 2 && $node->[0] eq 'sym';
+  return $node->[1];
+}
+sub sval {
+  my ($node) = @_;
+  return undef unless ref($node) eq 'ARRAY' && @$node == 2 && ($node->[0] eq 'str' || $node->[0] eq 'sym');
+  return $node->[1];
+}
+sub plist_p {
+  my ($node) = @_;
+  return 0 unless ref($node) eq 'ARRAY' && @$node % 2 == 0;
+  for (my $i = 0; $i < @$node; $i += 2) {
+    my $k = sym($node->[$i]);
+    return 0 unless defined $k && $k =~ /^:/;
+  }
+  return 1;
+}
+sub key_name {
+  my ($node) = @_;
+  my $k = sym($node); $k = "" unless defined $k; $k =~ s/^://;
+  return $k;
+}
+sub enc {
+  my ($node) = @_;
+  return 'null' unless defined $node;
+  if (ref($node) eq 'ARRAY' && @$node == 2 && $node->[0] eq 'str') { return js($node->[1]); }
+  if (ref($node) eq 'ARRAY' && @$node == 2 && $node->[0] eq 'sym') {
+    my $s = $node->[1];
+    return 'true' if $s eq 't';
+    return 'null' if $s eq 'nil';
+    return $s if $s =~ /\A-?[0-9]+(?:\.[0-9]+)?\z/;
+    return js($s);
+  }
+  if (plist_p($node)) {
+    my @fields;
+    for (my $i = 0; $i + 1 < @$node; $i += 2) {
+      push @fields, js(key_name($node->[$i])) . ':' . enc($node->[$i + 1]);
+    }
+    return '{' . join(',', @fields) . '}';
+  }
+  return '[' . join(',', map { enc($_) } @$node) . ']';
+}
+sub plist_get {
+  my ($node, $key) = @_;
+  return undef unless ref($node) eq 'ARRAY';
+  for (my $i = 0; $i + 1 < @$node; $i += 2) {
+    my $k = sym($node->[$i]);
+    return $node->[$i + 1] if defined $k && $k eq $key;
+  }
+  return undef;
+}
+sub list_len {
+  my ($node) = @_;
+  return 0 unless ref($node) eq 'ARRAY';
+  return 0 if @$node == 2 && ($node->[0] eq 'sym' || $node->[0] eq 'str');
+  return scalar @$node;
+}
+my $file = resolve_file($root, $id);
+my $record = parse_record($file);
+my $rollback = plist_get($record, ':rollback-plan');
+my $available = sym(plist_get($rollback, ':available'));
+if (!defined($available) || $available ne 't') {
+  my $reason = sval(plist_get($rollback, ':reason')) || 'unknown';
+  print STDERR "nelix transaction recover: rollback unavailable for $id: $reason\n";
+  exit 2;
+}
+my $transaction = plist_get($record, ':transaction');
+my $backend = sval(plist_get($transaction, ':backend')) || '';
+my $profile = sval(plist_get($transaction, ':profile'));
+my $generation = sval(plist_get($rollback, ':generation'));
+my @manual = $backend eq 'nelix-native' ? ('native', 'rollback') : ('rollback');
+push @manual, '--profile', $profile if defined($profile) && $profile ne '' && $profile ne 'nil' && $backend eq 'nelix-native';
+push @manual, '--generation', $generation if $backend eq 'nelix-native' && defined($generation) && $generation ne '';
+@manual = ('rollback', $generation) if $backend ne 'nelix-native' && defined($generation) && $generation ne '';
+my $plan = plist_get($record, ':plan');
+print '{"status":"ok","operation":"transaction-recover","dry-run":true'
+  . ',"file":' . js($file)
+  . ',"record-id":' . js(sval(plist_get($record, ':id')) || '')
+  . ',"record-status":' . js(sval(plist_get($record, ':status')) || '')
+  . ',"backend":' . js($backend)
+  . ',"profile":' . (defined($profile) && $profile ne 'nil' ? js($profile) : 'null')
+  . ',"generation":' . (defined($generation) && $generation =~ /\A[0-9]+\z/ ? $generation : 'null')
+  . ',"rollback-plan":' . enc($rollback)
+  . ',"manual-command":[' . join(',', map { js($_) } @manual) . ']'
+  . ',"command-count":' . list_len(plist_get($plan, ':commands'))
+  . ',"executed-count":' . list_len(plist_get($record, ':executed'))
+  . "}\n";
+PERL
+      return $?
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 nelix_emacs_batch() {
   "${EMACS:-emacs}" -Q --batch \
     -L "$lispdir" \
@@ -1223,6 +1784,10 @@ nelix_run_nelisp_direct() {
       exit 127
     fi
   done
+
+  if nelix_try_transaction_fast_lane "$@"; then
+    exit 0
+  fi
 
   if nelix_try_nelisp_aot_cache_fast_lane "$@"; then
     exit 0

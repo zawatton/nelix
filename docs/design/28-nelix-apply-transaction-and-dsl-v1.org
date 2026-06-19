@@ -133,6 +133,11 @@ nelix --json transaction show ~/.local/state/nelix/transactions/apply-....el
 manifest, command count, executed count, and rollback availability.
 =transaction show= returns the validated record body under =:record= so that
 the CLI status and the apply record status do not collide.
+Under the user-facing default =--runtime nelisp= path, JSON
+=transaction list=, =transaction show=, and =transaction recover --dry-run=
+use a shell record-reader fast lane when available.  Setting
+=NELIX_NELISP_AOT=0= disables that fast lane and forces the slower full
+standalone NeLisp CLI path for debugging.
 Record validation rejects schema v1 files missing the stable top-level,
 =:plan=, =:transaction=, =:rollback-plan=, or executed-row keys needed for
 post-failure diagnosis.
@@ -352,13 +357,15 @@ make verify-installed-cli-gate   # after installing the freshly built package
 The first two gates prove the source-tree CLI in Emacs and standalone NeLisp
 paths.  The NeLisp gate uses the user-facing default runtime, so supported
 read-only manifest commands may take the AOT cache fast lane while real apply
-and rollback still exercise the standalone fallback path.  Use
-=make smoke-nelix-lock-plan-apply-nelisp-direct= only when debugging the
-slower direct standalone path with =NELIX_NELISP_AOT=0=.  =smoke-nelix-lock-schema=
-proves schema, lock read-only commands, and legacy migration behavior.  The
-installed CLI gate is required before release because it is the only one that
-exercises the packaged =/usr/bin/nelix= payload and its documented transaction
-CLI surface.
+still exercises the standalone fallback path.  Transaction list/show/recover
+inspection uses the default-runtime record-reader fast lane, so the gate still
+proves transaction records while avoiding another full CLI bootstrap for each
+read-only inspection.  Use =make smoke-nelix-lock-plan-apply-nelisp-direct=
+only when debugging the slower direct standalone path with
+=NELIX_NELISP_AOT=0=.  =smoke-nelix-lock-schema= proves schema, lock
+read-only commands, and legacy migration behavior.  The installed CLI gate is
+required before release because it is the only one that exercises the packaged
+=/usr/bin/nelix= payload and its documented transaction CLI surface.
 
 * 3. Remove Safety
 

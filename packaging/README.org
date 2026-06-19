@@ -218,7 +218,14 @@ NeLisp runtimes for =list=, =audit=, =plan --dry-run=, =apply --dry-run=, and
 different package diff.  It also records elapsed time for the NeLisp
 read-only commands and fails required mode when any command exceeds
 =NELIX_USER_MANIFEST_NELISP_MAX_SECONDS=, which defaults to 5 seconds; set it
-to 0 to disable the timing threshold during local diagnosis.  It records the
+to 0 to disable the timing threshold during local diagnosis.
+
+The default =--runtime nelisp= path also fast-reads JSON transaction
+inspection commands (=transaction list=, =transaction show=, and
+=transaction recover --dry-run=) from the persisted record files, while
+=NELIX_NELISP_AOT=0= keeps the slower full direct path available for
+debugging.
+It records the
 AOT cache target count too; set =NELIX_USER_MANIFEST_MIN_TARGETS= when the
 gate must prove a large real manifest such as the current 200-package
 environment.  It prints the top-level =list= count, =audit=, =plan=,

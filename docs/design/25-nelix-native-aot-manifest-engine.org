@@ -408,6 +408,11 @@ Status on 2026-06-18:
   =--json= direct-writer mode.  =make smoke-nelix-aot-cache-fast-lane=
   makes that =bin/nelix= coverage repeatable without touching the user's real
   Nix profile.
+- The same default-runtime principle now covers JSON
+  =transaction list=, =transaction show=, and
+  =transaction recover --dry-run=.  These commands inspect persisted
+  transaction record files through a shell record reader instead of starting
+  the full standalone NeLisp CLI for each read-only transaction query.
 - Fast-lane real-profile measurements on 2026-06-18:
 
 | Step | Measurement |
