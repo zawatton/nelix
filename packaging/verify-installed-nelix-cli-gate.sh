@@ -377,6 +377,17 @@ validate_transaction_schema_summary_contract() {
                                        "rollback-plan-unavailable-reasons"
                                        "rollback-result-keys"
                                        "executed-required")))
+                    (unless (equal (jget "const" (jget key schema-properties))
+                                   (jget key summary))
+                      (error "transaction schema summary const differs for %s" key)))
+                  (dolist (key (quote ("required" "plan-required"
+                                       "transaction-required"
+                                       "rollback-plan-required"
+                                       "rollback-plan-available-required"
+                                       "status-values"
+                                       "rollback-plan-unavailable-reasons"
+                                       "rollback-result-keys"
+                                       "executed-required")))
                     (let* ((property (jget key schema-properties))
                            (items (jget "items" property))
                            (expected (jget "enum" items))

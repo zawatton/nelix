@@ -79,6 +79,7 @@ path_in_release_scope() {
     registry/packages/system/tree.el|\
     docs/schema/nelix-manifest-dsl-v1.schema.json|\
     docs/schema/nelix-lock-v2.schema.json|\
+    docs/schema/nelix-transaction-v1.schema.json|\
     scripts/nelix-aot-manifest-engine.el|\
     scripts/nelix-aot-native-cli-proof.el|\
     scripts/nelix-aot-native-subset.el|\
@@ -315,6 +316,12 @@ require_autopkgtest_gate_strength() {
     '"source-of-truth" "json-output" "commands"'
   require_contains test/nelix-cli-test.el \
     'source-of-truth json-output commands compatibility'
+  require_contains docs/schema/nelix-transaction-v1.schema.json \
+    '"const": ['
+  require_contains docs/schema/nelix-transaction-v1.schema.json \
+    '"before-generation"'
+  require_contains packaging/verify-installed-nelix-cli-gate.sh \
+    'transaction schema summary const differs'
   require_contains packaging/verify-installed-nelix-cli-gate.sh \
     "registry list [--system SYSTEM]"
   require_contains packaging/verify-installed-nelix-cli-gate.sh \
@@ -995,6 +1002,7 @@ audit_group "Commit B - Nelix manifest, native store, and CLI" \
   nelix-substitute.el \
   registry/packages/system \
   docs/schema/nelix-manifest-dsl-v1.schema.json \
+  docs/schema/nelix-transaction-v1.schema.json \
   scripts/nelix-aot-manifest-engine.el \
   scripts/nelix-aot-native-cli-proof.el \
   scripts/nelix-aot-native-subset.el \

@@ -881,6 +881,13 @@
                    (alist-get 'json-schema parsed)))
     (dolist (key required)
       (should (nelix-cli-test--alist-has-json-key-p parsed key)))
+    (dolist (key '(required plan-required transaction-required
+                   rollback-plan-required rollback-plan-available-required
+                   status-values rollback-plan-unavailable-reasons
+                   rollback-result-keys executed-required))
+      (should (equal (alist-get 'const (alist-get key properties))
+                     (nelix-cli-test--json-array-list
+                      (alist-get key parsed)))))
     (dolist (key '("required" "plan-required" "transaction-required"
                    "rollback-plan-required"
                    "rollback-plan-available-required"

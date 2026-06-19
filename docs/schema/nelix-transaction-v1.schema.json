@@ -39,6 +39,22 @@
     },
     "required": {
       "type": "array",
+      "const": [
+        "schema",
+        "schema-version",
+        "id",
+        "status",
+        "manifest",
+        "profile",
+        "started-at",
+        "updated-at",
+        "plan",
+        "transaction",
+        "executed",
+        "rollback-plan",
+        "rollback",
+        "error"
+      ],
       "items": {
         "enum": [
           "schema",
@@ -60,6 +76,11 @@
     },
     "plan-required": {
       "type": "array",
+      "const": [
+        "operation",
+        "manifest",
+        "commands"
+      ],
       "items": {
         "enum": [
           "operation",
@@ -70,6 +91,22 @@
     },
     "transaction-required": {
       "type": "array",
+      "const": [
+        "enabled",
+        "backend",
+        "profile",
+        "system",
+        "rollback-on-error",
+        "generation-captured",
+        "rollback-available",
+        "before-generation",
+        "before-generation-error",
+        "after-generation",
+        "record-id",
+        "record-file",
+        "record-started-at",
+        "record-status"
+      ],
       "items": {
         "enum": [
           "enabled",
@@ -91,6 +128,9 @@
     },
     "rollback-plan-required": {
       "type": "array",
+      "const": [
+        "available"
+      ],
       "items": {
         "enum": [
           "available"
@@ -99,6 +139,11 @@
     },
     "rollback-plan-available-required": {
       "type": "array",
+      "const": [
+        "operation",
+        "generation",
+        "argv"
+      ],
       "items": {
         "enum": [
           "operation",
@@ -109,6 +154,12 @@
     },
     "status-values": {
       "type": "array",
+      "const": [
+        "started",
+        "running",
+        "ok",
+        "error"
+      ],
       "items": {
         "enum": [
           "started",
@@ -120,6 +171,11 @@
     },
     "rollback-plan-unavailable-reasons": {
       "type": "array",
+      "const": [
+        "transaction-disabled",
+        "rollback-disabled",
+        "before-generation-missing"
+      ],
       "items": {
         "enum": [
           "transaction-disabled",
@@ -130,6 +186,15 @@
     },
     "rollback-result-keys": {
       "type": "array",
+      "const": [
+        "attempted",
+        "ok",
+        "generation",
+        "after-rollback-generation",
+        "verified",
+        "reason",
+        "error"
+      ],
       "items": {
         "enum": [
           "attempted",
@@ -147,6 +212,10 @@
     },
     "executed-required": {
       "type": "array",
+      "const": [
+        "action",
+        "name"
+      ],
       "items": {
         "enum": [
           "action",

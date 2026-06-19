@@ -528,8 +528,10 @@ Rules:
   =nelix-apply-transaction=, schema version =1=, and the required top-level,
   plan, transaction metadata, rollback-plan, rollback argv, and executed-step
   keys used by apply records.  =docs/schema/nelix-transaction-v1.schema.json=
-  records the corresponding machine-readable summary contract and package
-  gates compare it with CLI schema output.
+  records the corresponding machine-readable summary contract.  Its array
+  properties keep =items.enum= as the accepted value set and =const= as the
+  exact v1 record contract, so package gates can compare it with CLI schema
+  output and catch transaction record drift before release.
 
 Scope decisions for the user-requested Nix/Guix-style surface:
 
