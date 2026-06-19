@@ -11,6 +11,7 @@ nelisp_min_targets="${NELIX_USER_MANIFEST_MIN_TARGETS:-0}"
 nelisp_max_remove="${NELIX_USER_MANIFEST_MAX_REMOVE:-}"
 nelisp_max_missing="${NELIX_USER_MANIFEST_MAX_MISSING:-}"
 nelisp_max_extra="${NELIX_USER_MANIFEST_MAX_EXTRA:-}"
+nelisp_expected_remove="${NELIX_USER_MANIFEST_EXPECT_REMOVE:-}"
 nelisp_report_dir="${NELIX_USER_MANIFEST_REPORT_DIR:-}"
 
 if [ ! -f "$manifest" ]; then
@@ -277,6 +278,37 @@ check_remove_candidates() {
   if [ -n "$nelisp_max_remove" ] && [ "$remove_count" -gt "$nelisp_max_remove" ]; then
     echo "nelix user manifest remove count $remove_count exceeds NELIX_USER_MANIFEST_MAX_REMOVE=$nelisp_max_remove" >&2
     return 1
+  fi
+  if [ -n "$nelisp_expected_remove" ]; then
+    case "$nelisp_expected_remove" in
+      none)
+        expected_remove_names=''
+        ;;
+      *)
+        expected_remove_names="$nelisp_expected_remove"
+        ;;
+    esac
+    actual_remove_sorted="$(
+      printf '%s\n' "$remove_names" |
+        tr ',' '\n' |
+        sed '/^$/d' |
+        sort |
+        paste -sd, -
+    )"
+    expected_remove_sorted="$(
+      printf '%s\n' "$expected_remove_names" |
+        tr ',' '\n' |
+        sed '/^$/d' |
+        sort |
+        paste -sd, -
+    )"
+    printf 'nelix user manifest expected-remove: %s actual=%s\n' \
+      "${nelisp_expected_remove:-none}" "${actual_remove_sorted:-none}" >&2
+    append_report_summary "expected-remove=${nelisp_expected_remove:-none} actual=${actual_remove_sorted:-none}"
+    if [ "$actual_remove_sorted" != "$expected_remove_sorted" ]; then
+      echo "nelix user manifest remove names differ from NELIX_USER_MANIFEST_EXPECT_REMOVE=$nelisp_expected_remove" >&2
+      return 1
+    fi
   fi
 }
 

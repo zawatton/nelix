@@ -243,6 +243,7 @@ verify-deb-contents:
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'NELIX_USER_MANIFEST_NELISP_MAX_SECONDS'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'NELIX_USER_MANIFEST_MIN_TARGETS'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'NELIX_USER_MANIFEST_MAX_REMOVE'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'NELIX_USER_MANIFEST_EXPECT_REMOVE'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'NELIX_USER_MANIFEST_MAX_MISSING'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'NELIX_USER_MANIFEST_MAX_EXTRA'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'NELIX_USER_MANIFEST_REPORT_DIR'
@@ -261,6 +262,7 @@ verify-deb-contents:
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'check_profile_diff_candidates "$$nelisp_tmp/audit.json" missing'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'check_profile_diff_candidates "$$nelisp_tmp/audit.json" extra'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'nelix user manifest remove-count:'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'nelix user manifest expected-remove:'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'compare_runtime_json upgrade-plan'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'compare_runtime_json plan-apply-dry-run'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'install remove keep protected commands'
@@ -584,6 +586,7 @@ verify-user-runtime-gate:
 	NELIX_USER_MANIFEST_MAX_MISSING="$${NELIX_USER_MANIFEST_MAX_MISSING:-0}" \
 	NELIX_USER_MANIFEST_MAX_EXTRA="$${NELIX_USER_MANIFEST_MAX_EXTRA:-0}" \
 	NELIX_USER_MANIFEST_MAX_REMOVE="$${NELIX_USER_MANIFEST_MAX_REMOVE:-0}" \
+	NELIX_USER_MANIFEST_EXPECT_REMOVE="$${NELIX_USER_MANIFEST_EXPECT_REMOVE:-none}" \
 	NELIX_USER_MANIFEST_NELISP_MAX_SECONDS="$${NELIX_USER_MANIFEST_NELISP_MAX_SECONDS:-20}" \
 	NELISP="$${NELISP:-$(NELISP)}" \
 	NELISP_ROOT="$${NELISP_ROOT:-$(NELISP_REPO)}" \

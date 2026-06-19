@@ -123,6 +123,10 @@ The verifier prints the =audit= missing/extra counts and names plus the
 =NELIX_USER_MANIFEST_MAX_EXTRA=N=, and
 =NELIX_USER_MANIFEST_MAX_REMOVE=N= can make the gate fail when the real profile
 diff is larger than the operator has explicitly allowed.
+=NELIX_USER_MANIFEST_EXPECT_REMOVE=none= requires the reviewed remove set to be
+empty; a comma-separated name list requires exact remove candidate parity, so a
+previously reviewed =remove=5= state cannot silently become a different
+five-package deletion plan.
 When =NELIX_USER_MANIFEST_REPORT_DIR= is set, =summary.txt= records
 machine-readable =timing-COMMAND-ms= entries, =target-count=, diff counts,
 remove candidates, and final =runtime-status=ok= so real-user gate evidence can
@@ -238,6 +242,7 @@ NELIX_USER_MANIFEST_NELISP=required \
 NELIX_USER_MANIFEST_LOCKED=required \
 NELIX_USER_MANIFEST_MIN_TARGETS=150 \
 NELIX_USER_MANIFEST_MAX_REMOVE=5 \
+NELIX_USER_MANIFEST_EXPECT_REMOVE=nelix-system-autopkgtest,nelix-system-debhelper,nelix-system-dh-elpa,nelix-system-lintian,ripgrep \
 NELIX_USER_MANIFEST_NELISP_MAX_SECONDS=60 \
 NELIX_USER_MANIFEST_NELISP_TIMEOUT=180s \
 packaging/verify-nelix-user-manifest-dsl.sh
