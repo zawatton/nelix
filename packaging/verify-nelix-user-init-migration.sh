@@ -104,11 +104,37 @@ run_nelix_json() {
   env NELIX_LISPDIR="$nelix_lispdir" "$nelix_bin" "$@" >/dev/null
 }
 
+run_nelix_json_capture() {
+  out="$1"
+  shift
+  env NELIX_LISPDIR="$nelix_lispdir" "$nelix_bin" "$@" >"$out"
+}
+
+compare_init_json() {
+  label="$1"
+  left_json="$2"
+  right_json="$3"
+  shift 3
+  emacs -Q --batch \
+    -l "$repo_dir/packaging/compare-nelix-json.el" \
+    -- "$label" "$left_json" "$right_json" "$@"
+}
+
+json_tmp="$(mktemp -d)"
+cleanup_json() {
+  rm -rf "$json_tmp"
+}
+trap cleanup_json EXIT HUP INT TERM
+
 run_nelix_json --runtime nelisp --json validate "$manifest"
 run_nelix_json --runtime nelisp --json list
 run_nelix_json --runtime nelisp --json audit "$manifest"
-run_nelix_json --runtime nelisp --json plan "$manifest" --dry-run
-run_nelix_json --runtime nelisp --json apply "$manifest" --dry-run
+run_nelix_json_capture "$json_tmp/plan.json" --runtime nelisp --json plan "$manifest" --dry-run
+run_nelix_json_capture "$json_tmp/apply-dry-run.json" --runtime nelisp --json apply "$manifest" --dry-run
+compare_init_json init-plan-apply-dry-run \
+  "$json_tmp/plan.json" \
+  "$json_tmp/apply-dry-run.json" \
+  install remove keep protected commands
 run_nelix_json --runtime nelisp --json upgrade-plan "$manifest"
 run_nelix_json --runtime nelisp --json lock-check "$manifest"
 
@@ -136,6 +162,9 @@ run_nelix_json --runtime nelisp --json lock-check "$manifest"
   run_nelix_json --json lock "$manifest"
   run_nelix_json --runtime nelisp --json apply "$manifest" --locked --dry-run
 )
+
+rm -rf "$json_tmp"
+trap - EXIT HUP INT TERM
 
 elisp="$(mktemp)"
 trap 'rm -f "$elisp"' EXIT HUP INT TERM

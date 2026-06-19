@@ -237,7 +237,8 @@ Nelix manifest/audit path only.
 runs the personal manifest through =nelix --runtime nelisp= read-only commands
 (=validate=, =list=, =audit=, =plan --dry-run=, =apply --dry-run=,
 =upgrade-plan=, =lock-check=, and locked
-=apply --dry-run=), then loads =~/.emacs.d/early-init.el= and
+=apply --dry-run=), compares the =plan --dry-run= and =apply --dry-run=
+action sets, then loads =~/.emacs.d/early-init.el= and
 =~/.emacs.d/init.el= in Emacs batch and runs =my-nelix-audit=.  This target is
 not part of =deb-full-gate=; run it when verifying the real desktop Emacs
 configuration.  By default it verifies the Debian package version only when it

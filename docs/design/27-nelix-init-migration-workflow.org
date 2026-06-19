@@ -199,6 +199,8 @@ It performs two checks in order:
 - =nelix --runtime nelisp= read-only manifest commands:
   =validate=, =audit=, =plan=, =apply --dry-run=, =upgrade-plan=, and locked
   =apply --dry-run=;
+- direct comparison of the init-migration =plan --dry-run= and
+  =apply --dry-run= action sets;
 - Emacs batch loading of =~/.emacs.d/early-init.el= and =~/.emacs.d/init.el=,
   followed by =my-nelix-audit=.
 

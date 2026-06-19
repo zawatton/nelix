@@ -251,6 +251,7 @@ verify-deb-contents:
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/doc/elpa-nelix/packaging/verify-nelix-user-environment.sh'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/doc/elpa-nelix/packaging/verify-nelix-user-init-migration.sh'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-init-migration.sh | grep -Fq 'my-nelix-audit is missing after init load'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-init-migration.sh | grep -Fq 'compare_init_json init-plan-apply-dry-run'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-init-migration.sh | grep -Fq -- '--runtime nelisp --json list'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-init-migration.sh | grep -Fq -- '--runtime nelisp --json lock-check "$$manifest"'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-init-migration.sh | grep -Fq 'NELIX_INIT_MIGRATION_AUDIT'
