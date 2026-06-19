@@ -429,7 +429,8 @@ verify-deb-contents:
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-native-cli-gate.sh | grep -Fq 'dependency rollback left dependency profile tree file behind'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-native-cli-gate.sh | grep -Fq 'activation profile tree file is not a symlink'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-native-cli-gate.sh | grep -Fq 'nelix native store MVP ok: recipe-registry fetch hash-verify unpack profile-activation rollback lockfile-recording'
-	grep -Fq 'fetch, hash verification, unpack, profile symlink, rollback' docs/design/22-nelix-native-store.org
+	grep -Fq 'fetch, hash verification, unpack, profile activation, rollback' docs/design/22-nelix-native-store.org
+	grep -Fq 'profile-activation rollback lockfile-recording' docs/design/22-nelix-native-store.org
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'registry list [--system SYSTEM]'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'packaged_registry'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'dsl_validate validate "$$dsl_manifest"'

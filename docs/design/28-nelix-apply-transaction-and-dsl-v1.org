@@ -359,7 +359,9 @@ transaction schema constants must run at least:
 make smoke-nelix-lock-plan-apply
 make smoke-nelix-lock-plan-apply-nelisp
 make smoke-nelix-lock-schema
+make verify-source-operational-gate
 make verify-installed-cli-gate   # after installing the freshly built package
+make verify-installed-operational-gate  # after installing the freshly built package
 #+end_src
 
 The first two gates prove the source-tree CLI in Emacs and standalone NeLisp
@@ -377,6 +379,12 @@ only when debugging the slower direct standalone path with
 read-only commands, and legacy migration behavior.  The installed CLI gate is
 required before release because it is the only one that exercises the packaged
 =/usr/bin/nelix= payload and its documented transaction CLI surface.
+=verify-source-operational-gate= is the source-tree aggregate for real
+=~/.emacs.d/nelix-package.el= runtime checks, init-load migration checks, lock
+schema, NeLisp transaction/recovery, and native store MVP coverage.
+=verify-installed-operational-gate= is the post-reinstall aggregate that pairs
+the packaged CLI transaction/schema/native checks with the real user manifest
+NeLisp runtime gate through =/usr/bin/nelix=.
 
 * 3. Remove Safety
 

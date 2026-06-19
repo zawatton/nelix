@@ -10,6 +10,7 @@ nelix (0.1.0-5) unstable; urgency=medium
   * Add a combined source-tree real-user gate.
   * Add a broader source-tree operational gate.
   * Add an installed-package operational gate shortcut.
+  * Align native-store design evidence with operational gate output.
 
  -- zawatton <zawatton@example.invalid>  Sat, 20 Jun 2026 01:51:36 +0900
 
