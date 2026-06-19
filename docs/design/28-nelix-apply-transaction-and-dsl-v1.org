@@ -217,7 +217,7 @@ partially failed or interrupted apply without re-running the same mutation:
 nelix transaction list --limit 10
 nelix --json transaction show APPLY-ID
 nelix --json transaction recover APPLY-ID --dry-run
-nelix rollback GENERATION
+nelix --json transaction recover APPLY-ID --execute
 #+end_src
 
 Manual recovery uses =:rollback-plan :generation= from the record when
@@ -235,6 +235,13 @@ the record must explain one of the stable reasons:
 The =rollback-result-keys= schema entry lists the stable keys a failed apply may
 write under =:rollback=.  =:verified t= is the only success proof; command exit
 alone is not enough.
+
+=transaction recover --execute= is the explicit mutating recovery command.  It
+uses the same validated record and rollback plan as =--dry-run=, calls the
+backend rollback operation, captures the active generation after rollback, and
+returns the resulting =:rollback= plist.  It refuses records whose apply status
+is already =ok= so a successful apply record cannot be accidentally used as an
+undo command.
 
 Transaction record validation treats rollback unavailability as schema data,
 not free-form text.  When =:rollback-plan :available= is nil, =:reason= must be
@@ -281,9 +288,9 @@ Current implementation evidence:
 Remaining design edge:
 
 - There is no mutating "resume interrupted transaction" command yet.
-  =transaction recover APPLY-ID --dry-run= exists only as a read-only recovery
-  planner.  A future mutating recovery command must use the same record schema
-  and must not infer recovery state from current profile contents alone.
+  =transaction recover APPLY-ID --execute= only rolls back to the recorded
+  generation.  It does not resume partially completed install/remove steps or
+  infer recovery state from current profile contents alone.
 
 ** 2.5 Failure classes and recovery boundary
 
@@ -295,7 +302,7 @@ different safety guarantees:
 | preflight | invalid manifest, lock drift, remove not confirmed | no transaction record | no | fix input, rerun dry-run |
 | snapshot | generation history unavailable before mutation | record may be absent or has unavailable rollback plan | no | inspect profile manually before mutating |
 | command failure | install/remove exits non-zero after =started= | =error= record with =:executed= and =:rollback= | yes when rollback plan is available | inspect =transaction show= and rerun after fixing cause |
-| interruption | process exits between mutations/record writes | last complete record write only | not guaranteed | use =transaction recover --dry-run= and profile history |
+| interruption | process exits between mutations/record writes | last complete record write only | not guaranteed | inspect =transaction recover --dry-run=, then use =transaction recover --execute= when the record is suitable |
 
 Preflight failures must happen before =nelix-manifest--transaction-begin=.
 They are intentionally outside the transaction log because no profile mutation
@@ -318,12 +325,13 @@ fails, the failure record stores the exact =:executed= rows, the derived
 considered successful only when =:verified t= proves the active generation
 matches =:before-generation=.
 
-Interruption recovery is deliberately read-only today.  =nelix transaction
+Interruption recovery is explicit and generation-based.  =nelix transaction
 recover ID|FILE --dry-run= validates the record and returns the manual rollback
-command derived from =:rollback-plan=.  It does not execute that command.  A
-future mutating =transaction recover= must add a new schema version or an
-explicit record event so external tools can distinguish operator-triggered
-recovery from the original failed apply.
+command derived from =:rollback-plan=.  =nelix transaction recover ID|FILE
+--execute= performs that rollback and verifies the resulting active generation.
+It does not add an extra event to the original schema v1 record; external tools
+must treat the returned =transaction-recover= result as the operator-triggered
+recovery proof.
 
 ** 2.6 Lock update and transaction boundary
 
@@ -427,6 +435,9 @@ It runs =/usr/bin/nelix= with a fake =nix= executable and verifies:
 - =transaction recover ID|FILE --dry-run= validates the same persisted record
   and returns the reviewed manual rollback command without mutating profile or
   lock state.
+- =transaction recover ID|FILE --execute= reuses the record's rollback plan,
+  rolls the profile back to the recorded generation, verifies the active
+  generation, and refuses records whose apply status is already =ok=.
 
 The source-tree NeLisp gate also runs =apply MANIFEST --locked --dry-run= so
 locked mode is checked without loading the lock file as executable Elisp.

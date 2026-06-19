@@ -208,7 +208,7 @@
       }
     },
     "recovery": {
-      "const": "nelix transaction recover ID|FILE --dry-run"
+      "const": "nelix transaction recover ID|FILE (--dry-run|--execute)"
     },
     "executed-required": {
       "type": "array",

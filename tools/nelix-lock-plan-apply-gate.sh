@@ -354,4 +354,19 @@ expect_out transaction_recover_error_emacs '"operation":"transaction-recover"'
 expect_out transaction_recover_error_emacs '"record-status":"error"'
 expect_out transaction_recover_error_emacs '"manual-command":\["rollback","7"\]'
 
+: >"$FAKE_LOG"
+run_nelix transaction_recover_execute --json transaction recover "$error_record" --execute
+expect_out transaction_recover_execute '"operation":"transaction-recover"'
+expect_out transaction_recover_execute '"execute":true'
+expect_out transaction_recover_execute '"record-status":"error"'
+expect_out transaction_recover_execute '"rollback":'
+expect_out transaction_recover_execute '"attempted":true'
+expect_out transaction_recover_execute '"ok":true'
+expect_out transaction_recover_execute '"verified":true'
+expect_log 'profile rollback --profile .+ --to-generation 7'
+
+run_nelix_expect_fail transaction_recover_ok_execute --json transaction recover "$ok_record" --execute
+expect_out_any transaction_recover_ok_execute '"status":"error"' '^nelix:'
+expect_out transaction_recover_ok_execute 'refusing to rollback successful transaction'
+
 echo "nelix_lock_gate_result label=nelix_lock_plan_apply_gate rc=0"

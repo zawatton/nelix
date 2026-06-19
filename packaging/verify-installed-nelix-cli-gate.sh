@@ -552,7 +552,7 @@ assert_transaction_record_count() {
   echo "nelix installed CLI gate: help omits transaction show command" >&2
   exit 1
 }
-"$nelix_bin" --help | grep -Fq 'transaction recover ID|FILE --dry-run' || {
+"$nelix_bin" --help | grep -Fq 'transaction recover ID|FILE (--dry-run|--execute)' || {
   echo "nelix installed CLI gate: help omits transaction recover command" >&2
   exit 1
 }
@@ -656,7 +656,7 @@ expect_json schema_transaction '"rollback-disabled"'
 expect_json schema_transaction '"before-generation-missing"'
 expect_json schema_transaction '"rollback-result-keys":\['
 expect_json schema_transaction '"verified"'
-expect_json schema_transaction '"recovery":"nelix transaction recover ID|FILE --dry-run"'
+expect_json schema_transaction '"recovery":"nelix transaction recover ID|FILE (--dry-run|--execute)"'
 expect_json schema_transaction '"executed-required":\['
 expect_json schema_transaction '"action"'
 validate_transaction_schema_summary_contract
@@ -967,6 +967,17 @@ expect_json transaction_recover_error '"generation":7'
 expect_json transaction_recover_error '"manual-command":\["rollback","7"\]'
 
 : >"$fake_log"
+run_json transaction_recover_execute transaction recover "$failed_record" --execute
+expect_json transaction_recover_execute '"operation":"transaction-recover"'
+expect_json transaction_recover_execute '"execute":true'
+expect_json transaction_recover_execute '"record-status":"error"'
+expect_json transaction_recover_execute '"rollback":'
+expect_json transaction_recover_execute '"attempted":true'
+expect_json transaction_recover_execute '"ok":true'
+expect_json transaction_recover_execute '"verified":true'
+expect_log 'profile rollback --profile .+ --to-generation 7'
+
+: >"$fake_log"
 run_json locked_apply apply "$manifest" --locked --allow-remove-count 1
 expect_json locked_apply '"status":"ok"'
 expect_json locked_apply '"locked":true'
@@ -1014,6 +1025,9 @@ expect_json_any transaction_show_ok \
 expect_json_any transaction_show_ok \
   '"action":"remove","name":"bat"' \
   '"name":"bat","action":"remove"'
+run_failing_json transaction_recover_ok_execute fd transaction recover "$ok_record" --execute
+expect_json transaction_recover_ok_execute '"status":"error"'
+expect_json transaction_recover_ok_execute 'refusing to rollback successful transaction'
 
 NELIX_BIN="$nelix_bin" bash "$script_dir/verify-nelix-native-cli-gate.sh"
 NELIX_BIN="$nelix_bin" bash "$script_dir/verify-nelix-aot-cache-gate.sh"

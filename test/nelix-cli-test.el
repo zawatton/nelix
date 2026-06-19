@@ -726,7 +726,7 @@
     (should (member "verified"
                     (nelix-cli-test--json-array-list
                      (alist-get 'rollback-result-keys transaction))))
-    (should (equal "nelix transaction recover ID|FILE --dry-run"
+    (should (equal "nelix transaction recover ID|FILE (--dry-run|--execute)"
                    (alist-get 'recovery transaction)))
     (should (member "action"
                     (nelix-cli-test--json-array-list
@@ -1254,8 +1254,8 @@
                            (alist-get 'schema parsed-record)))))
       (delete-directory dir t))))
 
-(ert-deftest nelix-cli-test-transaction-recover-requires-dry-run ()
-  "Transaction recovery is read-only until a real recover command is designed."
+(ert-deftest nelix-cli-test-transaction-recover-requires-explicit-mode ()
+  "Transaction recovery requires either dry-run inspection or explicit execute."
   (let* ((dir (make-temp-file "nelix-cli-transaction-recover-" t))
          (nelix-transaction-log-root dir)
          (file (expand-file-name "apply-alpha.el" dir)))
@@ -1265,7 +1265,59 @@
           (should-error
            (nelix-cli-dispatch
             '(:command "transaction" :args ("recover" "apply-alpha")))
+           :type 'anvil-pkg-error)
+          (should-error
+           (nelix-cli-dispatch
+            '(:command "transaction"
+              :args ("recover" "apply-alpha" "--dry-run" "--execute")))
            :type 'anvil-pkg-error))
+      (delete-directory dir t))))
+
+(ert-deftest nelix-cli-test-transaction-recover-execute-rolls-back ()
+  "Transaction recovery can execute the recorded rollback with an explicit flag."
+  (let* ((dir (make-temp-file "nelix-cli-transaction-execute-" t))
+         (nelix-transaction-log-root dir)
+         (file (expand-file-name "apply-alpha.el" dir))
+         rolled-back)
+    (unwind-protect
+        (progn
+          (nelix-cli-test--write-transaction-record file 'error)
+          (cl-letf (((symbol-function 'nelix-rollback)
+                     (lambda (generation)
+                       (setq rolled-back generation)
+                       t))
+                    ((symbol-function 'nelix-manifest--active-generation-id)
+                     (lambda () 7)))
+            (let ((result
+                   (nelix-cli-dispatch
+                    '(:command "transaction"
+                      :args ("recover" "apply-alpha" "--execute")))))
+              (should (eq 'ok (plist-get result :status)))
+              (should (equal 'transaction-recover
+                             (plist-get result :operation)))
+              (should-not (plist-get result :dry-run))
+              (should (plist-get result :execute))
+              (should (= 7 rolled-back))
+              (should (plist-get (plist-get result :rollback) :ok))
+              (should (plist-get (plist-get result :rollback) :verified)))))
+      (delete-directory dir t))))
+
+(ert-deftest nelix-cli-test-transaction-recover-execute-refuses-ok-record ()
+  "Transaction recovery does not rollback a successful apply record."
+  (let* ((dir (make-temp-file "nelix-cli-transaction-ok-recover-" t))
+         (nelix-transaction-log-root dir)
+         (file (expand-file-name "apply-alpha.el" dir)))
+    (unwind-protect
+        (progn
+          (nelix-cli-test--write-transaction-record file 'ok)
+          (cl-letf (((symbol-function 'nelix-rollback)
+                     (lambda (_generation)
+                       (ert-fail "successful transaction recovery must not rollback"))))
+            (should-error
+             (nelix-cli-dispatch
+              '(:command "transaction"
+                :args ("recover" "apply-alpha" "--execute")))
+             :type 'anvil-pkg-error)))
       (delete-directory dir t))))
 
 (ert-deftest nelix-cli-test-transaction-recover-rejects-unavailable-rollback ()

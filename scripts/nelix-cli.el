@@ -34,7 +34,7 @@ Commands:
   lock-check MANIFEST
   transaction list [--limit N]
   transaction show ID|FILE
-  transaction recover ID|FILE --dry-run
+  transaction recover ID|FILE (--dry-run|--execute)
   plan MANIFEST [--dry-run]
   apply MANIFEST [--dry-run] [--locked] [--allow-remove]
                  [--allow-remove-count N] [--no-rollback]
@@ -357,7 +357,8 @@ read-only and already returns the dry-run convergence report."
         (nelix-transaction-show id-or-file)))
      ((equal subcommand "recover")
       (let ((id-or-file (car rest))
-            (dry-run nil))
+            (dry-run nil)
+            (execute nil))
         (unless id-or-file
           (signal 'anvil-pkg-error
                   (list "nelix transaction recover: missing required ID|FILE")))
@@ -367,12 +368,16 @@ read-only and already returns the dry-run convergence report."
             (cond
              ((equal arg "--dry-run")
               (setq dry-run t))
+             ((equal arg "--execute")
+              (setq execute t))
              (t
               (signal 'anvil-pkg-error
                       (list (format "nelix transaction recover: unexpected argument %S"
                                     arg))))))
           (setq rest (cdr rest)))
-        (nelix-transaction-recover id-or-file :dry-run dry-run)))
+        (nelix-transaction-recover id-or-file
+                                   :dry-run dry-run
+                                   :execute execute)))
      ((null subcommand)
       (signal 'anvil-pkg-error
               (list "nelix transaction: missing subcommand")))
