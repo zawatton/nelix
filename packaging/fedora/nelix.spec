@@ -8,8 +8,11 @@ URL:            https://github.com/zawatton/nelix
 Source0:        %{url}/archive/v%{version}/%{name}-%{version}.tar.gz
 
 BuildArch:      noarch
+BuildRequires:  bash
+BuildRequires:  coreutils
 BuildRequires:  emacs
 BuildRequires:  make
+BuildRequires:  tar
 
 Requires:       emacs-filesystem
 Recommends:     git
@@ -52,6 +55,7 @@ emacs -Q --batch -L . -L test -L scripts -l nelix --eval "(require 'nelix)"
 grep -q 'NELIX_NELISP_AOT:-auto' bin/nelix
 grep -q 'NELIX_NELISP_AOT=0 to force the slower direct NeLisp path' bin/nelix
 NELIX_LISPDIR="$PWD" bin/nelix --json version | grep -q '"status":"ok"'
+NELIX_BIN="$PWD/bin/nelix" NELIX_LISPDIR="$PWD" packaging/verify-nelix-native-cli-gate.sh
 
 %files
 %license LICENSE

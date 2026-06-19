@@ -26,6 +26,7 @@ for path in \
   "$prefix/registry/packages/system/fd.el" \
   "$prefix/registry/packages/system/jq.el" \
   "$prefix/registry/packages/system/tree.el" \
+  "$prefix/packaging/verify-nelix-native-cli-gate.sh" \
   "$prefix/packaging/fedora/publish-static.sh" \
   "$prefix/packaging/fedora/verify-public-tree.sh" \
   "$prefix/packaging/verify-publication-urls.sh" \
@@ -49,6 +50,21 @@ tar -xOzf "$tarball" "$prefix/bin/nelix" | grep -q 'NELIX_NELISP_AOT=0 to force 
 
 tar -xOzf "$tarball" "$prefix/packaging/fedora/nelix.spec" | grep -q 'NELIX_LISPDIR="$PWD" bin/nelix --json version' || {
   echo "Fedora source tarball spec is missing CLI version check" >&2
+  exit 1
+}
+
+tar -xOzf "$tarball" "$prefix/packaging/fedora/nelix.spec" | grep -q 'NELIX_BIN="$PWD/bin/nelix" NELIX_LISPDIR="$PWD" packaging/verify-nelix-native-cli-gate.sh' || {
+  echo "Fedora source tarball spec is missing native CLI gate check" >&2
+  exit 1
+}
+
+tar -xOzf "$tarball" "$prefix/packaging/verify-nelix-native-cli-gate.sh" | grep -q 'native install fixture-archive --profile archive' || {
+  echo "Fedora source tarball native CLI gate is missing archive install smoke" >&2
+  exit 1
+}
+
+tar -xOzf "$tarball" "$prefix/packaging/verify-nelix-native-cli-gate.sh" | grep -q 'fixture-archive-ok unpack' || {
+  echo "Fedora source tarball native CLI gate is missing archive execution smoke" >&2
   exit 1
 }
 

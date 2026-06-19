@@ -786,13 +786,25 @@ require_aot_plan_gate_docs() {
   require_contains packaging/fedora/verify-source.sh \
     'registry/packages/system/tree.el'
   require_contains packaging/fedora/verify-source.sh \
+    'packaging/verify-nelix-native-cli-gate.sh'
+  require_contains packaging/fedora/verify-source.sh \
+    'native install fixture-archive --profile archive'
+  require_contains packaging/fedora/verify-source.sh \
+    'fixture-archive-ok unpack'
+  require_contains packaging/fedora/verify-source.sh \
     'NELIX_LISPDIR="$PWD" bin/nelix --json version'
+  require_contains packaging/fedora/verify-source.sh \
+    'NELIX_BIN="$PWD/bin/nelix" NELIX_LISPDIR="$PWD" packaging/verify-nelix-native-cli-gate.sh'
   require_contains packaging/fedora/nelix.spec \
     'NELIX_LISPDIR="$PWD" bin/nelix --json version'
+  require_contains packaging/fedora/nelix.spec \
+    'NELIX_BIN="$PWD/bin/nelix" NELIX_LISPDIR="$PWD" packaging/verify-nelix-native-cli-gate.sh'
   require_contains packaging/fedora/README.org \
-    'the source tarball and RPM =%check= verify'
+    'native CLI gate can install and'
   require_contains docs/design/29-nelix-release-worktree-scope.org \
     'Fedora source/RPM gate: =make fedora-source-gate= verifies'
+  require_contains docs/design/29-nelix-release-worktree-scope.org \
+    'Fedora RPM =%check= runs the native CLI gate'
 }
 
 require_commit_execution_checklist() {

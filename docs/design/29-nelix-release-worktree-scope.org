@@ -527,6 +527,8 @@ to dry-run.  It stages files only when =--stage= is passed explicitly.
 - Fedora local/container gate verifies that installed =nelix= and
   =emacs-nelix= RPM versions match =FEDORA_VERSION= before accepting the
   dnf smoke result.
+- Fedora RPM =%check= runs the native CLI gate against the source tree, including
+  the hash-verified archive install/activate fixture.
 
 * Remaining before public release
 

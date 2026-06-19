@@ -65,8 +65,9 @@ The gate checks:
 - the RPM build verifies the generated source tarball before invoking
   =rpmbuild=
 - the source tarball and RPM =%check= verify that =bin/nelix= contains
-  the default AOT cache mode and that =NELIX_LISPDIR="$PWD" bin/nelix
-  --json version= succeeds
+  the default AOT cache mode, that =NELIX_LISPDIR="$PWD" bin/nelix
+  --json version= succeeds, and that the native CLI gate can install and
+  activate a hash-verified archive fixture
 - =rpmlint= reports no errors
 - =createrepo_c= creates a local repository
 - =dnf= installs both RPMs from that local repository
