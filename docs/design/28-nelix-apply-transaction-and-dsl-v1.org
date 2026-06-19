@@ -45,6 +45,36 @@ Dry-run behavior:
 - never writes a transaction record;
 - shows whether rollback would be enabled for a real apply.
 
+Safety invariants:
+
+- *apply-before snapshot*: real Nix =apply= captures the active profile
+  generation before the first install/remove command.  If no command would run,
+  no transaction record is written.
+- *plan persistence*: the generated transaction record stores the exact
+  =nelix-plan= plist that real apply is executing, including install/remove
+  rows, command rows, lock metadata, remove safety metadata, and transaction
+  preview state.
+- *step journal*: after each successful command row, the record is rewritten
+  with the current =:executed= rows.  A crash or command failure therefore
+  leaves enough information to see the last confirmed mutation.
+- *rollback plan*: every record stores a derived =:rollback-plan=.  It is
+  available only when rollback is enabled and the before-generation snapshot
+  was captured.
+- *rollback verification*: rollback success is not assumed from the rollback
+  command exit alone.  =nelix apply= queries the active generation afterwards
+  and reports =:verified t= only when it equals the captured
+  =:before-generation=.
+- *dry-run equivalence*: =apply --dry-run= and real =apply= must be based on the
+  same =nelix-plan= path.  Dry-run may omit generation capture and record
+  writes, but it must expose the same install/remove/protected command intent
+  that real apply would execute after remove-safety confirmation.
+- *lockfile timing*: =apply --locked= validates and loads the lockfile before
+  transaction begin and before any profile mutation.  Current apply does not
+  rewrite the lockfile; lockfile creation, migration, and refresh are explicit
+  =nelix lock= / =nelix lock migrate= operations.  Future lockfile update
+  automation must happen only after a successful apply and must be journaled as
+  a separate transaction step.
+
 Opt-out:
 
 #+begin_src sh
