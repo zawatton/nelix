@@ -64,6 +64,10 @@ Safety invariants:
 - *rollback plan*: every record stores a derived =:rollback-plan=.  It is
   available only when rollback is enabled and the before-generation snapshot
   was captured.
+- *rollback disabled*: =apply --no-rollback= still writes a transaction record
+  for real mutation attempts, but =:rollback-plan= has =:available nil= and
+  =:reason "rollback-disabled"=.  On failure, =:rollback= records
+  =:attempted nil= with the same reason and no rollback command is run.
 - *rollback verification*: rollback success is not assumed from the rollback
   command exit alone.  =nelix apply= queries the active generation afterwards
   and reports =:verified t= only when it equals the captured

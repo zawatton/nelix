@@ -399,6 +399,72 @@
               (should (= 2 (length nix-calls))))))
       (delete-directory dir t))))
 
+(ert-deftest nelix-manifest-test-apply-no-rollback-records-disabled-plan ()
+  "nelix-apply --no-rollback records failure without attempting rollback."
+  (let* ((dir (make-temp-file "nelix-manifest-apply-no-rollback-" t))
+         (nelix-transaction-log-root (expand-file-name "transactions" dir))
+         rollback-called
+         (active-generation 7))
+    (unwind-protect
+        (progn
+          (nelix-manifest-test--write
+           dir "manifest.el"
+           "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep fd))\n")
+          (cl-letf (((symbol-function 'anvil-pkg-compat-executable-find)
+                     (lambda (program)
+                       (and (equal program "nix") "/usr/bin/nix")))
+                    ((symbol-function 'nelix-list)
+                     (lambda () nil))
+                    ((symbol-function 'pkg-list-generations)
+                     (lambda ()
+                       (list (list :id active-generation
+                                   :date "generation"
+                                   :packages nil
+                                   :active t))))
+                    ((symbol-function 'nelix-rollback)
+                     (lambda (_generation)
+                       (setq rollback-called t)
+                       (ert-fail "rollback must not be called when disabled")))
+                    ((symbol-function 'anvil-pkg--call-nix)
+                     (lambda (args)
+                       (if (equal (car (last args)) "nixpkgs#fd")
+                           (list :exit 1 :stdout "" :stderr "install failed")
+                         (setq active-generation 8)
+                         (list :exit 0 :stdout "" :stderr "")))))
+            (let ((err (should-error
+                        (nelix-apply (expand-file-name "manifest.el" dir)
+                                     :rollback-on-error nil)
+                        :type 'anvil-pkg-error)))
+              (should (string-match-p "rollback=not-ok" (cadr err)))
+              (should-not rollback-called)
+              (let ((rollback (plist-get (cddr err) :rollback)))
+                (should-not (plist-get rollback :attempted))
+                (should-not (plist-get rollback :ok))
+                (should (equal "rollback-disabled"
+                               (plist-get rollback :reason))))
+              (let* ((transaction (plist-get (cddr err) :transaction))
+                     (record-file (plist-get transaction :record-file))
+                     (record (nelix-manifest-test--read-sexp-file
+                              record-file)))
+                (should (file-exists-p record-file))
+                (should (eq 'error (plist-get record :status)))
+                (should (= 1 (length (plist-get record :executed))))
+                (should-not (plist-get
+                             (plist-get record :transaction)
+                             :rollback-on-error))
+                (should-not (plist-get
+                             (plist-get record :rollback-plan)
+                             :available))
+                (should (equal "rollback-disabled"
+                               (plist-get
+                                (plist-get record :rollback-plan)
+                                :reason)))
+                (should (equal "rollback-disabled"
+                               (plist-get
+                                (plist-get record :rollback)
+                                :reason)))))))
+      (delete-directory dir t))))
+
 (ert-deftest nelix-manifest-test-apply-native-rolls-back-on-command-failure ()
   "nelix-apply rolls the native profile back to the pre-apply generation."
   (let* ((dir (make-temp-file "nelix-manifest-native-apply-rollback-" t))

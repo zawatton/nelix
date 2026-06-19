@@ -467,6 +467,29 @@ reject_log 'profile install'
 reject_log 'profile remove'
 
 : >"$fake_log"
+run_failing_json no_rollback_failed_apply fd apply "$manifest" --locked --allow-remove-count 1 --no-rollback
+expect_log 'profile install --profile .+nixpkgs#ripgrep'
+expect_log 'profile install --profile .+nixpkgs#fd'
+reject_log 'profile rollback'
+reject_log 'profile remove'
+no_rollback_record="$(latest_transaction_record)"
+run_json transaction_show_no_rollback_error transaction show "$no_rollback_record"
+expect_json transaction_show_no_rollback_error '"operation":"transaction-show"'
+expect_json transaction_show_no_rollback_error '"record":'
+expect_json transaction_show_no_rollback_error '"schema":"nelix-apply-transaction"'
+expect_json transaction_show_no_rollback_error '"status":"error"'
+expect_json transaction_show_no_rollback_error '"record-status":"error"'
+expect_json transaction_show_no_rollback_error '"rollback-on-error":null'
+expect_json transaction_show_no_rollback_error '"rollback-plan":'
+expect_json transaction_show_no_rollback_error '"available":null'
+expect_json transaction_show_no_rollback_error '"reason":"rollback-disabled"'
+expect_json transaction_show_no_rollback_error '"rollback":'
+expect_json transaction_show_no_rollback_error '"attempted":null'
+expect_json_any transaction_show_no_rollback_error \
+  '"action":"install","name":"ripgrep"' \
+  '"name":"ripgrep","action":"install"'
+
+: >"$fake_log"
 run_failing_json failed_apply fd apply "$manifest" --locked --allow-remove-count 1
 expect_log 'profile install --profile .+nixpkgs#ripgrep'
 expect_log 'profile install --profile .+nixpkgs#fd'
