@@ -95,6 +95,12 @@ expect_json() {
   exit 1
 }
 
+run_json packaged_registry registry list --system x86_64-linux
+expect_json packaged_registry '"operation":"registry-list"'
+expect_json packaged_registry '"name":"curl"'
+expect_json packaged_registry '"name":"git"'
+expect_json packaged_registry '"name":"ripgrep"'
+
 run_json validate validate "$manifest"
 expect_json validate '"ok":true'
 

@@ -261,6 +261,24 @@
               (list (format "nelix-builder: script-shim requires :target, got %S"
                             install)))))))
 
+(defun nelix-builder--script-shim-target-available-p (target)
+  "Return non-nil when script shim TARGET is currently executable."
+  (cond
+   ((file-name-absolute-p target)
+    (and (anvil-pkg-compat-file-exists-p target)
+         (or (not (fboundp 'file-executable-p))
+             (file-executable-p target))))
+   (t
+    (anvil-pkg-compat-executable-find target))))
+
+(defun nelix-builder--require-script-shim-target (install target)
+  "Signal when INSTALL requires TARGET and TARGET is unavailable."
+  (when (and (plist-get install :require-target)
+             (not (nelix-builder--script-shim-target-available-p target)))
+    (signal 'anvil-pkg-error
+            (list (format "nelix-builder: script-shim target not found: %s"
+                          target)))))
+
 (defun nelix-builder--script-shim-runtime-bin (install system)
   "Return runtime bin path for script-shim INSTALL on SYSTEM."
   (or (car (plist-get install :bin))
@@ -296,6 +314,7 @@
          (content (if (nelix-builder--windows-system-p system)
                       (nelix-builder-render-windows-shim command target)
                     (nelix-builder-render-posix-shim command target))))
+    (nelix-builder--require-script-shim-target install target)
     (anvil-pkg-compat-make-directory (file-name-directory path) t)
     (anvil-pkg-compat-write-file path content)
     (when (and (not (nelix-builder--windows-system-p system))

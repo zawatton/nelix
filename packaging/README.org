@@ -221,11 +221,12 @@ make autopkgtest-debian
 
 The autopkgtest is not marked =superficial=.  It checks the installed Elisp
 load path, packaged CLI presence, CLI =--json version= output, and the
-installed CLI gate.  That gate covers =validate=, =lock=, =plan=, and
-=apply --dry-run= with a fake Nix executable, then verifies the native store
-CLI and the =nelix --runtime nelisp= AOT cache shell lane with isolated fake
-registry/profile/Nix/NeLisp fixtures.  The AOT cache shell lane is the
-default for supported =--runtime nelisp= manifest commands; use
+installed CLI gate.  That gate covers the packaged registry root through
+=nelix registry list --system x86_64-linux=, then covers =validate=, =lock=,
+=plan=, and =apply --dry-run= with a fake Nix executable.  It also verifies
+the native store CLI and the =nelix --runtime nelisp= AOT cache shell lane
+with isolated fake registry/profile/Nix/NeLisp fixtures.  The AOT cache shell
+lane is the default for supported =--runtime nelisp= manifest commands; use
 =NELIX_NELISP_AOT=0= only to debug the slower direct standalone path.
 With the local =null= backend,
 autopkgtest can still return status 8 after the =load= test passed because of

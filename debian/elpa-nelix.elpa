@@ -4,3 +4,4 @@ scripts/anvil-pkg-nelisp-ert-shim.el
 scripts/anvil-pkg-nelisp-smoke.el
 scripts/nelix-aot-manifest-engine.el
 scripts/nelix-cli.el
+registry/packages/system/*.el registry/packages/system

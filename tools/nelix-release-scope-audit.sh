@@ -71,6 +71,9 @@ path_in_release_scope() {
     nelix-registry.el|\
     nelix-store.el|\
     nelix-substitute.el|\
+    registry/packages/system/curl.el|\
+    registry/packages/system/git.el|\
+    registry/packages/system/ripgrep.el|\
     scripts/nelix-aot-manifest-engine.el|\
     scripts/nelix-aot-native-cli-proof.el|\
     scripts/nelix-aot-native-subset.el|\
@@ -261,11 +264,17 @@ require_autopkgtest_gate_strength() {
   require_contains Makefile \
     "grep -Fq 'registry list --system x86_64-linux'"
   require_contains Makefile \
+    "grep -Fxq './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/registry/packages/system/ripgrep.el'"
+  require_contains Makefile \
+    "grep -Fq 'packaged_registry'"
+  require_contains Makefile \
     'registry index "$$data/nelix/registry" "$$generated_index"'
   require_contains Makefile \
     "grep -Fq 'native remove fixture-extra'"
   require_contains packaging/verify-installed-nelix-cli-gate.sh \
     "registry list [--system SYSTEM]"
+  require_contains packaging/verify-installed-nelix-cli-gate.sh \
+    "run_json packaged_registry registry list --system x86_64-linux"
   require_contains packaging/verify-installed-nelix-cli-gate.sh \
     "native remove NAME [--profile PROFILE] [--system SYSTEM]"
   require_contains packaging/verify-installed-nelix-cli-gate.sh \
@@ -280,6 +289,10 @@ require_autopkgtest_gate_strength() {
     'apply "$native_lock_manifest" --dry-run --locked'
   require_contains packaging/verify-nelix-native-cli-gate.sh \
     'native apply --dry-run mutated lockgate profile'
+  require_contains packaging/verify-nelix-native-cli-gate.sh \
+    'NELIX_REGISTRY_INCLUDE_PACKAGED=0'
+  require_contains debian/elpa-nelix.elpa \
+    'registry/packages/system/*.el registry/packages/system'
   require_contains Makefile \
     "grep -q 'make verify-user-manifest-dsl'"
   require_contains debian/source/options '.cache'
@@ -555,7 +568,23 @@ require_native_store_gate_docs() {
   require_contains test/nelix-store-test.el \
     'nelix-store-test-native-script-shim-installs-posix-shim'
   require_contains test/nelix-store-test.el \
+    'nelix-store-test-native-script-shim-require-target'
+  require_contains test/nelix-store-test.el \
+    'nelix-store-test-packaged-registry-root-defaults-and-opt-out'
+  require_contains test/nelix-store-test.el \
     'nelix-store-test-native-script-shim-installs-windows-cmd'
+  require_contains nelix-builder.el \
+    'nelix-builder--require-script-shim-target'
+  require_contains nelix-registry.el \
+    'nelix-registry-include-packaged-root'
+  require_contains nelix-registry.el \
+    'NELIX_REGISTRY_INCLUDE_PACKAGED'
+  require_contains registry/packages/system/ripgrep.el \
+    ':require-target t'
+  require_contains registry/packages/system/git.el \
+    ':require-target t'
+  require_contains registry/packages/system/curl.el \
+    ':require-target t'
   require_contains test/nelix-store-test.el \
     'nelix-store-test-native-install-lock-package-replays-script-shim'
   require_contains test/nelix-store-test.el \
@@ -601,6 +630,8 @@ require_native_store_gate_docs() {
   require_contains docs/design/22-nelix-native-store.org \
     'Install fetch-free =script-shim= packages into the native store.'
   require_contains docs/design/22-nelix-native-store.org \
+    'Packaged registry root under the installed Nelix Lisp directory.'
+  require_contains docs/design/22-nelix-native-store.org \
     'Failed fetch/verify/unpack/copy/script-shim installs do'
   require_contains docs/design/22-nelix-native-store.org \
     'Commit native store entries from temporary build directories'
@@ -621,6 +652,8 @@ require_native_store_gate_docs() {
   require_contains docs/design/29-nelix-release-worktree-scope.org \
     'Native script shims: =script-shim= recipes create fetch-free'
   require_contains docs/design/29-nelix-release-worktree-scope.org \
+    'Native packaged registry:'
+  require_contains docs/design/29-nelix-release-worktree-scope.org \
     'Source-free =script-shim= lock rows replay'
   require_contains docs/design/29-nelix-release-worktree-scope.org \
     'native dependency closure fixture coverage'
@@ -630,6 +663,8 @@ require_native_store_gate_docs() {
     'replay native dependency'
   require_contains docs/design/29-nelix-release-worktree-scope.org \
     'registry dependency install through =nelix native install='
+  require_contains packaging/README.org \
+    'packaged registry root through'
 }
 
 require_aot_plan_gate_docs() {
@@ -654,7 +689,7 @@ require_aot_plan_gate_docs() {
   require_contains README.org \
     'use the AOT cache fast lane by default under =--runtime nelisp='
   require_contains packaging/README.org \
-    'The AOT cache shell lane is the'
+    'lane is the default for supported =--runtime nelisp= manifest commands'
   require_contains docs/design/25-nelix-native-aot-manifest-engine.org \
     '=plan MANIFEST= and =--json plan MANIFEST='
   require_contains docs/design/25-nelix-native-aot-manifest-engine.org \
@@ -677,6 +712,8 @@ require_aot_plan_gate_docs() {
     "tar -xO ./usr/share/doc/elpa-nelix/packaging/fedora/verify-public-tree.sh | grep -Fq 'public Fedora tree is missing expected-version RPM payload'"
   require_contains packaging/fedora/verify-source.sh \
     'Fedora source tarball bin/nelix is missing default AOT cache mode'
+  require_contains packaging/fedora/verify-source.sh \
+    'registry/packages/system/ripgrep.el'
   require_contains packaging/fedora/verify-source.sh \
     'NELIX_LISPDIR="$PWD" bin/nelix --json version'
   require_contains packaging/fedora/nelix.spec \
@@ -762,6 +799,7 @@ audit_group "Commit B - Nelix manifest, native store, and CLI" \
   nelix-registry.el \
   nelix-store.el \
   nelix-substitute.el \
+  registry/packages/system \
   scripts/nelix-aot-manifest-engine.el \
   scripts/nelix-aot-native-cli-proof.el \
   scripts/nelix-aot-native-subset.el \

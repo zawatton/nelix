@@ -61,6 +61,7 @@ Candidate files:
 - =nelix-registry.el=
 - =nelix-store.el=
 - =nelix-substitute.el=
+- =registry/packages/system/=
 - =scripts/nelix-cli.el=
 - =scripts/nelix-aot-manifest-engine.el=
 - =scripts/nelix-aot-native-cli-proof.el=
@@ -80,7 +81,8 @@ Candidate files:
 Reason: this is the main functional payload: manifest load/validate/lock,
 plan/apply/sync, rollback safety, DSL v1, native store scaffolding,
 hash-verified and optionally signed static remote registry sync, and JSON
-contracts.  The native registry now also has installed CLI coverage through
+contracts.  The native registry now also ships packaged system-command recipes
+for =ripgrep=, =git=, and =curl=, and has installed CLI coverage through
 =nelix registry update=, =nelix registry search=, and =nelix registry show=.
 
 ** Commit C. Design docs
@@ -211,6 +213,7 @@ git add \
   nelix-registry.el \
   nelix-store.el \
   nelix-substitute.el \
+  registry/packages/system \
   scripts/nelix-aot-manifest-engine.el \
   scripts/nelix-aot-native-cli-proof.el \
   scripts/nelix-aot-native-subset.el \
@@ -445,6 +448,10 @@ to dry-run.  It stages files only when =--stage= is passed explicitly.
 - Native registry: static remote indexes and package recipe rows are
   hash-verified and can require trusted signatures through the substitute
   signature verifier path.
+- Native packaged registry: the installed Nelix Lisp tree includes initial
+  system-command =script-shim= recipes for =ripgrep=, =git=, and =curl=.
+  Packaged recipes load before user registries and can be disabled with
+  =NELIX_REGISTRY_INCLUDE_PACKAGED=0= for isolated/private registries.
 - Native registry parser: local and remote recipe/index files are read as
   data-only forms, so unsupported Elisp forms are rejected without execution.
 - Native archive install: =nelix-native= unpack and substitute materialization
@@ -457,7 +464,8 @@ to dry-run.  It stages files only when =--stage= is passed explicitly.
   shims or Windows =.cmd= wrappers in the native store and expose them through
   profile runtime metadata.  Source-free =script-shim= lock rows replay from
   =nelix-apply :locked t= because the install metadata is the complete
-  generated-wrapper recipe.
+  generated-wrapper recipe.  Recipes can use =:require-target t= to reject
+  wrappers whose target command is unavailable.
 - Native dependencies: native installs now create additive profile generations,
   preserve existing entries, install registry =:dependencies= before the
   requested package, reject dependency cycles, and replay native dependency
@@ -515,8 +523,9 @@ to dry-run.  It stages files only when =--stage= is passed explicitly.
 - Install =../elpa-nelix_0.1.0-4_all.deb= and run =make deb-full-gate= on the
   target Debian host.
 - Expand native store from functional skeleton to practical registry coverage:
-  add real package recipes, platform-specific fetch/build cases, and
-  Windows/macOS activation checks.
+  expand beyond the initial packaged system-command shims into real
+  fetch/build recipes, platform-specific cases, and Windows/macOS activation
+  checks.
 - Continue NeLisp runtime speed work beyond the current AOT cache fast lane:
   native artifact execution should consume the same numeric-ID cache contract
   in-process, and lock/apply transaction paths still need equivalent fast

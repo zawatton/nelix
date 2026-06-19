@@ -170,6 +170,7 @@ env_args=(
   "HOME=$home"
   "XDG_DATA_HOME=$data"
   "XDG_STATE_HOME=$state"
+  "NELIX_REGISTRY_INCLUDE_PACKAGED=0"
 )
 
 if [ -n "${NELIX_LISPDIR:-}" ]; then

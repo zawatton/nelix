@@ -19,6 +19,8 @@ The initial deliverables are implemented:
 - =nelix-builder.el=
 - =test/nelix-store-test.el=
 - local registry fixtures for =ripgrep= and =magit=
+- packaged registry recipes for existing system commands =ripgrep=, =git=,
+  and =curl=
 - =nelix-native-audit=, which works without Nix installed
 - hash-verified local/file/HTTP/ELPA/Git fetch source path
 - native =unpack= builder that extracts verified archives into the
@@ -1031,12 +1033,18 @@ Status: implemented as initial =emacs-lisp= builder in
 
 ** Phase N6 — registry
 
-Status: implemented as local registry, installed CLI commands, hash-verified
-static remote registry sync, optional signed remote index policy, and optional
-signed package recipe row policy in =nelix-registry.el=, with fixture recipes
-for =ripgrep= and =magit=.
+Status: implemented as local registry, packaged registry root, installed CLI
+commands, hash-verified static remote registry sync, optional signed remote
+index policy, and optional signed package recipe row policy in
+=nelix-registry.el=, with fixture recipes for =ripgrep= and =magit=.
 
 - Local registry format.
+- Packaged registry root under the installed Nelix Lisp directory.
+- Packaged =script-shim= recipes for existing =ripgrep=, =git=, and =curl=
+  system commands.  These recipes use =:require-target t= so the native
+  profile is not populated with a wrapper to a missing command.
+- =NELIX_REGISTRY_INCLUDE_PACKAGED=0= disables packaged recipes for isolated
+  tests or fully private registries.
 - Remote static registry update through =nelix-registry-remotes=.
 - Hash-verified index and recipe cache under the local registry root.
 - Optional trusted signature checks for remote indexes.
@@ -1160,7 +1168,9 @@ The next concrete deliverables should be:
    =make smoke-nelix-native-cli=, =make check=, and the installed CLI gate.
 9. Native manifest =plan= and =apply --dry-run= — implemented as read-only
    review paths that do not require Nix and do not invoke native install.
+10. Packaged native registry seed — implemented with built-in system-command
+    recipes for =ripgrep=, =git=, and =curl= plus installed CLI coverage.
 
 =nelix-apply= can now review native backend changes with =--dry-run= before
-mutating native store profiles.  Full real-recipe registry coverage is still
-required before this is treated as a general Nix-free production path.
+mutating native store profiles.  Broader real fetch/build recipe coverage is
+still required before this is treated as a general Nix-free production path.

@@ -25,6 +25,7 @@
           (nelix-registry-root (expand-file-name "registry" tmp))
           (nelix-registry-roots nil)
           (nelix-registry-remotes nil)
+          (nelix-registry-include-packaged-root nil)
           (nelix-registry--packages (make-hash-table :test 'equal)))
      (unwind-protect
          (progn ,@body)
@@ -1239,6 +1240,84 @@
       (should (equal 'script-shim
                      (plist-get (plist-get entry :source) :type)))
       (should (= 1 (plist-get (plist-get report :profile) :generation))))))
+
+(ert-deftest nelix-store-test-packaged-registry-root-defaults-and-opt-out ()
+  "Default registry updates include packaged recipes unless disabled."
+  (let* ((tmp (make-temp-file "nelix-packaged-registry-test-" t))
+         (old-xdg-data (getenv "XDG_DATA_HOME"))
+         (old-include (getenv "NELIX_REGISTRY_INCLUDE_PACKAGED"))
+         (nelix-registry-root nil)
+         (nelix-registry-roots nil)
+         (nelix-registry-remotes nil)
+         (nelix-registry-include-packaged-root t)
+         (nelix-registry--packages (make-hash-table :test 'equal)))
+    (unwind-protect
+        (progn
+          (setenv "XDG_DATA_HOME" (expand-file-name "xdg-data" tmp))
+          (setenv "NELIX_REGISTRY_INCLUDE_PACKAGED" nil)
+          (let ((report (nelix-registry-update)))
+            (should (member (nelix-registry-packaged-root)
+                            (plist-get report :roots)))
+            (should (>= (plist-get report :loaded) 3))
+            (should (nelix-registry-get "curl"))
+            (should (nelix-registry-get "git"))
+            (should (nelix-registry-get "ripgrep")))
+          (setenv "NELIX_REGISTRY_INCLUDE_PACKAGED" "0")
+          (let ((report (nelix-registry-update)))
+            (should (= 0 (plist-get report :loaded)))
+            (should-not (member (nelix-registry-packaged-root)
+                                (plist-get report :roots)))
+            (should-not (nelix-registry-get "curl"))
+            (should-not (nelix-registry-get "git"))
+            (should-not (nelix-registry-get "ripgrep"))))
+      (setenv "XDG_DATA_HOME" old-xdg-data)
+      (setenv "NELIX_REGISTRY_INCLUDE_PACKAGED" old-include)
+      (delete-directory tmp t))))
+
+(ert-deftest nelix-store-test-native-script-shim-require-target ()
+  "script-shim recipes can require the target command to exist."
+  (nelix-store-test--with-temp-roots
+    (let* ((bin-dir (expand-file-name "bin" (file-name-directory
+                                             nelix-store-root)))
+           (tool (expand-file-name "fixture-required-tool" bin-dir))
+           (old-path (getenv "PATH"))
+           (recipe (list
+                    :name "fixture-required-shim"
+                    :version "1.0.0"
+                    :class 'system-tool
+                    :systems
+                    (list
+                     (list 'x86_64-linux
+                           :install
+                           (list :type 'script-shim
+                                 :command "fixture-required-shim"
+                                 :target "fixture-required-tool"
+                                 :require-target t))))))
+      (make-directory bin-dir t)
+      (unwind-protect
+          (progn
+            (let ((exec-path nil))
+              (setenv "PATH" "")
+              (should-error
+               (nelix-native-install-recipe recipe "default" 'x86_64-linux)
+               :type 'anvil-pkg-error))
+            (with-temp-file tool
+              (insert "#!/bin/sh\n")
+              (insert "echo fixture-required-tool\n"))
+            (set-file-modes tool #o755)
+            (let ((exec-path (cons bin-dir exec-path)))
+              (setenv "PATH" (concat bin-dir path-separator (or old-path "")))
+              (let* ((report (nelix-native-install-recipe
+                              recipe "default" 'x86_64-linux))
+                     (store-path (plist-get report :store-path))
+                     (shim (expand-file-name
+                            "bin/fixture-required-shim" store-path)))
+                (should (eq 'ok (plist-get report :status)))
+                (should (file-exists-p shim))
+                (should (string-match-p "fixture-required-tool"
+                                        (nelix-store-test--read-binary-file
+                                         shim))))))
+        (setenv "PATH" old-path)))))
 
 (ert-deftest nelix-store-test-native-script-shim-installs-windows-cmd ()
   "nelix-native-install-recipe can generate a Windows script-shim package."

@@ -72,6 +72,14 @@ Entries use the same plist shape as `nelix-substitute-public-keys'."
   :type 'boolean
   :group 'nelix-registry)
 
+(defcustom nelix-registry-include-packaged-root t
+  "Whether `nelix-registry-update' loads packaged registry recipes.
+
+Set environment variable `NELIX_REGISTRY_INCLUDE_PACKAGED=0' to disable
+packaged recipes for isolated tests or fully private registries."
+  :type 'boolean
+  :group 'nelix-registry)
+
 (defvar nelix-package-last nil
   "Most recently loaded `nelix-package' recipe.")
 
@@ -86,6 +94,44 @@ Entries use the same plist shape as `nelix-substitute-public-keys'."
   (expand-file-name
    (or nelix-registry-root
        (expand-file-name "nelix/registry" (nelix-store--local-data-home)))))
+
+(defun nelix-registry--packaged-enabled-p ()
+  "Return non-nil when packaged registry roots should be loaded."
+  (let ((env (anvil-pkg-compat-getenv "NELIX_REGISTRY_INCLUDE_PACKAGED")))
+    (and nelix-registry-include-packaged-root
+         (not (member env '("0" "false" "FALSE" "no" "NO"))))))
+
+(defun nelix-registry--library-directory ()
+  "Return the directory containing the installed Nelix Lisp files."
+  (file-name-directory
+   (expand-file-name
+    (or load-file-name
+        (locate-library "nelix-registry")
+        buffer-file-name
+        "nelix-registry.el"))))
+
+(defun nelix-registry-packaged-root ()
+  "Return packaged registry root, or nil when no packaged recipes exist."
+  (let ((root (expand-file-name "registry"
+                                (nelix-registry--library-directory))))
+    (and (fboundp 'file-directory-p)
+         (file-directory-p root)
+         root)))
+
+(defun nelix-registry--default-roots (remote-reports)
+  "Return default registry roots including packaged and REMOTE-REPORTS roots.
+
+Packaged recipes load first, remote cache roots next, then the user local root
+and `nelix-registry-roots'.  Later roots override earlier recipes with the same
+package name."
+  (append (when (nelix-registry--packaged-enabled-p)
+            (let ((root (nelix-registry-packaged-root)))
+              (and root (list root))))
+          (mapcar (lambda (report)
+                    (plist-get report :cache-root))
+                  remote-reports)
+          (list (nelix-registry-root))
+          nelix-registry-roots))
 
 (defun nelix-registry--ensure-table ()
   "Ensure `nelix-registry--packages' is a hash table."
@@ -689,12 +735,7 @@ then load the default root, remote caches, and
       (dolist (remote nelix-registry-remotes)
         (push (nelix-registry-sync-remote remote) remote-reports))
       (setq remote-reports (nreverse remote-reports))
-      (setq roots*
-            (append (list (nelix-registry-root))
-                    (mapcar (lambda (report)
-                              (plist-get report :cache-root))
-                            remote-reports)
-                    nelix-registry-roots)))
+      (setq roots* (nelix-registry--default-roots remote-reports)))
     (dolist (root roots*)
       (when (and (fboundp 'file-directory-p)
                  (file-directory-p (expand-file-name root)))

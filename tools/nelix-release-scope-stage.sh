@@ -46,6 +46,7 @@ commit_b=(
   nelix-registry.el
   nelix-store.el
   nelix-substitute.el
+  registry/packages/system
   scripts/nelix-aot-manifest-engine.el
   scripts/nelix-aot-native-cli-proof.el
   scripts/nelix-aot-native-subset.el
@@ -228,6 +229,10 @@ group_for_path() {
   else
     case "$path" in
       test/fixtures/nelix-registry/*)
+        printf 'B'
+        return 0
+        ;;
+      registry/packages/system/*)
         printf 'B'
         return 0
         ;;

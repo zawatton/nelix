@@ -20,6 +20,9 @@ for path in \
   "$prefix/bin/nelix" \
   "$prefix/debian/nelix.1" \
   "$prefix/nelix.el" \
+  "$prefix/registry/packages/system/ripgrep.el" \
+  "$prefix/registry/packages/system/git.el" \
+  "$prefix/registry/packages/system/curl.el" \
   "$prefix/packaging/fedora/publish-static.sh" \
   "$prefix/packaging/fedora/verify-public-tree.sh" \
   "$prefix/packaging/verify-publication-urls.sh" \

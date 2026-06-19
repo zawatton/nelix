@@ -6,7 +6,8 @@ NELISP_EXEC_TEST_SRC ?= test/anvil-pkg-test.el test/anvil-pkg-uninstall-test.el 
 SCRIPT_SRC = scripts/anvil-pkg-render.el scripts/anvil-pkg-nelisp-smoke.el scripts/anvil-pkg-nelisp-ert-shim.el scripts/nelix-cli.el scripts/nelix-aot-manifest-engine.el scripts/nelix-aot-native-subset.el scripts/nelix-aot-native-cli-proof.el
 BIN_SRC = bin/nelix
 DOC_SRC = README.org examples/README.org docs/smoke-test.org packaging/README.org
-EXPECTED_ERT_TESTS ?= 416
+REGISTRY_SRC = $(sort $(wildcard registry/packages/*/*.el))
+EXPECTED_ERT_TESTS ?= 418
 EXPECTED_NELISP_ERT_TESTS ?= 130
 NELISP_CACHE_DIR ?= .cache/nelisp
 NELISP_SUITE_IMAGE ?= $(NELISP_CACHE_DIR)/anvil-pkg-suite.nlri
@@ -253,11 +254,15 @@ verify-deb-contents:
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -q './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/nelix-aot-manifest-engine.el'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -q './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/anvil-pkg-nelisp-smoke.el'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -q './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/anvil-pkg-nelisp-ert-shim.el'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/registry/packages/system/ripgrep.el'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/registry/packages/system/git.el'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/registry/packages/system/curl.el'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-native-cli-gate.sh | grep -Fq 'registry list --system x86_64-linux'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-native-cli-gate.sh | grep -Fq 'registry index "$$data/nelix/registry" "$$generated_index"'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-native-cli-gate.sh | grep -Fq 'native remove fixture-extra'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-native-cli-gate.sh | grep -Fq 'apply "$$native_lock_manifest" --dry-run --locked'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'registry list [--system SYSTEM]'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'packaged_registry'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'native rollback [--profile PROFILE] [--generation GENERATION]'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/README.org.gz | gzip -dc | grep -q 'make verify-user-environment'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/README.org.gz | gzip -dc | grep -q 'make verify-user-manifest-dsl'
@@ -516,6 +521,10 @@ install-elisp:
 	@for f in $(SCRIPT_SRC); do \
 	  $(INSTALL_DATA) "$$f" "$(DESTDIR)$(lispdir)/$$f"; \
 	done
+	@for f in $(REGISTRY_SRC); do \
+	  $(INSTALL_DIR) "$(DESTDIR)$(lispdir)/$$(dirname "$$f")"; \
+	  $(INSTALL_DATA) "$$f" "$(DESTDIR)$(lispdir)/$$f"; \
+	done
 
 install-doc:
 	$(INSTALL_DIR) "$(DESTDIR)$(docdir)"
@@ -537,6 +546,9 @@ uninstall:
 	  $(RM) "$(DESTDIR)$(lispdir)/$$f"; \
 	done
 	@for f in $(SCRIPT_SRC); do \
+	  $(RM) "$(DESTDIR)$(lispdir)/$$f"; \
+	done
+	@for f in $(REGISTRY_SRC); do \
 	  $(RM) "$(DESTDIR)$(lispdir)/$$f"; \
 	done
 	@for f in $(BIN_SRC); do \
