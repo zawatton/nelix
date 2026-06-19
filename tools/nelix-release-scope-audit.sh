@@ -407,6 +407,16 @@ require_user_manifest_dsl_gate() {
     'timing.tsv'
   require_contains packaging/verify-nelix-user-manifest-dsl.sh \
     'summary.txt'
+  require_contains packaging/verify-nelix-user-manifest-dsl.sh \
+    'timing-$label-ms'
+  require_contains packaging/verify-nelix-user-manifest-dsl.sh \
+    'target-count=$target_count'
+  require_contains packaging/verify-nelix-user-manifest-dsl.sh \
+    'runtime-status=ok'
+  require_contains packaging/README.org \
+    '=runtime-status=ok='
+  require_contains docs/design/27-nelix-init-migration-workflow.org \
+    '=runtime-status=ok='
   require_contains Makefile \
     "grep -Fq -- '--runtime nelisp --json apply"
   require_contains bin/nelix \

@@ -123,6 +123,10 @@ The verifier prints the =audit= missing/extra counts and names plus the
 =NELIX_USER_MANIFEST_MAX_EXTRA=N=, and
 =NELIX_USER_MANIFEST_MAX_REMOVE=N= can make the gate fail when the real profile
 diff is larger than the operator has explicitly allowed.
+When =NELIX_USER_MANIFEST_REPORT_DIR= is set, =summary.txt= records
+machine-readable =timing-COMMAND-ms= entries, =target-count=, diff counts,
+remove candidates, and final =runtime-status=ok= so real-user gate evidence can
+be archived without scraping stderr.
 It also compares =nelix --runtime nelisp --json plan MANIFEST --dry-run= with
 =nelix --runtime nelisp --json apply MANIFEST --dry-run= across =install=,
 =remove=, =keep=, =protected=, and =commands= so the review command and dry-run

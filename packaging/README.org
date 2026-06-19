@@ -230,7 +230,10 @@ with =NELIX_USER_MANIFEST_MAX_MISSING=N=,
 =NELIX_USER_MANIFEST_MAX_REMOVE=N=.  The verifier also supports
 =NELIX_USER_MANIFEST_REPORT_DIR=PATH=, which preserves timing.tsv,
 summary.txt, and the runtime JSON/stdout/stderr files for later inspection
-when diagnosing real profile diffs or remove candidates.  It also supports
+when diagnosing real profile diffs or remove candidates.  =summary.txt=
+includes machine-readable =timing-COMMAND-ms= entries, =target-count=, diff
+counts, remove candidates, and a final =runtime-status=ok= line for external
+gate collectors.  It also supports
 =NELIX_USER_MANIFEST_LOCKED=required=, which temporarily writes
 =MANIFEST.nelix-lock=, runs =apply --locked --dry-run=, and restores the
 previous lock file so the real profile is not mutated.  When combined with

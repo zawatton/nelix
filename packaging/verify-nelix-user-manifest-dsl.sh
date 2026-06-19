@@ -304,6 +304,7 @@ run_nelix_timed() {
   if [ -n "$nelisp_report_dir" ]; then
     printf '%s\t%s\t%s\n' "$label" "$elapsed_ms" "$rc" >>"$nelisp_report_dir/timing.tsv"
   fi
+  append_report_summary "timing-$label-ms=$elapsed_ms rc=$rc max-ms=$max_ms"
   if [ "$rc" -ne 0 ]; then
     return "$rc"
   fi
@@ -442,6 +443,7 @@ run_nelisp_aot_readonly() {
   )"
   printf 'nelix user manifest target-count: %s min=%s\n' \
     "$target_count" "$nelisp_min_targets" >&2
+  append_report_summary "target-count=$target_count min=$nelisp_min_targets"
   if [ "$nelisp_min_targets" -gt 0 ] && [ "$target_count" -lt "$nelisp_min_targets" ]; then
     echo "nelix user manifest target count $target_count is below NELIX_USER_MANIFEST_MIN_TARGETS=$nelisp_min_targets" >&2
     return 1
@@ -636,4 +638,5 @@ case "$locked_mode" in
     ;;
 esac
 
+append_report_summary "runtime-status=ok label=$verification_label"
 printf 'nelix user manifest %s ok: %s\n' "$verification_label" "$manifest"
