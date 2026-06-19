@@ -20,6 +20,9 @@ manifest="${NELIX_USER_MANIFEST:-$target_home/.emacs.d/nelix-package.el}"
 init_file="${NELIX_USER_INIT:-$target_home/.emacs.d/init.el}"
 early_init_file="${NELIX_USER_EARLY_INIT:-$target_home/.emacs.d/early-init.el}"
 audit_mode="${NELIX_INIT_MIGRATION_AUDIT:-required}"
+max_missing="${NELIX_INIT_MIGRATION_MAX_MISSING:-${NELIX_USER_MANIFEST_MAX_MISSING:-}}"
+max_extra="${NELIX_INIT_MIGRATION_MAX_EXTRA:-${NELIX_USER_MANIFEST_MAX_EXTRA:-}}"
+max_remove="${NELIX_INIT_MIGRATION_MAX_REMOVE:-${NELIX_USER_MANIFEST_MAX_REMOVE:-}}"
 
 if [ ! -f "$manifest" ]; then
   echo "Nelix user manifest is missing: $manifest" >&2
@@ -38,6 +41,18 @@ case "$audit_mode" in
     exit 64
     ;;
 esac
+
+for limit_name in max_missing max_extra max_remove; do
+  eval "limit_value=\${$limit_name}"
+  case "$limit_value" in
+    ''|*[!0-9]*)
+      if [ -n "$limit_value" ]; then
+        echo "invalid $limit_name value: $limit_value" >&2
+        exit 64
+      fi
+      ;;
+  esac
+done
 
 if [ -n "${NELIX_BIN:-}" ]; then
   nelix_bin="$NELIX_BIN"
@@ -120,6 +135,69 @@ compare_init_json() {
     -- "$label" "$left_json" "$right_json" "$@"
 }
 
+json_array_count() {
+  file="$1"
+  key="$2"
+  emacs -Q --batch \
+    --eval '(require (quote json))' \
+    --eval '(let* ((json-object-type (quote alist))
+                   (json-array-type (quote list))
+                   (json-key-type (quote string))
+                   (_ (when (equal (car command-line-args-left) "--")
+                        (pop command-line-args-left)))
+                   (file (pop command-line-args-left))
+                   (key (pop command-line-args-left))
+                   (obj (json-read-file file))
+                   (rows (alist-get key obj nil nil (function string=))))
+              (princ (length rows)))' \
+    -- "$file" "$key"
+}
+
+json_array_names() {
+  file="$1"
+  key="$2"
+  emacs -Q --batch \
+    --eval '(require (quote json))' \
+    --eval '(require (quote subr-x))' \
+    --eval '(let* ((json-object-type (quote alist))
+                   (json-array-type (quote list))
+                   (json-key-type (quote string))
+                   (_ (when (equal (car command-line-args-left) "--")
+                        (pop command-line-args-left)))
+                   (file (pop command-line-args-left))
+                   (key (pop command-line-args-left))
+                   (obj (json-read-file file))
+                   (rows (alist-get key obj nil nil (function string=))))
+              (princ
+               (string-join
+                (mapcar
+                 (lambda (row)
+                   (cond
+                    ((stringp row) row)
+                    ((let ((name (and (listp row)
+                                      (alist-get "name" row nil nil (function string=)))))
+                       (and name (format "%s" name))))
+                    (t (format "%S" row))))
+                 rows)
+                ",")))' \
+    -- "$file" "$key"
+}
+
+check_json_array_limit() {
+  label="$1"
+  file="$2"
+  key="$3"
+  limit="$4"
+  count="$(json_array_count "$file" "$key")" || return 1
+  names="$(json_array_names "$file" "$key")" || return 1
+  printf 'nelix init migration %s-count: %s max=%s names=%s\n' \
+    "$label" "$count" "${limit:-none}" "${names:-none}" >&2
+  if [ -n "$limit" ] && [ "$count" -gt "$limit" ]; then
+    echo "nelix init migration $label count $count exceeds limit $limit" >&2
+    return 1
+  fi
+}
+
 json_tmp="$(mktemp -d)"
 cleanup_json() {
   rm -rf "$json_tmp"
@@ -128,9 +206,12 @@ trap cleanup_json EXIT HUP INT TERM
 
 run_nelix_json --runtime nelisp --json validate "$manifest"
 run_nelix_json --runtime nelisp --json list
-run_nelix_json --runtime nelisp --json audit "$manifest"
+run_nelix_json_capture "$json_tmp/audit.json" --runtime nelisp --json audit "$manifest"
 run_nelix_json_capture "$json_tmp/plan.json" --runtime nelisp --json plan "$manifest" --dry-run
 run_nelix_json_capture "$json_tmp/apply-dry-run.json" --runtime nelisp --json apply "$manifest" --dry-run
+check_json_array_limit audit-missing "$json_tmp/audit.json" missing "$max_missing"
+check_json_array_limit audit-extra "$json_tmp/audit.json" extra "$max_extra"
+check_json_array_limit remove "$json_tmp/apply-dry-run.json" remove "$max_remove"
 compare_init_json init-plan-apply-dry-run \
   "$json_tmp/plan.json" \
   "$json_tmp/apply-dry-run.json" \

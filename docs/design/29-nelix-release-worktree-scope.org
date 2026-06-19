@@ -440,8 +440,9 @@ to dry-run.  It stages files only when =--stage= is passed explicitly.
   verify-user-manifest-dsl= verifies =nelix --runtime nelisp --json validate=
   plus the read-only AOT cache fast lane for =audit=, =plan=,
   =apply --dry-run=, and =upgrade-plan=.  The real manifest currently reports =install=0=,
-  =remove=0=, =keep=204=, and =:nelisp-aot-cache= for the read-only
-  NeLisp-runtime path.
+  =missing=0=, =extra=0=, =remove=0=, =keep=204=, and =:nelisp-aot-cache= for
+  the read-only NeLisp-runtime path.  The init migration verifier enforces the
+  same profile-diff caps before loading the real init path.
 - Staging audit: =make release-scope-audit= passes.  The pathspecs in
   [[*Exact staging plan][Exact staging plan]] are checked with =git add -n= and select only
   source/doc/test/packaging files, not generated Debian outputs.  The same

@@ -219,9 +219,11 @@ read-only commands and fails required mode when any command exceeds
 to 0 to disable the timing threshold during local diagnosis.  It records the
 AOT cache target count too; set =NELIX_USER_MANIFEST_MIN_TARGETS= when the
 gate must prove a large real manifest such as the current 200-package
-environment.  It prints the =apply --dry-run= remove candidates as
-=nelix user manifest remove-count:= and can enforce a local safety threshold
-with =NELIX_USER_MANIFEST_MAX_REMOVE=N=.  The verifier also supports
+environment.  It prints the =audit= missing/extra candidates and
+=apply --dry-run= remove candidates, and can enforce local safety thresholds
+with =NELIX_USER_MANIFEST_MAX_MISSING=N=,
+=NELIX_USER_MANIFEST_MAX_EXTRA=N=, and
+=NELIX_USER_MANIFEST_MAX_REMOVE=N=.  The verifier also supports
 =NELIX_USER_MANIFEST_LOCKED=required=, which temporarily writes
 =MANIFEST.nelix-lock=, runs =apply --locked --dry-run=, and restores the
 previous lock file so the real profile is not mutated.  When combined with
@@ -238,11 +240,17 @@ runs the personal manifest through =nelix --runtime nelisp= read-only commands
 (=validate=, =list=, =audit=, =plan --dry-run=, =apply --dry-run=,
 =upgrade-plan=, =lock-check=, and locked
 =apply --dry-run=), compares the =plan --dry-run= and =apply --dry-run=
-action sets, then loads =~/.emacs.d/early-init.el= and
-=~/.emacs.d/init.el= in Emacs batch and runs =my-nelix-audit=.  This target is
-not part of =deb-full-gate=; run it when verifying the real desktop Emacs
-configuration.  By default it verifies the Debian package version only when it
-is using the installed =/usr/bin/nelix= or installed ELPA source directory; set
+action sets, prints/caps =audit= missing/extra and =apply --dry-run= remove
+candidates, then loads =~/.emacs.d/early-init.el= and =~/.emacs.d/init.el= in
+Emacs batch and runs =my-nelix-audit=.  Use
+=NELIX_INIT_MIGRATION_MAX_MISSING=N=,
+=NELIX_INIT_MIGRATION_MAX_EXTRA=N=, and
+=NELIX_INIT_MIGRATION_MAX_REMOVE=N= to enforce init-migration-specific
+thresholds; when unset, the verifier falls back to the corresponding
+=NELIX_USER_MANIFEST_MAX_*= values.  This target is not part of
+=deb-full-gate=; run it when verifying the real desktop Emacs configuration.
+By default it verifies the Debian package version only when it is using the
+installed =/usr/bin/nelix= or installed ELPA source directory; set
 =NELIX_INIT_MIGRATION_REQUIRE_DEB=required= to force the package-version check
 or =skip= to disable it explicitly.  The default
 =NELIX_INIT_MIGRATION_AUDIT=required= runs =my-nelix-audit= after loading init;

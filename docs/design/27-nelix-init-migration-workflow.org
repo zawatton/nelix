@@ -219,6 +219,12 @@ which runs =my-nelix-audit= after loading init.  During source-tree development,
 and defines =my-nelix-audit= without requiring the installed Debian bootstrap
 package to already match the source-tree version.
 
+The init migration verifier also prints and can cap the real profile diff before
+loading init.  Set =NELIX_INIT_MIGRATION_MAX_MISSING=N=,
+=NELIX_INIT_MIGRATION_MAX_EXTRA=N=, and
+=NELIX_INIT_MIGRATION_MAX_REMOVE=N= to enforce init-specific limits; when unset,
+the corresponding =NELIX_USER_MANIFEST_MAX_*= values are reused.
+
 * 7. Debian Package Verification
 
 Installed package verification requires =elpa-nelix >= 0.1.0-4= because older
