@@ -264,8 +264,10 @@ runs the personal manifest through =nelix --runtime nelisp= read-only commands
 =upgrade-plan=, =lock-check=, and locked
 =apply --dry-run=), compares the =plan --dry-run= and =apply --dry-run=
 action sets, prints timing for every NeLisp command, enforces the AOT target
-count when requested, prints/caps =audit= missing/extra and =apply --dry-run=
-remove candidates, then loads =~/.emacs.d/early-init.el= and
+count when requested, prints top-level =list= count plus =audit=, =plan=,
+=apply --dry-run=, and =upgrade-plan= result counts, prints/caps =audit=
+missing/extra and =apply --dry-run= remove candidates, then loads
+=~/.emacs.d/early-init.el= and
 =~/.emacs.d/init.el= in Emacs batch and runs =my-nelix-audit=.  Use
 =NELIX_INIT_MIGRATION_NELISP_MAX_SECONDS=N= to cap each NeLisp command,
 =NELIX_INIT_MIGRATION_MIN_TARGETS=N= to prove a large real manifest, and

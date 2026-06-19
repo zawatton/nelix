@@ -262,6 +262,15 @@ The same source-tree init migration verifier passes in =load-only= mode, which
 proves the real =~/.emacs.d/early-init.el= and =~/.emacs.d/init.el= load and
 define =my-nelix-audit= after the read-only Nelix checks:
 
+#+begin_example
+init target-count=203
+init list-count=203
+init audit-counts: present=203 missing=0 extra=0
+init plan-counts: install=0 remove=0 keep=203 protected=0 commands=0
+init apply-dry-run-counts: install=0 remove=0 keep=203 protected=0 commands=0
+init upgrade-plan-counts: upgrade=203 pinned=0 missing=0
+#+end_example
+
 #+begin_src sh
 NELIX_INIT_MIGRATION_AUDIT=load-only \
 NELIX_INIT_MIGRATION_REQUIRE_DEB=skip \

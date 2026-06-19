@@ -222,6 +222,40 @@ json_array_names() {
     -- "$file" "$key"
 }
 
+json_top_level_count() {
+  file="$1"
+  emacs -Q --batch \
+    --eval '(require (quote json))' \
+    --eval '(let* ((json-object-type (quote alist))
+                   (json-array-type (quote list))
+                   (json-key-type (quote string))
+                   (_ (when (equal (car command-line-args-left) "--")
+                        (pop command-line-args-left)))
+                   (file (pop command-line-args-left))
+                   (obj (json-read-file file)))
+              (princ (length (if (vectorp obj) (append obj nil) obj))))' \
+    -- "$file"
+}
+
+report_top_level_count() {
+  label="$1"
+  file="$2"
+  count="$(json_top_level_count "$file")" || return 1
+  printf 'nelix init migration %s-count: %s\n' "$label" "$count" >&2
+}
+
+report_json_counts() {
+  label="$1"
+  file="$2"
+  shift 2
+  printf 'nelix init migration %s-counts:' "$label" >&2
+  for key in "$@"; do
+    count="$(json_array_count "$file" "$key")" || return 1
+    printf ' %s=%s' "$key" "$count" >&2
+  done
+  printf '\n' >&2
+}
+
 check_json_array_limit() {
   label="$1"
   file="$2"
@@ -265,12 +299,18 @@ run_nelix_timed validate "$json_tmp/validate.json" \
   --runtime nelisp --json validate "$manifest"
 run_nelix_timed list "$json_tmp/list.json" \
   --runtime nelisp --json list
+report_top_level_count list "$json_tmp/list.json"
 run_nelix_timed audit "$json_tmp/audit.json" \
   --runtime nelisp --json audit "$manifest"
+report_json_counts audit "$json_tmp/audit.json" present missing extra
 run_nelix_timed plan-dry-run "$json_tmp/plan.json" \
   --runtime nelisp --json plan "$manifest" --dry-run
+report_json_counts plan "$json_tmp/plan.json" \
+  install remove keep protected commands
 run_nelix_timed apply-dry-run "$json_tmp/apply-dry-run.json" \
   --runtime nelisp --json apply "$manifest" --dry-run
+report_json_counts apply-dry-run "$json_tmp/apply-dry-run.json" \
+  install remove keep protected commands
 check_json_array_limit audit-missing "$json_tmp/audit.json" missing "$max_missing"
 check_json_array_limit audit-extra "$json_tmp/audit.json" extra "$max_extra"
 check_json_array_limit remove "$json_tmp/apply-dry-run.json" remove "$max_remove"
@@ -280,6 +320,8 @@ compare_init_json init-plan-apply-dry-run \
   install remove keep protected commands
 run_nelix_timed upgrade-plan "$json_tmp/upgrade-plan.json" \
   --runtime nelisp --json upgrade-plan "$manifest"
+report_json_counts upgrade-plan "$json_tmp/upgrade-plan.json" \
+  upgrade pinned missing
 run_nelix_timed lock-check "$json_tmp/lock-check.json" \
   --runtime nelisp --json lock-check "$manifest"
 
