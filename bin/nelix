@@ -1,0 +1,998 @@
+#!/bin/sh
+set -eu
+
+if [ -n "${NELIX_LISPDIR:-}" ]; then
+  lispdir=$NELIX_LISPDIR
+else
+  self_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+  if [ -f "$self_dir/../scripts/nelix-cli.el" ]; then
+    lispdir=$(CDPATH= cd -- "$self_dir/.." && pwd)
+  elif [ -f "$self_dir/../share/emacs/site-lisp/nelix/scripts/nelix-cli.el" ]; then
+    lispdir=$(CDPATH= cd -- "$self_dir/../share/emacs/site-lisp/nelix" && pwd)
+  elif [ -f "/usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/nelix-cli.el" ]; then
+    lispdir=/usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0
+  else
+    lispdir=${NELIX_SYSTEM_LISPDIR:-/usr/local/share/emacs/site-lisp/nelix}
+  fi
+fi
+
+if [ -f "$lispdir/scripts/nelix-cli.el" ]; then
+  clifile=$lispdir/scripts/nelix-cli.el
+elif [ -f "$lispdir/nelix-cli.el" ]; then
+  clifile=$lispdir/nelix-cli.el
+else
+  clifile=$lispdir/scripts/nelix-cli.el
+fi
+
+nelix_lisp_file() {
+  name=$1
+  if [ -f "$lispdir/scripts/$name" ]; then
+    printf '%s\n' "$lispdir/scripts/$name"
+  elif [ -f "$lispdir/$name" ]; then
+    printf '%s\n' "$lispdir/$name"
+  else
+    return 1
+  fi
+}
+
+runtime=${NELIX_RUNTIME:-emacs}
+if [ "${1:-}" = "--runtime" ]; then
+  if [ -z "${2:-}" ]; then
+    echo "nelix: --runtime requires emacs or nelisp" >&2
+    exit 2
+  fi
+  runtime=$2
+  shift 2
+fi
+
+nelix_quote_elisp_string() {
+  if [ -z "$1" ]; then
+    printf '""'
+  else
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/^/"/; s/$/"/'
+  fi
+}
+
+nelix_find_nelisp() {
+  if [ -n "${NELISP:-}" ]; then
+    printf '%s\n' "$NELISP"
+  elif command -v nelisp >/dev/null 2>&1; then
+    command -v nelisp
+  elif [ -x "$lispdir/../nelisp/target/nelisp" ]; then
+    printf '%s\n' "$lispdir/../nelisp/target/nelisp"
+  elif [ -x "$lispdir/../nelisp/target/debug/nelisp" ]; then
+    printf '%s\n' "$lispdir/../nelisp/target/debug/nelisp"
+  else
+    return 1
+  fi
+}
+
+nelix_nelisp_root() {
+  if [ -n "${NELISP_ROOT:-}" ]; then
+    printf '%s\n' "$NELISP_ROOT"
+  elif [ -d "$lispdir/../nelisp/lisp" ]; then
+    (CDPATH= cd -- "$lispdir/../nelisp" && pwd)
+  else
+    case "$1" in
+      */target/nelisp|*/target/debug/nelisp)
+        (CDPATH= cd -- "$(dirname -- "$(dirname -- "$1")")" && pwd)
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  fi
+}
+
+nelix_nelisp_direct_available() {
+  nelisp_bin=$(nelix_find_nelisp) || return 1
+  nelisp_root=$(nelix_nelisp_root "$nelisp_bin") || return 1
+  smoke_file=$(nelix_lisp_file anvil-pkg-nelisp-smoke.el) || return 1
+  ert_shim=$(nelix_lisp_file anvil-pkg-nelisp-ert-shim.el) || return 1
+  test -f "$smoke_file" || return 1
+  test -f "$ert_shim" || return 1
+  test -f "${NELISP_STDLIB_EVAL_SPECIAL_SRC:-$nelisp_root/lisp/nelisp-stdlib-eval-special.el}" || return 1
+  test -f "${NELISP_CL_MACROS_SRC:-$nelisp_root/lisp/nelisp-cl-macros.el}" || return 1
+  test -f "${NELISP_JSON_SRC:-$nelisp_root/packages/nelisp-json/src/nelisp-json.el}" || return 1
+  test -f "${NELISP_ACTOR_SRC:-$nelisp_root/packages/nelisp-actor/src/nelisp-actor.el}" || return 1
+  test -f "${NELISP_PROCESS_SRC:-$nelisp_root/packages/nelisp-process/src/nelisp-process.el}" || return 1
+  return 0
+}
+
+nelix_nelisp_cli_image_path() {
+  if [ "${NELIX_NELISP_IMAGE:-}" = "none" ]; then
+    return 1
+  fi
+  if [ -n "${NELIX_NELISP_IMAGE:-}" ]; then
+    test -f "$NELIX_NELISP_IMAGE" || return 1
+    printf '%s\n' "$NELIX_NELISP_IMAGE"
+    return 0
+  fi
+  return 1
+}
+
+nelix_truthy() {
+  case "${1:-}" in
+    1|true|yes|on)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+nelix_nelisp_aot_cache_enabled() {
+  case "${NELIX_NELISP_AOT:-auto}" in
+    0|false|no|off|none|direct)
+      return 1
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
+nelix_abs_path() {
+  case "$1" in
+    /*)
+      printf '%s\n' "$1"
+      ;;
+    *)
+      printf '%s/%s\n' "$(pwd)" "$1"
+      ;;
+  esac
+}
+
+nelix_emit_nelisp_suite_source_files() {
+  cat <<EOF
+(setq anvil-pkg-nelisp-smoke-suite-source-files
+      (list
+       $(nelix_quote_elisp_string "$lispdir/anvil-pkg-compat.el")
+       $(nelix_quote_elisp_string "$lispdir/anvil-pkg-state.el")
+       $(nelix_quote_elisp_string "$lispdir/anvil-pkg.el")
+       $(nelix_quote_elisp_string "$lispdir/anvil-pkg-dsl.el")
+       $(nelix_quote_elisp_string "$lispdir/anvil-pkg-import.el")
+       $(nelix_quote_elisp_string "$lispdir/anvil-pkg-emacs.el")
+       $(nelix_quote_elisp_string "$lispdir/nelix-store.el")
+       $(nelix_quote_elisp_string "$lispdir/nelix-registry.el")
+       $(nelix_quote_elisp_string "$lispdir/nelix-fetch.el")
+       $(nelix_quote_elisp_string "$lispdir/nelix-builder.el")
+       $(nelix_quote_elisp_string "$lispdir/nelix-backend.el")
+       $(nelix_quote_elisp_string "$lispdir/nelix-manifest.el")
+       $(nelix_quote_elisp_string "$lispdir/nelix-fast.el")
+       $(nelix_quote_elisp_string "$lispdir/nelix-substitute.el")
+       $(nelix_quote_elisp_string "$lispdir/nelix-dsl.el")
+       $(nelix_quote_elisp_string "$lispdir/nelix-import.el")
+       $(nelix_quote_elisp_string "$lispdir/nelix-emacs.el")
+       $(nelix_quote_elisp_string "$lispdir/nelix.el")
+       $(nelix_quote_elisp_string "$lispdir/scripts/anvil-pkg-render.el")))
+EOF
+}
+
+nelix_default_profile_dir() {
+  if [ -n "${XDG_STATE_HOME:-}" ]; then
+    printf '%s/nelix/profile\n' "$XDG_STATE_HOME"
+  else
+    printf '%s/.local/state/nelix/profile\n' "${HOME:-$PWD}"
+  fi
+}
+
+nelix_aot_cache_fresh_p() {
+  manifest=$1
+  cache=$2
+  [ -f "$cache" ] || return 1
+  if [ "$manifest" -nt "$cache" ]; then
+    return 1
+  fi
+  return 0
+}
+
+nelix_aot_cache_error() {
+  reason=$1
+  command=$2
+  manifest=$3
+  case "$reason" in
+    missing)
+      echo "nelix: AOT cache is missing for $manifest" >&2
+      ;;
+    stale)
+      echo "nelix: AOT cache is older than $manifest" >&2
+      ;;
+    *)
+      echo "nelix: AOT cache is not usable for $manifest" >&2
+      ;;
+  esac
+  echo "nelix: run 'nelix aot-cache $manifest' before retrying $command" >&2
+  echo "nelix: set NELIX_NELISP_AOT=0 to force the slower direct NeLisp path" >&2
+  exit 2
+}
+
+nelix_aot_cache_command_p() {
+  if [ "$#" -eq 2 ] && [ "$1" = "aot-cache" ]; then
+    return 0
+  fi
+  if [ "$#" -eq 3 ] && [ "$1" = "--json" ] && [ "$2" = "aot-cache" ]; then
+    return 0
+  fi
+  return 1
+}
+
+nelix_nelisp_validate_fast_lane() {
+  if [ "$#" -eq 3 ] && [ "$1" = "--json" ] && [ "$2" = "validate" ]; then
+    nelix_emacs_batch "$@"
+    exit "$?"
+  fi
+  return 1
+}
+
+nelix_emacs_batch() {
+  "${EMACS:-emacs}" -Q --batch \
+    -L "$lispdir" \
+    -L "$lispdir/scripts" \
+    -l "$clifile" \
+    --eval '(nelix-cli-main command-line-args-left)' \
+    -- "$@"
+}
+
+nelix_run_emacs_batch() {
+  exec "${EMACS:-emacs}" -Q --batch \
+    -L "$lispdir" \
+    -L "$lispdir/scripts" \
+    -l "$clifile" \
+    --eval '(nelix-cli-main command-line-args-left)' \
+    -- "$@"
+}
+
+nelix_build_aot_cache() {
+  manifest=$1
+  cache_stdout=$(mktemp "${TMPDIR:-/tmp}/nelix-aot-cache-stdout.XXXXXX")
+  cache_stderr=$(mktemp "${TMPDIR:-/tmp}/nelix-aot-cache-stderr.XXXXXX")
+  set +e
+  nelix_emacs_batch aot-cache "$manifest" >"$cache_stdout" 2>"$cache_stderr"
+  status=$?
+  set -e
+  if [ "$status" -ne 0 ]; then
+    cat "$cache_stderr" >&2
+    cat "$cache_stdout" >&2
+    rm -f "$cache_stdout" "$cache_stderr"
+    return "$status"
+  fi
+  rm -f "$cache_stdout" "$cache_stderr"
+  return 0
+}
+
+nelix_emit_aot_cache_runtime_prefix() {
+  cache=$1
+  if awk -F '\t' '$1 == "target-id" { found = 1 } END { exit(found ? 0 : 1) }' "$cache"; then
+    awk -F '\t' '
+      NR == 1 ||
+      $1 == "manifest" ||
+      $1 == "profile" ||
+      $1 == "system" ||
+      $1 == "name-id" ||
+      $1 == "target-id" ||
+      $1 == "pin-id" {
+        print
+      }
+    ' "$cache"
+  else
+    cat "$cache"
+  fi
+}
+
+nelix_run_aot_id_cache_shell_lane() {
+  command=$1
+  json=$2
+  cache=$3
+  profile=$4
+  nix_program=$5
+
+  awk -F '\t' '$1 == "target-id" { found = 1 } END { exit(found ? 0 : 1) }' "$cache" || return 1
+
+  "$nix_program" profile list --profile "$profile" \
+    | sed -n 's/\x1b\[[0-9;]*m//g; s/^Name:[[:space:]]*//p' \
+    | awk -F '\t' -v command="$command" -v json="$json" -v cache_file="$cache" '
+        function norm(s, t) {
+          t = s
+          sub(/-[0-9]+$/, "", t)
+          return t
+        }
+        function j(s, t) {
+          t = s
+          gsub(/\\/, "\\\\", t)
+          gsub(/"/, "\\\"", t)
+          gsub(/\r/, "\\r", t)
+          gsub(/\t/, "\\t", t)
+          return "\"" t "\""
+        }
+        function bool(v) {
+          return v ? "true" : "false"
+        }
+        function json_names(arr, n,   i) {
+          printf "["
+          for (i = 1; i <= n; i++) {
+            if (i > 1) printf ","
+            printf "%s", j(arr[i])
+          }
+          printf "]"
+        }
+        function json_actions(action, arr, n,   i) {
+          printf "["
+          for (i = 1; i <= n; i++) {
+            if (i > 1) printf ","
+            printf "{\"action\":%s,\"name\":%s,\"backend\":\"nix\"}", j(action), j(arr[i])
+          }
+          printf "]"
+        }
+        function line_names(key, arr, n,   i) {
+          for (i = 1; i <= n; i++) {
+            printf "%s\t%s\n", key, arr[i]
+          }
+        }
+        FILENAME == ARGV[1] {
+          if ($1 == "manifest") {
+            manifest = $2
+          } else if ($1 == "profile") {
+            profile_name = $2
+          } else if ($1 == "system") {
+            system_value = $2
+          } else if ($1 == "name-id" && $2 != "" && $3 != "") {
+            name_by_id[$2] = $3
+            id_by_name[$3] = $2
+            id_by_name[norm($3)] = $2
+          } else if ($1 == "target-id" && $2 != "") {
+            target_count++
+            target_display[target_count] = $2
+            target_candidate_count[target_count] = NF - 2
+            for (i = 3; i <= NF; i++) {
+              target_candidate[target_count, i - 2] = $i
+              desired_id[$i] = 1
+            }
+          } else if ($1 == "pin-id" && $2 != "") {
+            pin_id[$2] = 1
+            pin_order[++pin_count] = $2
+          }
+          next
+        }
+        {
+          raw = $0
+          installed[++installed_count] = raw
+          lookup = norm(raw)
+          id = ""
+          if (raw in id_by_name) {
+            id = id_by_name[raw]
+          } else if (lookup in id_by_name) {
+            id = id_by_name[lookup]
+          }
+          installed_id_by_row[installed_count] = id
+          if (id != "") {
+            installed_id[id] = 1
+            if (!(id in installed_name_by_id)) {
+              installed_name_by_id[id] = raw
+            }
+          }
+        }
+        END {
+          for (id in desired_id) {
+            desired_name[name_by_id[id]] = 1
+            desired_name[norm(name_by_id[id])] = 1
+          }
+
+          for (t = 1; t <= target_count; t++) {
+            found_id = ""
+            for (i = 1; i <= target_candidate_count[t]; i++) {
+              id = target_candidate[t, i]
+              if (id in installed_id) {
+                found_id = id
+                break
+              }
+            }
+            if (found_id == "") {
+              missing[++missing_count] = name_by_id[target_display[t]]
+            } else if (command == "audit") {
+              present[++present_count] = installed_name_by_id[found_id]
+            } else if (command == "plan") {
+              keep[++keep_count] = installed_name_by_id[found_id]
+            } else if (found_id in pin_id) {
+              pinned[++pinned_count] = installed_name_by_id[found_id]
+            } else {
+              upgrade[++upgrade_count] = installed_name_by_id[found_id]
+            }
+          }
+
+          for (i = 1; i <= pin_count; i++) {
+            pinned_names[++pinned_names_count] = name_by_id[pin_order[i]]
+            pin_name[name_by_id[pin_order[i]]] = 1
+            pin_name[norm(name_by_id[pin_order[i]])] = 1
+          }
+
+          if (command == "audit" || command == "plan") {
+            for (i = 1; i <= installed_count; i++) {
+              raw = installed[i]
+              id = installed_id_by_row[i]
+              if (id != "") {
+                if (!(id in desired_id)) {
+                  if (command == "plan" && (id in pin_id || raw in pin_name || norm(raw) in pin_name)) {
+                    protected[++protected_count] = raw
+                  } else {
+                    extra[++extra_count] = raw
+                  }
+                }
+              } else if (!(raw in desired_name) && !(norm(raw) in desired_name)) {
+                if (command == "plan" && (raw in pin_name || norm(raw) in pin_name)) {
+                  protected[++protected_count] = raw
+                } else {
+                  extra[++extra_count] = raw
+                }
+              }
+            }
+          }
+
+          if (json == "1") {
+            if (command == "audit") {
+              printf "{\"ok\":%s", bool(missing_count == 0 && extra_count == 0)
+              printf ",\"manifest\":%s", j(manifest)
+              printf ",\"profile\":%s", j(profile_name)
+              printf ",\"system\":%s", j(system_value)
+              printf ",\"present\":"; json_names(present, present_count)
+              printf ",\"missing\":"; json_names(missing, missing_count)
+              printf ",\"extra\":"; json_names(extra, extra_count)
+              printf ",\"skipped\":{\"state-pins\":\"nelisp-aot\",\"lock-drift\":\"nelisp-aot\",\"linux-command-audit\":\"nelisp-aot\"}"
+              printf ",\"backend\":\"nix\",\"backend-selection\":{\"backend\":\"nix\",\"system\":%s,\"fallback\":\":nelisp-aot-cache\"}", j(system_value)
+              printf ",\"aot-cache\":%s}\n", j(cache_file)
+            } else if (command == "plan") {
+              printf "{\"operation\":\"apply\",\"status\":\"planned\",\"dry-run\":true"
+              printf ",\"manifest\":%s", j(manifest)
+              printf ",\"profile\":%s", j(profile_name)
+              printf ",\"system\":%s", j(system_value)
+              printf ",\"install\":"; json_actions("install", missing, missing_count)
+              printf ",\"remove\":"; json_actions("remove", extra, extra_count)
+              printf ",\"keep\":"; json_actions("keep", keep, keep_count)
+              printf ",\"protected\":"; json_actions("protect", protected, protected_count)
+              printf ",\"commands\":["
+              for (i = 1; i <= missing_count; i++) {
+                if (i > 1) printf ","
+                printf "{\"action\":\"install\",\"name\":%s,\"backend\":\"nix\"}", j(missing[i])
+              }
+              for (i = 1; i <= extra_count; i++) {
+                if (missing_count > 0 || i > 1) printf ","
+                printf "{\"action\":\"remove\",\"name\":%s,\"backend\":\"nix\"}", j(extra[i])
+              }
+              printf "]"
+              printf ",\"count\":%d", missing_count + extra_count
+              printf ",\"empty\":%s", bool(missing_count == 0 && extra_count == 0)
+              printf ",\"lock-drift\":null"
+              printf ",\"skipped\":{\"lock-drift\":\"nelisp-aot\",\"lock-read\":\"nelisp-aot\",\"transaction\":\"nelisp-aot\"}"
+              printf ",\"backend\":\"nix\",\"backend-selection\":{\"backend\":\"nix\",\"system\":%s,\"fallback\":\":nelisp-aot-cache\"}", j(system_value)
+              printf ",\"aot-cache\":%s}\n", j(cache_file)
+            } else {
+              printf "{\"operation\":\"upgrade\",\"name\":\":manifest\""
+              printf ",\"count\":%d", upgrade_count
+              printf ",\"upgrade\":"; json_names(upgrade, upgrade_count)
+              printf ",\"pinned\":"; json_names(pinned, pinned_count)
+              printf ",\"pinned-names\":"; json_names(pinned_names, pinned_names_count)
+              printf ",\"blocked\":null,\"empty\":%s", bool(upgrade_count == 0)
+              printf ",\"manifest\":%s", j(manifest)
+              printf ",\"profile\":%s", j(profile_name)
+              printf ",\"system\":%s", j(system_value)
+              printf ",\"missing\":"; json_names(missing, missing_count)
+              printf ",\"extra\":null,\"lock-drift\":null"
+              printf ",\"skipped\":{\"extra-scan\":\"nelisp-aot\",\"lock-drift\":\"nelisp-aot\",\"state-pins\":\"nelisp-aot\"}"
+              printf ",\"backend\":\"nix\",\"backend-selection\":{\"backend\":\"nix\",\"system\":%s,\"fallback\":\":nelisp-aot-cache\"}", j(system_value)
+              printf ",\"aot-cache\":%s}\n", j(cache_file)
+            }
+          } else if (command == "audit") {
+            printf "ok\t%s\n", bool(missing_count == 0 && extra_count == 0)
+            printf "manifest\t%s\nprofile\t%s\nsystem\t%s\n", manifest, profile_name, system_value
+            line_names("present", present, present_count)
+            line_names("missing", missing, missing_count)
+            line_names("extra", extra, extra_count)
+            printf "backend\tnix\nfallback\t:nelisp-aot-cache\naot-cache\t%s\n", cache_file
+          } else if (command == "plan") {
+            printf "operation\tapply\nstatus\tplanned\ndry-run\ttrue\n"
+            printf "manifest\t%s\nprofile\t%s\nsystem\t%s\n", manifest, profile_name, system_value
+            line_names("install", missing, missing_count)
+            line_names("remove", extra, extra_count)
+            line_names("keep", keep, keep_count)
+            line_names("protected", protected, protected_count)
+            printf "count\t%d\nempty\t%s\n", missing_count + extra_count, bool(missing_count == 0 && extra_count == 0)
+            printf "backend\tnix\nfallback\t:nelisp-aot-cache\naot-cache\t%s\n", cache_file
+          } else {
+            printf "operation\tupgrade\nname\t:manifest\ncount\t%d\nempty\t%s\n", upgrade_count, bool(upgrade_count == 0)
+            printf "manifest\t%s\nprofile\t%s\nsystem\t%s\n", manifest, profile_name, system_value
+            line_names("upgrade", upgrade, upgrade_count)
+            line_names("pinned", pinned, pinned_count)
+            line_names("pinned-name", pinned_names, pinned_names_count)
+            line_names("missing", missing, missing_count)
+            printf "backend\tnix\nfallback\t:nelisp-aot-cache\naot-cache\t%s\n", cache_file
+          }
+        }
+      ' "$cache" -
+}
+
+nelix_try_nelisp_aot_cache_fast_lane() {
+  nelix_nelisp_aot_cache_enabled || return 1
+  if [ "$#" -eq 2 ] && [ "$1" = "--json" ] && [ "$2" = "list" ]; then
+    json=1
+    command=list
+    manifest=
+  elif [ "$#" -eq 1 ] && [ "$1" = "list" ]; then
+    json=0
+    command=list
+    manifest=
+  elif [ "$#" -eq 3 ] && [ "$1" = "--json" ]; then
+    json=1
+    command=$2
+    manifest=$(nelix_abs_path "$3")
+  elif [ "$#" -eq 2 ]; then
+    json=0
+    command=$1
+    manifest=$(nelix_abs_path "$2")
+  else
+    return 1
+  fi
+
+  case "$command" in
+    list)
+      if [ "$json" -eq 1 ]; then
+        aot_fun=nelix-aot-list-json
+      else
+        aot_fun=nelix-aot-list-lines
+      fi
+      ;;
+    audit)
+      if [ "$json" -eq 1 ]; then
+        aot_fun=nelix-aot-audit-json
+      else
+        aot_fun=nelix-aot-audit-lines
+      fi
+      ;;
+    plan)
+      aot_fun=
+      ;;
+    upgrade-plan)
+      if [ "$json" -eq 1 ]; then
+        aot_fun=nelix-aot-upgrade-plan-json
+      else
+        aot_fun=nelix-aot-upgrade-plan-lines
+      fi
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  profile=${NELIX_PROFILE_DIR:-$(nelix_default_profile_dir)}
+  nix_program=${NELIX_NIX_PROGRAM:-nix}
+
+  if [ "$command" = "list" ]; then
+    if [ "$json" -eq 1 ]; then
+      "$nix_program" profile list --profile "$profile" \
+        | sed -n 's/\x1b\[[0-9;]*m//g; s/^Name:[[:space:]]*//p' \
+        | awk '
+            BEGIN { printf "[" }
+            {
+              gsub(/\\/, "\\\\")
+              gsub(/"/, "\\\"")
+              gsub(/\r/, "\\r")
+              gsub(/\t/, "\\t")
+              if (n++) printf ","
+              printf "\"%s\"", $0
+            }
+            END { printf "]\n" }
+          '
+    else
+      "$nix_program" profile list --profile "$profile" \
+        | sed -n 's/\x1b\[[0-9;]*m//g; s/^Name:[[:space:]]*//p'
+    fi
+    return 0
+  fi
+
+  cache="${manifest}.nelix-aot-targets"
+  if [ ! -f "$cache" ]; then
+    nelix_build_aot_cache "$manifest" || {
+      nelix_aot_cache_error missing "$command" "$manifest"
+    }
+  elif ! nelix_aot_cache_fresh_p "$manifest" "$cache"; then
+    nelix_build_aot_cache "$manifest" || {
+      nelix_aot_cache_error stale "$command" "$manifest"
+    }
+  fi
+  [ -f "$cache" ] || {
+    nelix_aot_cache_error missing "$command" "$manifest"
+  }
+  nelix_aot_cache_fresh_p "$manifest" "$cache" || {
+    nelix_aot_cache_error stale "$command" "$manifest"
+  }
+
+  if nelix_run_aot_id_cache_shell_lane "$command" "$json" "$cache" "$profile" "$nix_program"; then
+    return 0
+  fi
+  if [ "$command" = "plan" ]; then
+    return 1
+  fi
+
+  if [ -f "$lispdir/scripts/nelix-aot-manifest-engine.el" ]; then
+    engine=$lispdir/scripts/nelix-aot-manifest-engine.el
+  elif [ -f "$lispdir/nelix-aot-manifest-engine.el" ]; then
+    engine=$lispdir/nelix-aot-manifest-engine.el
+  else
+    return 1
+  fi
+
+  payload=$(mktemp "${TMPDIR:-/tmp}/nelix-aot-payload.XXXXXX")
+  output=$(mktemp "${TMPDIR:-/tmp}/nelix-aot-output.XXXXXX")
+  rm -f "$output"
+
+  if ! {
+    nelix_emit_aot_cache_runtime_prefix "$cache"
+    "$nix_program" profile list --profile "$profile" \
+      | sed -n 's/\x1b\[[0-9;]*m//g; s/^Name:[[:space:]]*//p' \
+      | awk -F '\t' '
+          BEGIN { OFS = "\t" }
+          FILENAME == ARGV[1] {
+            if ($1 == "name-id" && $2 != "" && $3 != "") {
+              ids[$3] = $2
+            }
+            next
+          }
+          {
+            name = $0
+            print "installed", name
+            lookup = name
+            sub(/-[0-9]+$/, "", lookup)
+            if (name in ids) {
+              print "installed-id", ids[name]
+            } else if (lookup in ids) {
+              print "installed-id", ids[lookup]
+            }
+          }
+        ' "$cache" -
+    printf 'end\n'
+  } >"$payload"; then
+    rm -f "$payload" "$output"
+    return 1
+  fi
+  form=$(printf '(progn (load %s) (princ (%s (rdf %s) ":nelisp-aot-cache" %s)) (princ "\n") (quote (:nelix-exit 0)))' \
+    "$(nelix_quote_elisp_string "$engine")" \
+    "$aot_fun" \
+    "$(nelix_quote_elisp_string "$payload")" \
+    "$(nelix_quote_elisp_string "$cache")")
+
+  set +e
+  "$nelisp_bin" --eval "$form" >"$output"
+  status=$?
+  set -e
+  rm -f "$payload"
+  if [ "$status" -ne 0 ] || [ ! -s "$output" ]; then
+    rm -f "$output"
+    return 1
+  fi
+
+  marker=$(sed -n '$p' "$output")
+  body=$(sed '$d' "$output")
+  rm -f "$output"
+  if [ "$marker" != "(:nelix-exit 0)" ]; then
+    return 1
+  fi
+  if [ -n "$body" ]; then
+    printf '%s\n' "$body"
+  fi
+  return 0
+}
+
+nelix_run_nelisp_image() {
+  image=$1
+  shift
+  stats_enabled=nil
+  if nelix_truthy "${NELIX_NELISP_STATS:-}"; then
+    stats_enabled=t
+  fi
+
+  probe=$(mktemp "${TMPDIR:-/tmp}/nelix-cli-image-probe.XXXXXX")
+  rm -f "$probe"
+  probe_form="(progn (nelisp-process-call-process \"/usr/bin/printf\" nil $(nelix_quote_elisp_string "$probe") nil \"%s\" (if (and (fboundp 'nelix-cli-parse-args) (fboundp 'nelix-cli-dispatch) (fboundp 'nelix-cli-format-result)) \"ready\" \"missing\")))"
+  set +e
+  probe_output=$("$nelisp_bin" eval-runtime-image "$image" "$probe_form")
+  probe_status=$?
+  set -e
+  if [ "$probe_status" -ne 0 ]; then
+    printf '%s\n' "$probe_output"
+    rm -f "$probe"
+    exit "$probe_status"
+  fi
+  if [ ! -s "$probe" ] || [ "$(cat "$probe")" != "ready" ]; then
+    rm -f "$probe"
+    echo "nelix: NELIX_NELISP_IMAGE does not contain preloaded Nelix CLI functions" >&2
+    exit 2
+  fi
+  rm -f "$probe"
+
+  runner=$(mktemp "${TMPDIR:-/tmp}/nelix-cli-image.XXXXXX.el")
+  result=$(mktemp "${TMPDIR:-/tmp}/nelix-cli-image-result.XXXXXX")
+  rm -f "$result"
+  trap 'rm -f "$runner" "$result"' EXIT HUP INT TERM
+  {
+    printf '(setq nelix-cli--direct-home %s)\n' "$(nelix_quote_elisp_string "${HOME:-}")"
+    printf '(setq nelix-manifest--nelisp-progress-file %s)\n' "$(nelix_quote_elisp_string "${NELIX_PROGRESS_FILE:-}")"
+    printf '(setq nelix-fast-aot-force %s)\n' "$(nelix_quote_elisp_string "${NELIX_NELISP_AOT:-}")"
+    printf '(setq nelix-cli--direct-result-file %s)\n' "$(nelix_quote_elisp_string "$result")"
+    printf '(setq nelix-cli--direct-stats-enabled %s)\n' "$stats_enabled"
+    printf '(setq nelix-cli--direct-argv (list\n'
+    for arg in "$@"; do
+      printf ' %s\n' "$(nelix_quote_elisp_string "$arg")"
+    done
+    printf '))\n'
+    cat <<'EOF'
+(when (and (boundp 'nelix-cli--direct-home)
+           (stringp nelix-cli--direct-home)
+           (> (length nelix-cli--direct-home) 0))
+  (when (and (boundp 'anvil-pkg-profile-dir)
+             (stringp anvil-pkg-profile-dir)
+             (string-prefix-p "~/" anvil-pkg-profile-dir))
+    (setq anvil-pkg-profile-dir
+          (concat nelix-cli--direct-home
+                  (substring anvil-pkg-profile-dir 1))))
+  (when (and (boundp 'anvil-pkg-state-file)
+             (stringp anvil-pkg-state-file)
+             (string-prefix-p "~/" anvil-pkg-state-file))
+    (setq anvil-pkg-state-file
+          (concat nelix-cli--direct-home
+                  (substring anvil-pkg-state-file 1)))))
+(defun nelix-cli--direct-write-result (marker text)
+  (nelisp-process-call-process
+   "/usr/bin/printf"
+   nil
+   nelix-cli--direct-result-file
+   nil
+   "%s\n%s\n"
+   marker
+   text))
+(defun nelix-cli--direct-stats (stage)
+  (if nelix-cli--direct-stats-enabled
+      (if (and (fboundp 'nelisp--write-stderr-line)
+               (fboundp 'nelisp--arena-stats))
+          (nelisp--write-stderr-line
+           (concat "nelix stats stage=" stage " "
+                   (prin1-to-string (nelisp--arena-stats))))
+        nil)
+    nil))
+(nelix-cli--direct-stats "entry")
+(condition-case err
+    (let* ((parsed (progn
+                     (nelix-cli--direct-stats "before-parse")
+                     (nelix-cli-parse-args nelix-cli--direct-argv)))
+           (json (plist-get parsed :json))
+           (result (progn
+                     (nelix-cli--direct-stats "before-dispatch")
+                     (nelix-cli-dispatch parsed)))
+           (text (progn
+                   (nelix-cli--direct-stats "before-format")
+                   (nelix-cli-format-result result json))))
+      (nelix-cli--direct-stats "after-format")
+      (nelix-cli--direct-write-result "(:nelix-exit 0)" text)
+      (nelix-cli--direct-stats "after-write")
+      (setq nelix-cli--direct-exit '(:nelix-exit 0)))
+  (error
+   (nelix-cli--direct-write-result
+    "(:nelix-exit 2)"
+    (format "nelix: %s" (error-message-string err)))
+   (setq nelix-cli--direct-exit '(:nelix-exit 2))))
+EOF
+  } >"$runner"
+
+  form=$(printf '(progn\n'; cat "$runner"; printf '\nnelix-cli--direct-exit)\n')
+  set +e
+  output=$("$nelisp_bin" eval-runtime-image "$image" "$form")
+  status=$?
+  set -e
+
+  if [ "$status" -ne 0 ]; then
+    printf '%s\n' "$output"
+    rm -f "$runner" "$result"
+    trap - EXIT HUP INT TERM
+    exit "$status"
+  fi
+  if [ ! -s "$result" ]; then
+    printf '%s\n' "$output"
+    rm -f "$runner" "$result"
+    trap - EXIT HUP INT TERM
+    exit 1
+  fi
+
+  marker=$(sed -n '1p' "$result")
+  body=$(sed '1d' "$result")
+  if [ -n "$body" ]; then
+    printf '%s\n' "$body"
+  fi
+  rm -f "$runner" "$result"
+  trap - EXIT HUP INT TERM
+  case "$marker" in
+    "(:nelix-exit 0)")
+      exit 0
+      ;;
+    "(:nelix-exit 2)")
+      exit 2
+      ;;
+    *)
+      printf '%s\n' "$marker"
+      exit 1
+      ;;
+  esac
+}
+
+nelix_run_nelisp_direct() {
+  if nelix_aot_cache_command_p "$@"; then
+    nelix_run_emacs_batch "$@"
+  fi
+  if nelix_nelisp_validate_fast_lane "$@"; then
+    exit 0
+  fi
+
+  nelisp_bin=$(nelix_find_nelisp) || {
+    echo "nelix: nelisp runtime requested but nelisp was not found" >&2
+    exit 127
+  }
+  nelisp_root=$(nelix_nelisp_root "$nelisp_bin") || {
+    echo "nelix: nelisp runtime requested but NELISP_ROOT could not be inferred" >&2
+    exit 127
+  }
+
+  smoke_file=$(nelix_lisp_file anvil-pkg-nelisp-smoke.el) || {
+    echo "nelix: nelisp runtime missing bootstrap file: anvil-pkg-nelisp-smoke.el" >&2
+    exit 127
+  }
+  default_ert_shim=$(nelix_lisp_file anvil-pkg-nelisp-ert-shim.el) || {
+    echo "nelix: nelisp runtime missing bootstrap file: anvil-pkg-nelisp-ert-shim.el" >&2
+    exit 127
+  }
+  ert_shim=${NELISP_ERT_SHIM_SRC:-$default_ert_shim}
+  stdlib_eval=${NELISP_STDLIB_EVAL_SPECIAL_SRC:-$nelisp_root/lisp/nelisp-stdlib-eval-special.el}
+  cl_macros=${NELISP_CL_MACROS_SRC:-$nelisp_root/lisp/nelisp-cl-macros.el}
+  json_src=${NELISP_JSON_SRC:-$nelisp_root/packages/nelisp-json/src/nelisp-json.el}
+  actor_src=${NELISP_ACTOR_SRC:-$nelisp_root/packages/nelisp-actor/src/nelisp-actor.el}
+  process_src=${NELISP_PROCESS_SRC:-$nelisp_root/packages/nelisp-process/src/nelisp-process.el}
+  stats_enabled=nil
+  if nelix_truthy "${NELIX_NELISP_STATS:-}"; then
+    stats_enabled=t
+  fi
+
+  for file in "$smoke_file" "$ert_shim" "$stdlib_eval" "$cl_macros" "$json_src" "$actor_src" "$process_src" "$clifile"; do
+    if [ ! -f "$file" ]; then
+      echo "nelix: nelisp runtime missing bootstrap file: $file" >&2
+      exit 127
+    fi
+  done
+
+  if nelix_try_nelisp_aot_cache_fast_lane "$@"; then
+    exit 0
+  fi
+
+  if image=$(nelix_nelisp_cli_image_path); then
+    nelix_run_nelisp_image "$image" "$@"
+  fi
+
+  runner=$(mktemp "${TMPDIR:-/tmp}/nelix-cli.XXXXXX.el")
+  trap 'rm -f "$runner"' EXIT HUP INT TERM
+  {
+    printf '(setq anvil-pkg-nelisp-smoke-stdlib-eval-special-source %s)\n' "$(nelix_quote_elisp_string "$stdlib_eval")"
+    printf '(setq anvil-pkg-nelisp-smoke-cl-macros-source %s)\n' "$(nelix_quote_elisp_string "$cl_macros")"
+    printf '(setq anvil-pkg-nelisp-smoke-json-source %s)\n' "$(nelix_quote_elisp_string "$json_src")"
+    printf '(setq anvil-pkg-nelisp-smoke-ert-shim-source %s)\n' "$(nelix_quote_elisp_string "$ert_shim")"
+    printf '(setq anvil-pkg-nelisp-smoke-actor-source %s)\n' "$(nelix_quote_elisp_string "$actor_src")"
+    printf '(setq anvil-pkg-nelisp-smoke-process-source %s)\n' "$(nelix_quote_elisp_string "$process_src")"
+    printf '(setq nelix-cli--direct-home %s)\n' "$(nelix_quote_elisp_string "${HOME:-}")"
+    printf '(setq nelix-manifest--nelisp-progress-file %s)\n' "$(nelix_quote_elisp_string "${NELIX_PROGRESS_FILE:-}")"
+    printf '(setq nelix-fast-aot-force %s)\n' "$(nelix_quote_elisp_string "${NELIX_NELISP_AOT:-}")"
+    printf '(setq nelix-cli--direct-stats-enabled %s)\n' "$stats_enabled"
+    printf '(setq nelix-cli--direct-argv (list\n'
+    for arg in "$@"; do
+      printf ' %s\n' "$(nelix_quote_elisp_string "$arg")"
+    done
+    printf '))\n'
+    printf '(load %s)\n' "$(nelix_quote_elisp_string "$smoke_file")"
+    cat <<'EOF'
+(defun nelix-cli--direct-stats (stage)
+  (if nelix-cli--direct-stats-enabled
+      (if (and (fboundp 'nelisp--write-stderr-line)
+               (fboundp 'nelisp--arena-stats))
+          (nelisp--write-stderr-line
+           (concat "nelix stats stage=" stage " "
+                   (prin1-to-string (nelisp--arena-stats))))
+        nil)
+    nil))
+(nelix-cli--direct-stats "after-smoke")
+EOF
+    nelix_emit_nelisp_suite_source_files
+    printf '(anvil-pkg-nelisp-smoke-preload-suite-runtime)\n'
+    printf '(nelix-cli--direct-stats "after-preload")\n'
+    printf '(load %s)\n' "$(nelix_quote_elisp_string "$clifile")"
+    printf '(nelix-cli--direct-stats "after-cli-load")\n'
+    cat <<'EOF'
+(when (and (boundp 'nelix-cli--direct-home)
+           (stringp nelix-cli--direct-home)
+           (> (length nelix-cli--direct-home) 0))
+  (when (and (boundp 'anvil-pkg-profile-dir)
+             (stringp anvil-pkg-profile-dir)
+             (string-prefix-p "~/" anvil-pkg-profile-dir))
+    (setq anvil-pkg-profile-dir
+          (concat nelix-cli--direct-home
+                  (substring anvil-pkg-profile-dir 1))))
+  (when (and (boundp 'anvil-pkg-state-file)
+             (stringp anvil-pkg-state-file)
+             (string-prefix-p "~/" anvil-pkg-state-file))
+    (setq anvil-pkg-state-file
+          (concat nelix-cli--direct-home
+                  (substring anvil-pkg-state-file 1)))))
+(condition-case err
+    (let* ((parsed (progn
+                     (nelix-cli--direct-stats "before-parse")
+                     (nelix-cli-parse-args nelix-cli--direct-argv)))
+           (json (plist-get parsed :json))
+           (result (progn
+                     (nelix-cli--direct-stats "before-dispatch")
+                     (nelix-cli-dispatch parsed)))
+           (text (progn
+                   (nelix-cli--direct-stats "before-format")
+                   (nelix-cli-format-result result json))))
+      (nelix-cli--direct-stats "after-format")
+      (princ text)
+      (princ "\n")
+      (nelix-cli--direct-stats "after-print")
+      (setq nelix-cli--direct-exit '(:nelix-exit 0)))
+  (error
+   (princ (format "nelix: %s\n" (error-message-string err)))
+   (setq nelix-cli--direct-exit '(:nelix-exit 2))))
+EOF
+  } >"$runner"
+
+  set +e
+  output=$("$nelisp_bin" --eval "(progn (load $(nelix_quote_elisp_string "$runner")) nelix-cli--direct-exit)")
+  status=$?
+  set -e
+  rm -f "$runner"
+  trap - EXIT HUP INT TERM
+
+  if [ "$status" -ne 0 ]; then
+    printf '%s\n' "$output"
+    exit "$status"
+  fi
+
+  marker=$(printf '%s\n' "$output" | tail -n 1)
+  body=$(printf '%s\n' "$output" | sed '$d')
+  if [ -n "$body" ]; then
+    printf '%s\n' "$body"
+  fi
+  case "$marker" in
+    "(:nelix-exit 0)")
+      exit 0
+      ;;
+    "(:nelix-exit 2)")
+      exit 2
+      ;;
+    *)
+      printf '%s\n' "$marker"
+      exit 1
+      ;;
+  esac
+}
+
+case "$runtime" in
+  nelisp)
+    nelix_run_nelisp_direct "$@"
+    ;;
+  auto)
+    if nelix_nelisp_direct_available; then
+      nelix_run_nelisp_direct "$@"
+    fi
+    ;;
+  emacs)
+    ;;
+  *)
+    echo "nelix: unknown runtime '$runtime' (expected emacs, nelisp, or auto)" >&2
+    exit 2
+    ;;
+esac
+
+nelix_run_emacs_batch "$@"
