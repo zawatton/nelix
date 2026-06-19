@@ -12,6 +12,7 @@
 (require 'nelix-aot-manifest-engine)
 
 (defvar nelix-package-nixpkgs-overrides)
+(defvar nelix-package-install-aliases)
 
 (defconst nelix-cli-test--directory
   (file-name-directory (or load-file-name buffer-file-name default-directory))
@@ -208,6 +209,111 @@
                             'pins
                             (alist-get 'counts parsed)))))))
       (delete-directory dir t))))
+
+(ert-deftest nelix-cli-test-fast-loads-dsl-v1-without-heavy-load ()
+  "Standalone NeLisp fast manifest load handles literal DSL v1 manifests."
+  (let ((dir (make-temp-file "nelix-cli-fast-load-env-" t))
+        (old-aliases-bound (boundp 'nelix-package-install-aliases))
+        (old-aliases-value (and (boundp 'nelix-package-install-aliases)
+                                nelix-package-install-aliases)))
+    (unwind-protect
+        (let ((manifest (expand-file-name "nelix-package.el" dir))
+              (index (expand-file-name "packages.el" dir)))
+          (setq nelix-package-install-aliases
+                '((consult . "emacsPackages.consult"))
+                nelix-fast--target-cache nil
+                nelix-fast--pname-cache nil)
+          (with-temp-file index
+            (insert "(defconst fixture-emacs-packages '(magit consult))\n")
+            (insert "(defconst fixture-linux-packages '(\"git\" \"ripgrep\"))\n"))
+          (with-temp-file manifest
+            (insert "(require 'nelix)\n")
+            (insert "(load \"packages.el\" nil nil t)\n")
+            (insert "(nelix-environment\n")
+            (insert " (name \"fixture\")\n")
+            (insert " (profile \"default\")\n")
+            (insert " (imports \"packages.el\")\n")
+            (insert " (emacs-packages fixture-emacs-packages)\n")
+            (insert " (linux-packages fixture-linux-packages)\n")
+            (insert " (package vertico :backend elpa :pin t)\n")
+            (insert " (linux-package fd :backend nix :pin t)\n")
+            (insert " (version-pin git \"2.0\"))\n"))
+          (cl-letf (((symbol-function 'anvil-pkg-compat--standalone-nelisp-p)
+                     (lambda () t))
+                    ((symbol-function 'nelix-manifest-load)
+                     (lambda (&rest _)
+                       (ert-fail "DSL v1 fast load must not call nelix-manifest-load"))))
+            (let* ((fast (nelix-fast-load-manifest manifest))
+                   (desired (plist-get fast :desired-order))
+                   (pins (plist-get fast :pins-order)))
+              (should (equal "fixture" (plist-get fast :name)))
+              (should (member "magit" desired))
+              (should (member "emacsPackages.consult" desired))
+              (should (member "git" desired))
+              (should (member "ripgrep" desired))
+              (should (member "vertico" desired))
+              (should (member "fd" desired))
+              (should (member "vertico" pins))
+              (should (member "fd" pins))
+              (should (member "git" pins)))))
+      (if old-aliases-bound
+          (setq nelix-package-install-aliases old-aliases-value)
+        (makunbound 'nelix-package-install-aliases))
+      (setq nelix-fast--target-cache nil
+            nelix-fast--pname-cache nil)
+      (delete-directory dir t))))
+
+(ert-deftest nelix-cli-test-fast-dsl-audit-json-stays-on-fast-data ()
+  "DSL v1 fast load output drives compact audit JSON set comparison."
+  (let ((dir (make-temp-file "nelix-cli-fast-load-audit-" t)))
+    (unwind-protect
+        (let ((manifest (expand-file-name "nelix-package.el" dir))
+              (index (expand-file-name "packages.el" dir)))
+          (with-temp-file index
+            (insert "(defconst fixture-emacs-packages '(magit consult))\n")
+            (insert "(defconst fixture-linux-packages '(\"git\" \"ripgrep\"))\n"))
+          (with-temp-file manifest
+            (insert "(require 'nelix)\n")
+            (insert "(load \"packages.el\" nil nil t)\n")
+            (insert "(nelix-environment\n")
+            (insert " (name \"fixture\")\n")
+            (insert " (profile \"default\")\n")
+            (insert " (imports \"packages.el\")\n")
+            (insert " (emacs-packages fixture-emacs-packages)\n")
+            (insert " (linux-packages fixture-linux-packages)\n")
+            (insert " (package vertico :backend elpa :pin t)\n")
+            (insert " (linux-package fd :backend nix :pin t))\n"))
+          (cl-letf (((symbol-function 'anvil-pkg-compat--standalone-nelisp-p)
+                     (lambda () t))
+                    ((symbol-function 'nelix-manifest-load)
+                     (lambda (&rest _)
+                       (ert-fail "audit JSON fast path must not call nelix-manifest-load"))))
+            (let* ((fast (nelix-fast-load-manifest manifest))
+                   (json (nelix-fast-audit-json-default
+                          fast
+                          '("magit" "git" "vertico" "fd" "htop")))
+                   (parsed (json-parse-string json
+                                              :object-type 'alist
+                                              :array-type 'list)))
+              (should (member "magit" (alist-get 'present parsed)))
+              (should (member "git" (alist-get 'present parsed)))
+              (should (member "vertico" (alist-get 'present parsed)))
+              (should (member "fd" (alist-get 'present parsed)))
+              (should (member "consult" (alist-get 'missing parsed)))
+              (should (member "ripgrep" (alist-get 'missing parsed)))
+              (should (member "htop" (alist-get 'extra parsed))))))
+      (delete-directory dir t))))
+
+(ert-deftest nelix-cli-test-fast-dsl-loader-ignores-classic-form ()
+  "Classic `nelix-manifest' files still fall through to the existing loader."
+  (let ((manifest (make-temp-file "nelix-cli-fast-classic-" nil ".el")))
+    (unwind-protect
+        (progn
+          (with-temp-file manifest
+            (insert "(require 'nelix-manifest)\n")
+            (insert "(nelix-manifest :name \"classic\" :linux '(\"ripgrep\"))\n"))
+          (should-not (nelix-fast--environment-manifest-load manifest)))
+      (delete-file manifest))))
 
 (ert-deftest nelix-cli-test-validate-json-rejects-duplicate-dsl-forms ()
   "The NeLisp fast validator enforces the same DSL v1 shape as Emacs load."

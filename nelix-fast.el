@@ -87,10 +87,10 @@
     (let ((cache (make-hash-table :test 'equal)))
       (when (boundp 'nelix-package-nixpkgs-overrides)
         (dolist (entry nelix-package-nixpkgs-overrides)
-          (puthash (car entry) (cdr entry) cache)))
+          (nelix-fast--put-cache-alias (car entry) (cdr entry) cache)))
       (when (boundp 'nelix-package-install-aliases)
         (dolist (entry nelix-package-install-aliases)
-          (puthash (car entry) (cdr entry) cache)))
+          (nelix-fast--put-cache-alias (car entry) (cdr entry) cache)))
       (setq nelix-fast--target-cache cache)))
   nelix-fast--target-cache)
 
@@ -100,9 +100,15 @@
     (let ((cache (make-hash-table :test 'equal)))
       (when (boundp 'nelix-package-pname-overrides)
         (dolist (entry nelix-package-pname-overrides)
-          (puthash (car entry) (cdr entry) cache)))
+          (nelix-fast--put-cache-alias (car entry) (cdr entry) cache)))
       (setq nelix-fast--pname-cache cache)))
   nelix-fast--pname-cache)
+
+(defun nelix-fast--put-cache-alias (key value cache)
+  "Store KEY -> VALUE in CACHE, including a string alias for symbol keys."
+  (puthash key value cache)
+  (when (symbolp key)
+    (puthash (symbol-name key) value cache)))
 
 (defun nelix-fast--target-name (target)
   "Return TARGET as a package/profile name string."
@@ -296,14 +302,65 @@ prescient-1 from collapsing to the same target."
     (dolist (target targets (nreverse rows))
       (push (nelix-fast--target-row target) rows))))
 
-(defun nelix-fast-load-manifest (manifest-file)
-  "Load MANIFEST-FILE and compile it into the fast manifest shape."
-  (let* ((manifest (nelix-manifest-load manifest-file))
-         (rows (nelix-fast--target-rows manifest))
-         (desired-set (make-hash-table :test 'equal))
-         (desired-names nil)
-         (pins (plist-get manifest :pins))
-         (pins-set (nelix-fast--name-set pins)))
+(defun nelix-fast--resolve-emacs-target (package)
+  "Return the Nix install target for Emacs PACKAGE."
+  (or (gethash package (nelix-fast--target-cache))
+      package))
+
+(defun nelix-fast--dedupe-equal (items)
+  "Return ITEMS with duplicates removed using `equal'."
+  (let ((seen (make-hash-table :test 'equal))
+        out)
+    (dolist (item items (nreverse out))
+      (unless (gethash item seen)
+        (puthash item t seen)
+        (push item out)))))
+
+(defun nelix-fast--target-rows-from-fields (emacs linux debian-tools)
+  "Return compact target rows from manifest field values."
+  (let ((targets (nelix-fast--dedupe-equal
+                  (append (mapcar #'nelix-fast--resolve-emacs-target emacs)
+                          linux
+                          debian-tools)))
+        rows)
+    (dolist (target targets (nreverse rows))
+      (push (nelix-fast--target-row target) rows))))
+
+(defun nelix-fast--compile-manifest-fields
+    (file name profile imports emacs linux debian-tools bootstrap-apt pins)
+  "Compile manifest field values into the fast manifest shape."
+  (let ((rows (nelix-fast--target-rows-from-fields emacs linux debian-tools))
+        (desired-set (make-hash-table :test 'equal))
+        (desired-names nil)
+        (pins-set (nelix-fast--name-set pins)))
+    (dolist (row rows)
+      (push (nelix-fast--row-name row) desired-names)
+      (dolist (candidate (nelix-fast--row-candidates row))
+        (puthash candidate t desired-set)
+        (puthash (nelix-fast--strip-duplicate-suffix candidate)
+                 t
+                 desired-set)))
+    (list :file file
+          :name name
+          :profile profile
+          :imports imports
+          :backend 'nix
+          :backend-selection '(:backend nix :system x86_64-linux :fallback :nelisp-fast)
+          :system 'x86_64-linux
+          :targets rows
+          :desired-order (nreverse desired-names)
+          :desired-set desired-set
+          :pins-order pins
+          :pins-set pins-set
+          :bootstrap-apt bootstrap-apt)))
+
+(defun nelix-fast--compile-manifest (manifest)
+  "Compile normalized MANIFEST into the fast manifest shape."
+  (let ((rows (nelix-fast--target-rows manifest))
+        (desired-set (make-hash-table :test 'equal))
+        (desired-names nil)
+        (pins (plist-get manifest :pins))
+        (pins-set (nelix-fast--name-set (plist-get manifest :pins))))
     (dolist (row rows)
       (push (nelix-fast--row-name row) desired-names)
       (dolist (candidate (nelix-fast--row-candidates row))
@@ -324,6 +381,14 @@ prescient-1 from collapsing to the same target."
           :pins-order pins
           :pins-set pins-set
           :bootstrap-apt (plist-get manifest :bootstrap-apt))))
+
+(defun nelix-fast-load-manifest (manifest-file)
+  "Load MANIFEST-FILE and compile it into the fast manifest shape."
+  (or (and (fboundp 'anvil-pkg-compat--standalone-nelisp-p)
+           (anvil-pkg-compat--standalone-nelisp-p)
+           (nelix-fast--environment-manifest-load manifest-file))
+      (let* ((manifest (nelix-manifest-load manifest-file)))
+        (nelix-fast--compile-manifest manifest))))
 
 (defun nelix-fast-list ()
   "Return installed profile names through the NeLisp fast path."
@@ -872,6 +937,26 @@ prescient-1 from collapsing to the same target."
           :debian-tools (or debian-tools nil)
           :bootstrap-apt (or bootstrap nil)
           :pins (or pins nil))))
+
+(defun nelix-fast--environment-manifest-load (manifest-file)
+  "Return fast manifest data for a literal DSL v1 manifest file.
+
+This reuses `nelix-fast--validate-compiled' so standalone NeLisp can keep
+audit, list, plan, and upgrade-plan off the full `nelix-manifest-load' path
+when the manifest is a literal `nelix-environment' form."
+  (condition-case nil
+      (let ((compiled (nelix-fast--validate-compiled manifest-file)))
+        (nelix-fast--compile-manifest-fields
+         (plist-get compiled :manifest)
+         (plist-get compiled :name)
+         (plist-get compiled :profile)
+         (plist-get compiled :imports)
+         (plist-get compiled :emacs)
+         (plist-get compiled :linux)
+         (plist-get compiled :debian-tools)
+         (plist-get compiled :bootstrap-apt)
+         (plist-get compiled :pins)))
+    (error nil)))
 
 (defun nelix-fast--json-symbol-list (values)
   "Return VALUES encoded as a JSON string array by symbol names."
