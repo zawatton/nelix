@@ -54,7 +54,7 @@ For the Emacs package:
 
 - hard dependency: Emacs 29 or newer
 - recommended dependency: Nix 2.18 or newer with flakes enabled
-- useful runtime tools: =git=, =curl=, =ca-certificates=
+- useful runtime tools: =git=, =curl=, =jq=, =ca-certificates=
 - optional integration: =nelisp=
 
 Avoid depending on a distro-packaged =nix= when that makes the package

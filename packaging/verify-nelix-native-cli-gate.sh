@@ -280,6 +280,7 @@ expect_json registry_list '"name":"fixture-tool"'
 
 run_json_packaged packaged_registry registry list --system x86_64-linux
 expect_json packaged_registry '"operation":"registry-list"'
+expect_json packaged_registry '"name":"jq"'
 expect_json packaged_registry '"name":"ripgrep"'
 
 run_json_packaged packaged_install native install ripgrep --profile packaged --system x86_64-linux

@@ -73,6 +73,7 @@ path_in_release_scope() {
     nelix-substitute.el|\
     registry/packages/system/curl.el|\
     registry/packages/system/git.el|\
+    registry/packages/system/jq.el|\
     registry/packages/system/ripgrep.el|\
     scripts/nelix-aot-manifest-engine.el|\
     scripts/nelix-aot-native-cli-proof.el|\
@@ -269,6 +270,8 @@ require_autopkgtest_gate_strength() {
     "grep -Fq 'packaged-rg-ok --nelix-gate'"
   require_contains Makefile \
     "grep -Fxq './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/registry/packages/system/ripgrep.el'"
+  require_contains Makefile \
+    "grep -Fxq './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/registry/packages/system/jq.el'"
   require_contains Makefile \
     "grep -Fq 'packaged_registry'"
   require_contains Makefile \
@@ -607,6 +610,8 @@ require_native_store_gate_docs() {
     ':require-target t'
   require_contains registry/packages/system/curl.el \
     ':require-target t'
+  require_contains registry/packages/system/jq.el \
+    ':require-target t'
   require_contains test/nelix-store-test.el \
     'nelix-store-test-native-install-lock-package-replays-script-shim'
   require_contains test/nelix-store-test.el \
@@ -654,6 +659,8 @@ require_native_store_gate_docs() {
   require_contains docs/design/22-nelix-native-store.org \
     'Packaged registry root under the installed Nelix Lisp directory.'
   require_contains docs/design/22-nelix-native-store.org \
+    '=curl=, and =jq='
+  require_contains docs/design/22-nelix-native-store.org \
     'installs the packaged =ripgrep= recipe'
   require_contains docs/design/22-nelix-native-store.org \
     'Failed fetch/verify/unpack/copy/script-shim installs do'
@@ -678,6 +685,8 @@ require_native_store_gate_docs() {
   require_contains docs/design/29-nelix-release-worktree-scope.org \
     'Native packaged registry:'
   require_contains docs/design/29-nelix-release-worktree-scope.org \
+    '=curl=, and =jq='
+  require_contains docs/design/29-nelix-release-worktree-scope.org \
     'packaged =ripgrep= install/activation'
   require_contains docs/design/29-nelix-release-worktree-scope.org \
     'Source-free =script-shim= lock rows replay'
@@ -691,6 +700,8 @@ require_native_store_gate_docs() {
     'registry dependency install through =nelix native install='
   require_contains packaging/README.org \
     'packaged registry root through'
+  require_contains packaging/README.org \
+    '=git=, =curl=, =jq=, =ca-certificates='
   require_contains packaging/README.org \
     'installs and activates the'
 }
@@ -742,6 +753,8 @@ require_aot_plan_gate_docs() {
     'Fedora source tarball bin/nelix is missing default AOT cache mode'
   require_contains packaging/fedora/verify-source.sh \
     'registry/packages/system/ripgrep.el'
+  require_contains packaging/fedora/verify-source.sh \
+    'registry/packages/system/jq.el'
   require_contains packaging/fedora/verify-source.sh \
     'NELIX_LISPDIR="$PWD" bin/nelix --json version'
   require_contains packaging/fedora/nelix.spec \
