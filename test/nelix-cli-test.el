@@ -1591,6 +1591,38 @@
                                :lock-drift :nelisp-aot
                                :linux-command-audit :nelisp-aot))))))
 
+(ert-deftest nelix-cli-test-aot-engine-audit-id-records-bypass-string-report ()
+  "AOT audit treats numeric ID records as the hot-path contract."
+  (let ((payload (concat
+                  "NELIX-AOT-MANIFEST-V1\n"
+                  "manifest\t/tmp/manifest.el\n"
+                  "profile\tdefault\n"
+                  "system\tx86_64-linux\n"
+                  "target\twrong-string\twrong-string\n"
+                  "pin\twrong-string\n"
+                  "name-id\t1\tmagit\n"
+                  "name-id\t2\tripgrep\n"
+                  "name-id\t3\tfd\n"
+                  "target-id\t1\t1\n"
+                  "target-id\t2\t2\n"
+                  "target-id\t3\t3\n"
+                  "pin-id\t2\n"
+                  "installed\tmagit\n"
+                  "installed-id\t1\n"
+                  "installed\tripgrep-1\n"
+                  "installed-id\t2\n"
+                  "installed\tbat\n"
+                  "end\n")))
+    (cl-letf (((symbol-function 'nelix-aot--audit-string-report)
+               (lambda (&rest _args)
+                 (ert-fail "ID audit path must not call string report"))))
+      (should (equal (plist-get (nelix-aot-audit payload) :present)
+                     '("magit" "ripgrep-1")))
+      (should (equal (plist-get (nelix-aot-audit payload) :missing)
+                     '("fd")))
+      (should (equal (plist-get (nelix-aot-audit payload) :extra)
+                     '("bat"))))))
+
 (ert-deftest nelix-cli-test-aot-engine-upgrade-plan-uses-line-protocol ()
   "Portable AOT upgrade-plan preserves pin and missing semantics."
   (let ((payload (concat
@@ -1840,6 +1872,38 @@
                      :skipped (:extra-scan :nelisp-aot
                                :lock-drift :nelisp-aot
                                :state-pins :nelisp-aot))))))
+
+(ert-deftest nelix-cli-test-aot-engine-upgrade-id-records-bypass-string-report ()
+  "AOT upgrade-plan treats numeric ID records as the hot-path contract."
+  (let ((payload (concat
+                  "NELIX-AOT-MANIFEST-V1\n"
+                  "manifest\t/tmp/manifest.el\n"
+                  "profile\tdefault\n"
+                  "system\tx86_64-linux\n"
+                  "target\twrong-string\twrong-string\n"
+                  "pin\twrong-string\n"
+                  "name-id\t1\tmagit\n"
+                  "name-id\t2\tripgrep\n"
+                  "name-id\t3\tfd\n"
+                  "target-id\t1\t1\n"
+                  "target-id\t2\t2\n"
+                  "target-id\t3\t3\n"
+                  "pin-id\t2\n"
+                  "installed\tmagit\n"
+                  "installed-id\t1\n"
+                  "installed\tripgrep-1\n"
+                  "installed-id\t2\n"
+                  "installed\tbat\n"
+                  "end\n")))
+    (cl-letf (((symbol-function 'nelix-aot--upgrade-string-report)
+               (lambda (&rest _args)
+                 (ert-fail "ID upgrade path must not call string report"))))
+      (should (equal (plist-get (nelix-aot-upgrade-plan payload) :upgrade)
+                     '("magit")))
+      (should (equal (plist-get (nelix-aot-upgrade-plan payload) :pinned)
+                     '("ripgrep-1")))
+      (should (equal (plist-get (nelix-aot-upgrade-plan payload) :missing)
+                     '("fd"))))))
 
 (ert-deftest nelix-cli-test-aot-engine-list-direct-writers ()
   "AOT list can output lines or JSON without generic CLI formatting."
@@ -2092,8 +2156,8 @@
             (should (string-match-p "installed\tbat\nend\n" payload))
             (should (string-match-p "installed-id\t1\n" payload))
             (should (string-match-p "installed-id\t2\n" payload))
-            (should (string-match-p "^target\tmagit\tmagit$" payload))
-            (should (string-match-p "^pin\tripgrep$" payload))
+            (should-not (string-match-p "^target\t" payload))
+            (should-not (string-match-p "^pin\t" payload))
             (should (string-match-p "^target-id\t1\t1$" payload))
             (should (string-match-p "^pin-id\t2$" payload))
             (should (equal (plist-get report :present)
@@ -2146,8 +2210,8 @@
             (should (string-match-p "installed\tripgrep-1\n" payload))
             (should (string-match-p "installed-id\t1\n" payload))
             (should (string-match-p "installed-id\t2\n" payload))
-            (should (string-match-p "^target\tmagit\tmagit$" payload))
-            (should (string-match-p "^pin\tripgrep$" payload))
+            (should-not (string-match-p "^target\t" payload))
+            (should-not (string-match-p "^pin\t" payload))
             (should (string-match-p "^target-id\t1\t1$" payload))
             (should (string-match-p "^pin-id\t2$" payload))
             (should (equal (plist-get report :present)

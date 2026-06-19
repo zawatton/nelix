@@ -221,6 +221,12 @@ if [ -n "${NELIX_LISPDIR:-}" ]; then
 elif [ -n "$repo_root" ] && [ "$nelix_bin" = "$repo_root/bin/nelix" ]; then
   nelix_lisp_env+=("NELIX_LISPDIR=$repo_root")
 fi
+if [ -n "${NELISP:-}" ]; then
+  nelix_lisp_env+=("NELISP=$NELISP")
+fi
+if [ -n "${NELISP_ROOT:-}" ]; then
+  nelix_lisp_env+=("NELISP_ROOT=$NELISP_ROOT")
+fi
 
 env_args=(
   "HOME=$home"

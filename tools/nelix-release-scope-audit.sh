@@ -106,6 +106,7 @@ path_in_release_scope() {
     docs/design/27-nelix-init-migration-workflow.org|\
     docs/design/28-nelix-apply-transaction-and-dsl-v1.org|\
     docs/design/29-nelix-release-worktree-scope.org|\
+    docs/design/30-nelix-development-roadmap.org|\
     debian/README.Debian|\
     debian/changelog|\
     debian/control|\
@@ -238,16 +239,16 @@ require_autopkgtest_gate_strength() {
     exit 1
   fi
   require_contains debian/tests/control 'Tests: load'
-  require_contains debian/tests/control 'Depends: @, emacs-nox | emacs'
+  require_contains debian/tests/control 'Depends: @, bash, emacs-nox | emacs'
   require_contains debian/tests/control 'Restrictions: allow-stderr'
   require_contains debian/tests/load '/usr/bin/nelix --help'
   require_contains debian/tests/load '/usr/bin/nelix --json version'
   require_contains debian/tests/load \
-    'sh /usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh'
+    'bash /usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh'
   require_contains Makefile \
     "! grep -Eq '^Restrictions:.*(^|[[:space:],])superficial([[:space:],]|"
   require_contains Makefile \
-    "grep -q 'sh /usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh' debian/tests/load"
+    "grep -q 'bash /usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh' debian/tests/load"
   require_contains Makefile \
     "grep -Fxq './usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh'"
   require_contains Makefile \
@@ -447,6 +448,22 @@ require_user_manifest_dsl_gate() {
     'nelix-environment'
   require_contains packaging/verify-nelix-user-environment.sh \
     'not top-level nelix-manifest'
+  require_contains Makefile \
+    'verify-installed-operational-gate:'
+  require_contains Makefile \
+    '$(MAKE) verify-installed-debian'
+  require_contains Makefile \
+    '$(MAKE) verify-installed-cli-gate'
+  require_contains Makefile \
+    '$(MAKE) verify-installed-user-manifest-runtime'
+  require_contains Makefile \
+    'NELISP="$${NELISP:-$(NELISP)}" \'
+  require_contains Makefile \
+    'NELISP_ROOT="$${NELISP_ROOT:-$(NELISP_REPO)}" \'
+  require_contains packaging/verify-nelix-native-cli-gate.sh \
+    'nelix_lisp_env+=("NELISP=$NELISP")'
+  require_contains packaging/verify-nelix-native-cli-gate.sh \
+    'nelix_lisp_env+=("NELISP_ROOT=$NELISP_ROOT")'
   require_contains docs/design/27-nelix-init-migration-workflow.org \
     '(nelix-environment'
   require_contains docs/design/29-nelix-release-worktree-scope.org \
@@ -1042,7 +1059,8 @@ audit_group "Commit C - design docs" \
   docs/design/26-nelix-lock-plan-apply.org \
   docs/design/27-nelix-init-migration-workflow.org \
   docs/design/28-nelix-apply-transaction-and-dsl-v1.org \
-  docs/design/29-nelix-release-worktree-scope.org
+  docs/design/29-nelix-release-worktree-scope.org \
+  docs/design/30-nelix-development-roadmap.org
 
 audit_group "Commit D - Debian and repository publication" \
   debian/README.Debian \

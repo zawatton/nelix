@@ -313,7 +313,11 @@ After reinstalling the freshly built Debian package, run
 =verify-installed-operational-gate= to verify both installed sides together:
 the fixture-backed CLI lock/plan/apply transaction, rollback, schema, DSL, and
 native-store checks, plus the real =~/.emacs.d/nelix-package.el= NeLisp runtime
-gate through =/usr/bin/nelix=:
+gate through =/usr/bin/nelix=.  The installed CLI fixture gate also receives
+the Makefile-detected =NELISP= and =NELISP_ROOT= values, so its native-store
+NeLisp probe works when =nelisp= exists only in the adjacent checkout.  The
+aggregate runs the installed Debian package version/payload preflight first, so
+a stale installed package fails before the CLI fixture gate:
 
 #+begin_src shell
 make verify-installed-operational-gate

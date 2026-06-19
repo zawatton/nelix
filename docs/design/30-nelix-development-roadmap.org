@@ -1,0 +1,263 @@
+#+TITLE: Nelix development roadmap
+#+AUTHOR: zawatton + Codex
+#+DATE: 2026-06-20
+#+OPTIONS: toc:t num:nil
+
+* Purpose
+
+This note is the near-term development plan for bringing Nelix from the
+current source-tree operational baseline to daily-use and then release-candidate
+quality.
+
+The source-tree gates already prove the real user manifest path.  The next
+work should focus on the installed package gate and the native AOT cache
+contract without weakening the daily-use safety properties.
+
+* Current baseline
+
+As of 2026-06-20:
+
+- The =dev/anvil-pkg= worktree was clean before this note was added.
+- =main= was ahead of =origin/main= by 133 commits.
+- =make check= passed, including byte compilation, =check-declare=, 471 ERT
+  tests, schema checks, lock schema gate, native CLI gate, and AOT cache gate.
+- =make verify-source-operational-gate= passed.
+- The real manifest =~/.emacs.d/nelix-package.el= contained 203 targets.
+- Real manifest checks reported =missing=0=, =extra=0=, =install=0=,
+  =remove=0=, =keep=203=, and =commands=0=.
+- The init migration load-only gate passed with the same 203-target profile.
+
+This source-tree baseline is not the same as the installed package baseline.
+The installed operational gate still needs a freshly installed =elpa-nelix=
+package and must be treated as a separate release blocker.
+
+* Execution status
+
+As of the 2026-06-20 installed-gate pass:
+
+- =make deb-local-gate= passed and produced
+  =../elpa-nelix_0.1.0-5_all.deb=.
+- =packaging/verify-extracted-nelix-debian.sh= passed against that package with
+  the real manifest and explicit local NeLisp runtime.  It reported 203
+  targets, =missing=0=, =extra=0=, =install=0=, =remove=0=, =keep=203=, and
+  =commands=0=.
+- The native/public AOT proof gate passed:
+  =target-id-rows\t768=, =payload-threshold\tlarge=, and
+  =large-id-proof-code\t770=.
+- The ID cache hot path now has an explicit source contract: runtime payloads
+  omit legacy string =target= and =pin= rows whenever =target-id= records are
+  present, while on-disk caches keep those rows for fallback compatibility.
+  ERT coverage also fails if mixed ID+string payloads re-enter the string
+  report path.
+- The freshly built package was reinstalled and =make
+  verify-installed-operational-gate= passed against installed =elpa-nelix
+  0.1.0-5=.
+- The installed operational aggregate now runs the installed Debian
+  package/version preflight first, then the installed CLI fixture gate, then the
+  real-manifest runtime gate.
+- The installed CLI fixture gate receives the Makefile-detected =NELISP= and
+  =NELISP_ROOT= values, so its native-store NeLisp probe works even when
+  =nelisp= exists only in the adjacent checkout rather than on =PATH=.
+
+Therefore the source-tree, extracted-package, release-payload, installed
+operational, and AOT-ID contract gates have all passed.  The remaining daily-use
+criterion is observational: several days of normal use must show no lock drift
+or profile drift.
+
+* Development rules
+
+- Keep work logs in =anvil-worklog= only.
+- Do not add file-based handoff or worklog files such as =docs/worklog/*.org=,
+  =worklog.org=, =worklog.md=, or =capture/ai-logs-*.org=.
+- Check =git status --short --branch= before editing.
+- Do not revert unrelated user changes.
+- Preserve source-tree and installed-package gates as separate concepts.
+- Preserve the real manifest invariant: =install=0=, =remove=0=,
+  =missing=0=, and =extra=0= unless a change is explicitly reviewed as a
+  migration.
+- Prefer read-only or dry-run gates before any real apply path.
+
+* Priority 0. Installed operational gate
+
+The first release-critical step is proving the packaged command surface through
+the installed =/usr/bin/nelix= payload.
+
+Recommended flow:
+
+#+begin_src sh
+make deb-local-gate
+sudo apt install --reinstall ../elpa-nelix_0.1.0-*_all.deb
+make verify-installed-operational-gate
+#+end_src
+
+If the environment must be explicit:
+
+#+begin_src sh
+NELIX_USER_MANIFEST="$HOME/.emacs.d/nelix-package.el" \
+NELIX_USER_MANIFEST_NELISP=required \
+NELIX_USER_MANIFEST_LOCKED=required \
+NELISP=/home/madblack-21/Cowork/Notes/dev/nelisp/target/nelisp \
+NELISP_ROOT=/home/madblack-21/Cowork/Notes/dev/nelisp \
+make verify-installed-operational-gate
+#+end_src
+
+Completion criteria:
+
+- =verify-installed-cli-gate= passes.
+- The real manifest runtime gate passes through =/usr/bin/nelix=.
+- Lock and AOT cache backup/restore leave the real manifest state unchanged.
+- The real manifest still reports =install=0=, =remove=0=, =missing=0=, and
+  =extra=0=.
+
+* Priority 1. Native AOT cache contract
+
+The next technical milestone is promoting the existing ID-oriented cache lane
+from a portable-engine acceleration into the real native cache contract.
+
+Primary files:
+
+- =docs/design/25-nelix-native-aot-manifest-engine.org=
+- =nelix-fast.el=
+- =scripts/nelix-aot-manifest-engine.el=
+- =scripts/nelix-aot-native-subset.el=
+- =scripts/nelix-aot-native-cli-proof.el=
+
+Current building blocks:
+
+- =name-id= records map package names to compact numeric IDs.
+- =target-id= records carry desired target membership by ID.
+- =pin-id= records carry pinned target membership by ID.
+- =installed-id= records map live installed packages into the same ID space
+  when possible.
+
+Development direction:
+
+- Treat the ID records as a formal cache contract, not inert metadata.
+- Keep string =target= and =pin= records for fallback and compatibility.
+- Remove string target/pin parsing from the hot path when ID records are
+  available.
+- Prove small payloads in the native proof harness first.
+- Add a real 200-plus target profile gate after the proof lane is stable.
+- Avoid adding direct full standalone CLI bootstraps to hot-path gates.
+
+Completion criteria:
+
+- The real 203-target manifest can select the native ID path.
+- Audit and upgrade-plan hot paths do not re-enter the portable hash/list
+  engine when the cache has ID records.
+- Source operational gate still passes.
+- There is a timing or allocation regression tripwire for the native path.
+
+* Priority 2. Transaction and recovery safety
+
+Transaction support is already covered by source gates, but daily-use readiness
+depends on keeping the installed CLI surface equally strong.
+
+Commands to keep covered:
+
+#+begin_src sh
+nelix apply MANIFEST --dry-run
+nelix apply MANIFEST --locked --dry-run
+nelix apply MANIFEST
+nelix transaction list
+nelix transaction show ID
+nelix transaction recover ID --dry-run
+#+end_src
+
+Completion criteria:
+
+- Transaction record schema remains stable.
+- Failed and successful transaction records are both covered.
+- =recover --dry-run= returns usable manual rollback commands.
+- Installed CLI coverage matches source-tree coverage for the documented
+  transaction surface.
+
+* Priority 3. Release hygiene
+
+Before publishing a release candidate, align the package payload, docs, schema
+files, and release scope audit.
+
+Recommended gates:
+
+#+begin_src sh
+make release-scope-audit
+make deb-local-gate
+make deb-lint
+make verify-deb-contents
+#+end_src
+
+Review targets:
+
+- =debian/changelog=
+- =packaging/README.org=
+- =docs/design/27-nelix-init-migration-workflow.org=
+- =docs/design/28-nelix-apply-transaction-and-dsl-v1.org=
+- =docs/design/29-nelix-release-worktree-scope.org=
+- =docs/schema/nelix-lock-v2.schema.json=
+- =docs/schema/nelix-manifest-dsl-v1.schema.json=
+- installed verifier payload scripts under =packaging/=
+
+Completion criteria:
+
+- Documentation and Makefile targets describe the same workflow.
+- Packaged verifier scripts include the latest operational gates.
+- Schema JSON files are packaged in readable form.
+- Release scope audit passes.
+
+* Standard verification set
+
+Lightweight source check:
+
+#+begin_src sh
+make check
+#+end_src
+
+Source-tree real-user operational check:
+
+#+begin_src sh
+make verify-source-operational-gate
+#+end_src
+
+Debian package local check:
+
+#+begin_src sh
+make deb-local-gate
+#+end_src
+
+Installed package operational check:
+
+#+begin_src sh
+make verify-installed-operational-gate
+#+end_src
+
+Cleanup after verification:
+
+#+begin_src sh
+make clean
+git status --short --branch
+#+end_src
+
+* Completion definitions
+
+** Daily-use complete
+
+Nelix is ready for the user's daily environment when:
+
+- =make verify-source-operational-gate= passes.
+- =make verify-installed-operational-gate= passes after reinstalling the built
+  package.
+- The init migration gate passes.
+- The real manifest remains at =install=0=, =remove=0=, =missing=0=, and
+  =extra=0=.
+- =lock-check= and =apply --locked --dry-run= pass.
+- Several days of normal use show no lock drift or profile drift.
+
+** Release-candidate complete
+
+Nelix is a release candidate when:
+
+- Daily-use completion is satisfied.
+- =make deb-local-gate= and the relevant release gates pass.
+- Installed CLI coverage includes transaction and recovery commands.
+- Native/AOT fallback and compatibility behavior are documented.
+- Release scope audit passes.

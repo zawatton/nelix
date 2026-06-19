@@ -622,6 +622,21 @@ Do not auto-select replay-source runtime-image mode for speed.
   promoting this ID path from the portable engine into the real native cache
   contract and covering the 200-target real profile without re-entering the
   portable hash/list engine.
+- 2026-06-20: the ID runtime contract is now enforced on both runtime prefix
+  builders.  The wrapper shell lane and the Elisp
+  =nelix-fast-aot-input-from-target-cache= lane omit legacy string =target=
+  and =pin= records whenever the cache has =target-id= records, while the
+  on-disk cache still keeps those records as fallback compatibility data.
+  The portable AOT report dispatcher now chooses =target-id= / =pin-id=
+  reports before the string report, and ERT stubs the string report functions
+  to fail when mixed string+ID payloads are evaluated.  This makes accidental
+  re-entry into the portable string target/pin report path observable.
+  The real 203-target extracted package gate also verifies that the generated
+  cache has at least 180 =target-id= records and that list/audit/plan/apply
+  dry-run/upgrade-plan/lock-check remain on the =:nelisp-aot-cache= lane with
+  =missing=0=, =extra=0=, =install=0=, and =remove=0=.  The remaining native
+  work is narrower: dynamic in-native report construction for the real profile,
+  not the ID cache contract or fallback split.
 - A probe with =while= + =setq= compiles to =.neln= but requires
   =nelisp_env_set_value= and, more importantly, the generated loop body
   does not read the updated local on the next iteration in the current

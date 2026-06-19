@@ -458,9 +458,7 @@ fallback matches in NORMALIZED-MAP."
 
 (defun nelix-aot--audit-report (input)
   "Return audit lists, preferring numeric ID records."
-  (or (and (plist-get input :targets)
-           (nelix-aot--audit-string-report input))
-      (nelix-aot--audit-id-report input)
+  (or (nelix-aot--audit-id-report input)
       (nelix-aot--audit-string-report input)))
 
 (defun nelix-aot--upgrade-id-report (input)
@@ -536,9 +534,7 @@ fallback matches in NORMALIZED-MAP."
 
 (defun nelix-aot--upgrade-report (input)
   "Return upgrade-plan lists, preferring numeric ID records."
-  (or (and (plist-get input :targets)
-           (nelix-aot--upgrade-string-report input))
-      (nelix-aot--upgrade-id-report input)
+  (or (nelix-aot--upgrade-id-report input)
       (nelix-aot--upgrade-string-report input)))
 
 (defun nelix-aot--json-escape-string (string)

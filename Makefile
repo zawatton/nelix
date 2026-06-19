@@ -652,12 +652,17 @@ verify-installed-user-manifest-runtime:
 	NELISP_ROOT="$${NELISP_ROOT:-$(NELISP_REPO)}" \
 	packaging/verify-nelix-user-manifest-dsl.sh
 
-verify-installed-operational-gate: verify-installed-cli-gate verify-installed-user-manifest-runtime
+verify-installed-operational-gate:
+	$(MAKE) verify-installed-debian
+	$(MAKE) verify-installed-cli-gate
+	$(MAKE) verify-installed-user-manifest-runtime
 
 verify-installed-debian:
 	packaging/verify-installed-nelix-debian.sh
 
 verify-installed-cli-gate:
+	NELISP="$${NELISP:-$(NELISP)}" \
+	NELISP_ROOT="$${NELISP_ROOT:-$(NELISP_REPO)}" \
 	packaging/verify-installed-nelix-cli-gate.sh
 
 verify-user-environment:
