@@ -141,7 +141,7 @@ SMOKE_BUILD_PAIRS = \
   examples/stdenv-hello.el:gnu-hello \
   examples/python-black.el:black
 
-.PHONY: all check verify-local release-scope-audit release-scope-status release-scope-stage release-scope-stage-a release-scope-stage-b release-scope-stage-c release-scope-stage-d publication-local-gate publication-url-check publication-preflight publication-public-smoke deb-orig deb-source deb-source-lint deb-source-gate deb-build verify-deb-contents deb-lint deb-local-gate install-built-deb deb-release-gate deb-full-gate fix-debian-ownership apt-repo verify-apt-repo apt-repo-gate apt-sign-repo verify-signed-apt-repo apt-signed-repo-gate apt-publish-static verify-apt-public-tree apt-publication-preflight apt-http-smoke apt-http-gate apt-public-url-smoke fedora-source fedora-source-verify fedora-source-gate fedora-rpm-build fedora-rpm-lint fedora-repo fedora-publish-static verify-fedora-public-tree fedora-publication-preflight fedora-dnf-smoke fedora-local-gate fedora-container-gate fedora-public-url-smoke verify-user-manifest-dsl verify-installed-debian verify-installed-cli-gate verify-user-environment verify-user-init-migration autopkgtest-debian check-whitespace nix-check test compile compile-tests check-declare install install-elisp install-doc install-bin uninstall clean deb-clean distclean lint help smoke-render smoke-pairs-check smoke-eval-pairs-check smoke-build-pairs-check smoke-eval smoke-build smoke-nelisp smoke-nelix-nelisp smoke-nelix-cli-nelisp smoke-nelix-lock-plan-apply smoke-nelix-lock-plan-apply-nelisp smoke-nelix-native-cli smoke-nelix-aot-cache-cli smoke-nelix-aot-engine-nelisp smoke-nelix-aot-cache-fast-lane smoke-nelix-aot-artifact-nelisp smoke-nelix-aot-native-cli-proof smoke-nelix-aot-native-artifact-host smoke-nelix-cli-image-build smoke-nelix-cli-image smoke-nelisp-capabilities smoke-nelisp-suite-readiness smoke-nelisp-suite-loadability smoke-nelisp-suite smoke-nelisp-suite-image-build smoke-nelisp-suite-image smoke-nelisp-local smoke-clean
+.PHONY: all check verify-local release-scope-audit release-scope-status release-scope-stage release-scope-stage-a release-scope-stage-b release-scope-stage-c release-scope-stage-d publication-local-gate publication-url-check publication-preflight publication-public-smoke deb-orig deb-source deb-source-lint deb-source-gate deb-build verify-deb-contents deb-lint deb-local-gate install-built-deb deb-release-gate deb-full-gate fix-debian-ownership apt-repo verify-apt-repo apt-repo-gate apt-sign-repo verify-signed-apt-repo apt-signed-repo-gate apt-publish-static verify-apt-public-tree apt-publication-preflight apt-http-smoke apt-http-gate apt-public-url-smoke fedora-source fedora-source-verify fedora-source-gate fedora-rpm-build fedora-rpm-lint fedora-repo fedora-publish-static verify-fedora-public-tree fedora-publication-preflight fedora-dnf-smoke fedora-local-gate fedora-container-gate fedora-public-url-smoke verify-user-manifest-dsl verify-installed-user-manifest-runtime verify-installed-debian verify-installed-cli-gate verify-user-environment verify-user-init-migration autopkgtest-debian check-whitespace nix-check test compile compile-tests check-declare install install-elisp install-doc install-bin uninstall clean deb-clean distclean lint help smoke-render smoke-pairs-check smoke-eval-pairs-check smoke-build-pairs-check smoke-eval smoke-build smoke-nelisp smoke-nelix-nelisp smoke-nelix-cli-nelisp smoke-nelix-lock-plan-apply smoke-nelix-lock-plan-apply-nelisp smoke-nelix-native-cli smoke-nelix-aot-cache-cli smoke-nelix-aot-engine-nelisp smoke-nelix-aot-cache-fast-lane smoke-nelix-aot-artifact-nelisp smoke-nelix-aot-native-cli-proof smoke-nelix-aot-native-artifact-host smoke-nelix-cli-image-build smoke-nelix-cli-image smoke-nelisp-capabilities smoke-nelisp-suite-readiness smoke-nelisp-suite-loadability smoke-nelisp-suite smoke-nelisp-suite-image-build smoke-nelisp-suite-image smoke-nelisp-local smoke-clean
 
 all: check
 
@@ -231,6 +231,8 @@ verify-deb-contents:
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'NELIX_USER_MANIFEST_MAX_REMOVE'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'NELIX_USER_MANIFEST_MAX_MISSING'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'NELIX_USER_MANIFEST_MAX_EXTRA'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'NELIX_BIN'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'NELIX_LISPDIR'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'nelix user manifest timing:'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'nelix user manifest target-count:'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'check_profile_diff_candidates "$$nelisp_tmp/audit.json" missing'
@@ -366,6 +368,7 @@ verify-deb-contents:
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq '"rollback-plan":'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/README.org.gz | gzip -dc | grep -q 'make verify-user-environment'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/README.org.gz | gzip -dc | grep -q 'make verify-user-manifest-dsl'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/README.org.gz | gzip -dc | grep -q 'make verify-installed-user-manifest-runtime'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/README.org.gz | gzip -dc | grep -q 'make verify-user-init-migration'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/README.org.gz | gzip -dc | grep -q ':nelisp-aot-cache'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/README.org.gz | gzip -dc | grep -q 'make publication-url-check'
@@ -389,6 +392,7 @@ deb-release-gate: deb-local-gate install-built-deb verify-installed-debian verif
 deb-full-gate:
 	@test "$$(id -u)" != 0 || { echo "Do not run sudo make deb-full-gate; run: make deb-full-gate" >&2; exit 1; }
 	$(MAKE) deb-release-gate
+	$(MAKE) verify-installed-user-manifest-runtime
 	$(MAKE) autopkgtest-debian
 
 fix-debian-ownership:
@@ -477,6 +481,18 @@ fedora-public-url-smoke:
 verify-user-manifest-dsl:
 	packaging/verify-nelix-user-manifest-dsl.sh
 
+verify-installed-user-manifest-runtime:
+	packaging/verify-installed-nelix-debian.sh "$(DEB_VERSION)"
+	NELIX_BIN="$${NELIX_BIN:-/usr/bin/nelix}" \
+	NELIX_LISPDIR="$${NELIX_LISPDIR:-/usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0}" \
+	NELIX_USER_MANIFEST_LABEL="$${NELIX_USER_MANIFEST_LABEL:-installed-runtime}" \
+	NELIX_USER_MANIFEST_NELISP="$${NELIX_USER_MANIFEST_NELISP:-required}" \
+	NELIX_USER_MANIFEST_LOCKED="$${NELIX_USER_MANIFEST_LOCKED:-required}" \
+	NELIX_USER_MANIFEST_NELISP_MAX_SECONDS="$${NELIX_USER_MANIFEST_NELISP_MAX_SECONDS:-20}" \
+	NELISP="$${NELISP:-$(NELISP)}" \
+	NELISP_ROOT="$${NELISP_ROOT:-$(NELISP_REPO)}" \
+	packaging/verify-nelix-user-manifest-dsl.sh
+
 verify-installed-debian:
 	packaging/verify-installed-nelix-debian.sh
 
@@ -548,6 +564,7 @@ help:
 	@echo "make fedora-container-gate — run fedora-local-gate inside $(FEDORA_IMAGE)"
 	@echo "make fedora-public-url-smoke — install nelix/emacs-nelix from FEDORA_PUBLIC_URL=$(FEDORA_PUBLIC_URL)"
 	@echo "make verify-user-manifest-dsl — verify ~/.emacs.d/nelix-package.el DSL v1 from the source tree"
+	@echo "make verify-installed-user-manifest-runtime — verify ~/.emacs.d/nelix-package.el with installed /usr/bin/nelix + required NeLisp"
 	@echo "make verify-installed-debian — verify the installed elpa-nelix Debian package"
 	@echo "make verify-installed-cli-gate — verify installed /usr/bin/nelix lock/plan/apply"
 	@echo "make verify-user-environment — verify installed Debian package + personal Nelix config"

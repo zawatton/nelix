@@ -539,7 +539,10 @@ to dry-run.  It stages files only when =--stage= is passed explicitly.
 * Remaining before public release
 
 - Install =../elpa-nelix_0.1.0-4_all.deb= and run =make deb-full-gate= on the
-  target Debian host.
+  target Debian host.  The full gate now includes the installed-command real
+  manifest runtime check, so =~/.emacs.d/nelix-package.el= is verified through
+  =/usr/bin/nelix --runtime nelisp= for list/audit/plan/apply dry-runs without
+  loading init/early-init.
 - Expand native store from functional skeleton to practical registry coverage:
   expand beyond the initial packaged system-command shims into real
   fetch/build recipes, platform-specific cases, and Windows/macOS activation

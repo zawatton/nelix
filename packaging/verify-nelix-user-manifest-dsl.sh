@@ -3,6 +3,7 @@ set -eu
 
 repo_dir="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 manifest="${NELIX_USER_MANIFEST:-$HOME/.emacs.d/nelix-package.el}"
+verification_label="${NELIX_USER_MANIFEST_LABEL:-source-tree}"
 nelisp_mode="${NELIX_USER_MANIFEST_NELISP:-auto}"
 locked_mode="${NELIX_USER_MANIFEST_LOCKED:-auto}"
 nelisp_max_seconds="${NELIX_USER_MANIFEST_NELISP_MAX_SECONDS:-5}"
@@ -17,6 +18,26 @@ if [ ! -f "$manifest" ]; then
 fi
 
 export NELIX_USER_MANIFEST="$manifest"
+
+if [ -n "${NELIX_BIN:-}" ]; then
+  nelix_bin="$NELIX_BIN"
+elif [ -x "$repo_dir/bin/nelix" ]; then
+  nelix_bin="$repo_dir/bin/nelix"
+elif [ -x /usr/bin/nelix ]; then
+  nelix_bin=/usr/bin/nelix
+else
+  nelix_bin=nelix
+fi
+
+if [ -n "${NELIX_LISPDIR:-}" ]; then
+  nelix_lispdir="$NELIX_LISPDIR"
+elif [ -f "$repo_dir/nelix.el" ]; then
+  nelix_lispdir="$repo_dir"
+elif [ -d /usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0 ]; then
+  nelix_lispdir=/usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0
+else
+  nelix_lispdir="$repo_dir"
+fi
 
 case "$nelisp_max_seconds" in
   ''|*[!0-9]*)
@@ -82,19 +103,19 @@ emacs -Q --batch \
               (error "Nelix user manifest must use DSL v1, not top-level nelix-manifest"))
             (princ "nelix user manifest DSL v1 ok\n"))'
 
-NELIX_LISPDIR="$repo_dir" "$repo_dir/bin/nelix" --json validate "$manifest" >/dev/null
+NELIX_LISPDIR="$nelix_lispdir" "$nelix_bin" --json validate "$manifest" >/dev/null
 
 run_nelisp_validate() {
-  NELIX_LISPDIR="$repo_dir" "$repo_dir/bin/nelix" \
+  NELIX_LISPDIR="$nelix_lispdir" "$nelix_bin" \
     --runtime nelisp --json validate "$manifest" >/dev/null
 }
 
 run_nelix_with_timeout() {
   if command -v timeout >/dev/null 2>&1; then
     timeout "${NELIX_USER_MANIFEST_NELISP_TIMEOUT:-30s}" \
-      env NELIX_LISPDIR="$repo_dir" "$repo_dir/bin/nelix" "$@"
+      env NELIX_LISPDIR="$nelix_lispdir" "$nelix_bin" "$@"
   else
-    NELIX_LISPDIR="$repo_dir" "$repo_dir/bin/nelix" "$@"
+    NELIX_LISPDIR="$nelix_lispdir" "$nelix_bin" "$@"
   fi
 }
 
@@ -488,4 +509,4 @@ case "$locked_mode" in
     ;;
 esac
 
-printf 'nelix user manifest source-tree ok: %s\n' "$manifest"
+printf 'nelix user manifest %s ok: %s\n' "$verification_label" "$manifest"

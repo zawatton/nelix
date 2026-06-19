@@ -196,6 +196,7 @@ verifier after the Debian package verifier passes:
 
 #+begin_src shell
 make verify-user-manifest-dsl
+make verify-installed-user-manifest-runtime
 make verify-user-environment
 make verify-user-init-migration
 #+end_src
@@ -229,6 +230,22 @@ with =NELIX_USER_MANIFEST_MAX_MISSING=N=,
 previous lock file so the real profile is not mutated.  When combined with
 =NELIX_USER_MANIFEST_NELISP=required=, the locked dry-run must use the
 =:nelisp-aot-cache= fast lane.
+
+=verify-installed-user-manifest-runtime= runs the same personal manifest
+runtime gate through the installed Debian package by setting =NELIX_BIN= to
+=/usr/bin/nelix= and =NELIX_LISPDIR= to the installed ELPA source directory.
+It forces =NELIX_USER_MANIFEST_NELISP=required= and
+=NELIX_USER_MANIFEST_LOCKED=required= by default and raises the per-command
+NeLisp runtime threshold to 20 seconds unless the caller sets
+=NELIX_USER_MANIFEST_NELISP_MAX_SECONDS=.  This lets =deb-full-gate= prove the
+real =~/.emacs.d/nelix-package.el= against the installed command without
+loading =~/.emacs.d/init.el= or =~/.emacs.d/early-init.el=.  The target also
+passes the Makefile-detected =NELISP= and =NELISP_ROOT= values to the installed
+wrapper, so it works when the =nelisp= command is available only from the
+adjacent checkout rather than from =PATH=.  It first checks that the installed
+=elpa-nelix= package is at least the current =DEB_VERSION=, so running it
+before reinstalling the freshly built =.deb= fails early with a version
+diagnostic.
 
 =verify-user-environment= deliberately does not load =~/.emacs.d/init.el= or
 =~/.emacs.d/early-init.el=, so it stays safe inside =deb-release-gate= and
@@ -327,6 +344,12 @@ For a root-capable testbed, the full gate including autopkgtest is:
 #+begin_src shell
 make deb-full-gate
 #+end_src
+
+=deb-full-gate= also runs =verify-installed-user-manifest-runtime= between the
+installed Debian/user-environment checks and =autopkgtest-debian=.  That adds
+the real manifest =nelix --runtime nelisp= checks for =list=, =audit=,
+=upgrade-plan=, =plan --dry-run=, =apply --dry-run=, and locked
+=apply --dry-run= while still avoiding init/early-init loading.
 
 * Debian local APT repository
 
