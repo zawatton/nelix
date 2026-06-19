@@ -3283,6 +3283,63 @@ fields are returned as nil."
                    row start '(" " "\t" "\n" ")"))))
     (and (equal value "t") t)))
 
+(defun nelix-lock--row-has-key-p (row key)
+  "Return non-nil when generated lock ROW contains KEY."
+  (and (nelix-lock--substring-index (format ":%s " key) row) t))
+
+(defun nelix-lock--row-string-list (row key)
+  "Return generated lock ROW string list value for KEY.
+
+Only the compact dependency-list shape emitted by Nelix locks is
+supported.  Nil, absent, and empty lists all return nil."
+  (let* ((prefix (format ":%s " key))
+         (start (nelix-lock--substring-index prefix row))
+         end chunk strings q1 q2)
+    (when start
+      (setq start (+ start (length prefix)))
+      (unless (equal "nil" (substring row start (min (+ start 3)
+                                                     (length row))))
+        (setq end (or (nelix-lock--substring-index " :" row start)
+                      (length row)))
+        (setq chunk (substring row start end))
+        (while (setq q1 (nelix-lock--substring-index "\"" chunk))
+          (setq q2 (nelix-lock--substring-index "\"" chunk (1+ q1)))
+          (if q2
+              (progn
+                (push (substring chunk (1+ q1) q2) strings)
+                (setq chunk (substring chunk (1+ q2))))
+            (setq chunk "")))))
+    (nreverse strings)))
+
+(defun nelix-lock--text-package-native-fields (row)
+  "Return native replay key placeholders read from generated lock ROW.
+
+The standalone text reader preserves key presence so schema validation
+does not reject valid native locks.  Full recipe source/install replay
+still belongs to the normal Elisp reader."
+  (let (fields)
+    (when (nelix-lock--row-has-key-p row "recipe-version")
+      (setq fields
+            (append fields
+                    (list :recipe-version
+                          (nelix-lock--row-string row "recipe-version")))))
+    (when (nelix-lock--row-has-key-p row "recipe-source")
+      (setq fields (append fields (list :recipe-source :nelisp-lock-present))))
+    (when (nelix-lock--row-has-key-p row "recipe-install")
+      (setq fields (append fields (list :recipe-install :nelisp-lock-present))))
+    (when (nelix-lock--row-has-key-p row "recipe-dependencies")
+      (setq fields
+            (append fields
+                    (list :recipe-dependencies
+                          (nelix-lock--row-string-list
+                           row "recipe-dependencies")))))
+    (when (nelix-lock--row-has-key-p row "recipe-class")
+      (setq fields
+            (append fields
+                    (list :recipe-class
+                          (nelix-lock--row-symbol row "recipe-class")))))
+    fields))
+
 (defun nelix-lock--text-manifest-files (text)
   "Return generated lock manifest file rows from TEXT."
   (let ((pos 0)
@@ -3315,17 +3372,19 @@ fields are returned as nil."
 
 (defun nelix-lock--text-package-row (row)
   "Return one generated lock package ROW as a plist."
-  (list :name (nelix-lock--row-string row "name")
-        :target (nelix-lock--row-string row "target")
-        :resolved-target (nelix-lock--row-string row "resolved-target")
-        :installed-name (nelix-lock--row-string row "installed-name")
-        :pinned (nelix-lock--row-bool row "pinned")
-        :backend (nelix-lock--row-symbol row "backend")
-        :system (nelix-lock--row-symbol row "system")
-        :source (nelix-lock--row-symbol row "source")
-        :nix-channel (nelix-lock--row-string row "nix-channel")
-        :attr-path (nelix-lock--row-string row "attr-path")
-        :original-url (nelix-lock--row-string row "original-url")))
+  (append
+   (list :name (nelix-lock--row-string row "name")
+         :target (nelix-lock--row-string row "target")
+         :resolved-target (nelix-lock--row-string row "resolved-target")
+         :installed-name (nelix-lock--row-string row "installed-name")
+         :pinned (nelix-lock--row-bool row "pinned")
+         :backend (nelix-lock--row-symbol row "backend")
+         :system (nelix-lock--row-symbol row "system")
+         :source (nelix-lock--row-symbol row "source")
+         :nix-channel (nelix-lock--row-string row "nix-channel")
+         :attr-path (nelix-lock--row-string row "attr-path")
+         :original-url (nelix-lock--row-string row "original-url"))
+   (nelix-lock--text-package-native-fields row)))
 
 (defun nelix-lock--text-packages (text)
   "Return generated lock package rows from TEXT."

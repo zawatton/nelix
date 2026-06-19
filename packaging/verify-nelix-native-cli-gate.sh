@@ -263,6 +263,34 @@ run_json_packaged() {
   fi
 }
 
+nelisp_runtime_available() {
+  if [ -n "${NELISP:-}" ] && [ -x "$NELISP" ]; then
+    return 0
+  fi
+  if command -v nelisp >/dev/null 2>&1; then
+    return 0
+  fi
+  if [ -n "$repo_root" ] && [ -x "$repo_root/../nelisp/target/nelisp" ]; then
+    return 0
+  fi
+  if [ -n "$repo_root" ] && [ -x "$repo_root/../nelisp/target/debug/nelisp" ]; then
+    return 0
+  fi
+  return 1
+}
+
+run_json_nelisp() {
+  local label="$1"
+  shift
+  local out="$tmp/$label.json"
+  local err="$tmp/$label.err"
+  if ! env "${env_args[@]}" "$nelix_bin" --runtime nelisp --json "$@" >"$out" 2>"$err"; then
+    sed 's/^/nelix_native_cli_stdout /' "$out" >&2
+    sed 's/^/nelix_native_cli_stderr /' "$err" >&2
+    exit 1
+  fi
+}
+
 run_json_expect_fail() {
   local label="$1"
   shift
@@ -348,6 +376,11 @@ grep -q "$sha256_dep" "$native_lock_manifest.nelix-lock" || {
   echo "nelix native CLI gate: native lock omitted dependency source hash" >&2
   exit 1
 }
+if nelisp_runtime_available; then
+  run_json_nelisp native_lock_nelisp_validate lock validate "$native_lock_manifest"
+  expect_json native_lock_nelisp_validate '"ok":true'
+  expect_json native_lock_nelisp_validate '"shape-ok":true'
+fi
 mvp_checkpoint lockfile-recording
 
 bad_native_lock_manifest="$tmp/bad-native-lock-manifest.el"

@@ -1628,6 +1628,32 @@
             (should-not (plist-get dep :recipe-dependencies))))
       (delete-directory dir t))))
 
+(ert-deftest nelix-manifest-test-lock-nelisp-text-reader-preserves-native-keys ()
+  "Standalone text lock reader preserves native row keys needed by schema v2."
+  (let ((dir (make-temp-file "nelix-manifest-lock-nelisp-native-" t)))
+    (unwind-protect
+        (let ((lock-file (expand-file-name "manifest.el.nelix-lock" dir)))
+          (copy-file (nelix-manifest-test--fixture
+                      "nelix-lock-v2-native-deps.el")
+                     lock-file t)
+          (let* ((lock (nelix-lock-read--nelisp-text lock-file))
+                 (schema (nelix-lock-schema-check lock))
+                 (packages (plist-get lock :packages))
+                 (app (car packages))
+                 (dep (cadr packages)))
+            (should (plist-get schema :ok))
+            (should (eq 'nelix-native (plist-get lock :backend)))
+            (should (equal "1.0.0" (plist-get app :recipe-version)))
+            (should (plist-get app :recipe-source))
+            (should (plist-get app :recipe-install))
+            (should (equal '("fixture-dep")
+                           (plist-get app :recipe-dependencies)))
+            (should (eq 'system-tool (plist-get app :recipe-class)))
+            (should (plist-get dep :recipe-source))
+            (should (plist-get dep :recipe-install))
+            (should (plist-get dep :recipe-class))))
+      (delete-directory dir t))))
+
 (ert-deftest nelix-manifest-test-lock-validate-rejects-v2-native-missing-recipe-install ()
   "Current schema v2 native package rows must retain replay recipe keys."
   (let ((dir (make-temp-file "nelix-manifest-lock-v2-bad-native-row-" t)))
