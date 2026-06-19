@@ -143,6 +143,7 @@ When nil, records are written under the user's state directory at
                                   :manifest-key (cdr pair)))
                           nelix-environment-dsl-form-map)
         :backends (mapcar #'symbol-name nelix-environment-dsl-backends)
+        :backend-policy "backend-symbols-or-os-rows"
         :deferred-forms nelix-environment-dsl-deferred-forms
         :forbidden-forms (mapcar #'symbol-name
                                  nelix-environment-dsl-forbidden-forms)
@@ -292,7 +293,50 @@ NAME may be nil, \"all\", \"manifest-dsl-v1\", \"lock-v2\", or
 
 (defun nelix-environment--backend-policy-value (args)
   "Return a manifest backend-policy value expression for ARGS."
+  (nelix-environment--validate-backend-policy args)
   (list 'quote args))
+
+(defun nelix-environment--validate-backend-symbol (backend)
+  "Validate BACKEND against the stable environment DSL v1 backend set."
+  (unless (memq backend nelix-environment-dsl-backends)
+    (signal 'anvil-pkg-error
+            (list (format "nelix-environment backend-policy: unsupported backend %S"
+                          backend)))))
+
+(defun nelix-environment--validate-backend-policy-row (row)
+  "Validate one OS-specific backend policy ROW."
+  (unless (and (consp row) (symbolp (car row)))
+    (signal 'anvil-pkg-error
+            (list (format "nelix-environment backend-policy: malformed row %S"
+                          row))))
+  (unless (cdr row)
+    (signal 'anvil-pkg-error
+            (list (format "nelix-environment backend-policy: row %S has no backends"
+                          row))))
+  (dolist (backend (cdr row))
+    (unless (symbolp backend)
+      (signal 'anvil-pkg-error
+              (list (format "nelix-environment backend-policy: malformed backend %S"
+                            backend))))
+    (nelix-environment--validate-backend-symbol backend)))
+
+(defun nelix-environment--validate-backend-policy (args)
+  "Validate backend-policy ARGS for the stable environment DSL v1 contract."
+  (unless args
+    (signal 'anvil-pkg-error
+            (list "nelix-environment backend-policy: at least one backend or OS row is required")))
+  (cond
+   ((cl-every #'symbolp args)
+    (dolist (backend args)
+      (nelix-environment--validate-backend-symbol backend)))
+   ((cl-every (lambda (row)
+                (and (consp row) (symbolp (car row))))
+              args)
+    (dolist (row args)
+      (nelix-environment--validate-backend-policy-row row)))
+   (t
+    (signal 'anvil-pkg-error
+            (list "nelix-environment backend-policy: use either backend symbols or OS rows")))))
 
 (defun nelix-environment--form-to-plist-pair (form)
   "Translate one `nelix-environment' FORM into a plist pair."

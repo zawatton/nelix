@@ -440,6 +440,8 @@
     (should (member "nelix-native"
                     (nelix-cli-test--json-array-list
                      (alist-get 'backends manifest))))
+    (should (equal "backend-symbols-or-os-rows"
+                   (alist-get 'backend-policy manifest)))
     (should (member "remove-policy"
                     (nelix-cli-test--json-array-list
                      (alist-get 'deferred-forms manifest))))

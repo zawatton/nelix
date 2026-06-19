@@ -276,7 +276,10 @@ Scope decisions for the user-requested Nix/Guix-style surface:
   tools, and =(debian-tools ...)= for Debian packaging helper checks.
 - backend selection is controlled by =(backend-policy ...)= and the registry
   recipe's per-system availability.  =:nix= / =:native= user wording maps to
-  =nix= / =nelix-native= in the actual DSL.
+  =nix= / =nelix-native= in the actual DSL.  DSL v1 accepts either a flat
+  backend list such as =(backend-policy nix nelix-native)= or OS rows such as
+  =(backend-policy (gnu/linux nix nelix-native dnf))=, and rejects unknown
+  backend symbols at macro expansion time.
 - pinning is =(pins ...)= for environment-level holds.  Version pinning belongs
   to registry recipes and lockfile rows; Nix attr/version pin syntax is deferred
   until it can be represented in lock schema without ambiguity.

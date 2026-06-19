@@ -208,6 +208,35 @@
     (should (string-match-p "private data form"
                             (cadr err)))))
 
+(ert-deftest nelix-manifest-test-environment-dsl-v1-validates-backend-policy ()
+  "DSL v1 backend-policy accepts only stable backend symbols and OS rows."
+  (let ((flat (nelix-environment
+               (name "flat-backend-policy")
+               (backend-policy nix nelix-native)))
+        (os-rows (nelix-environment
+                  (name "os-backend-policy")
+                  (backend-policy (gnu/linux nix nelix-native dnf)
+                                  (darwin homebrew nix)
+                                  (windows-nt winget scoop)))))
+    (should (equal '(nix nelix-native)
+                   (plist-get flat :backend-policy)))
+    (should (equal '(nix nelix-native dnf)
+                   (nelix-manifest-backend-policy os-rows 'gnu/linux))))
+  (let ((err (should-error
+              (eval '(nelix-environment
+                      (name "bad-backend")
+                      (backend-policy imaginary-backend)))
+              :type 'anvil-pkg-error)))
+    (should (string-match-p "unsupported backend imaginary-backend"
+                            (cadr err))))
+  (let ((err (should-error
+              (eval '(nelix-environment
+                      (name "mixed-backend-policy")
+                      (backend-policy nix (gnu/linux nelix-native))))
+              :type 'anvil-pkg-error)))
+    (should (string-match-p "either backend symbols or OS rows"
+                            (cadr err)))))
+
 (ert-deftest nelix-manifest-test-validate-is-process-free ()
   "nelix-validate loads manifests and reports counts without profile IO."
   (let ((dir (make-temp-file "nelix-manifest-validate-" t)))
