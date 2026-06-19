@@ -67,7 +67,10 @@ Safety invariants:
 - *rollback verification*: rollback success is not assumed from the rollback
   command exit alone.  =nelix apply= queries the active generation afterwards
   and reports =:verified t= only when it equals the captured
-  =:before-generation=.
+  =:before-generation=.  The installed CLI gate forces a Nix install failure,
+  requires a profile rollback command, and checks the persisted transaction
+  record for =:status error=, =:record-status error=, =:rollback=, and the
+  successful pre-failure executed step.
 - *dry-run equivalence*: =apply --dry-run= and real =apply= must be based on the
   same =nelix-plan= path.  Dry-run may omit generation capture and record
   writes, but it must expose the same install/remove/protected command intent

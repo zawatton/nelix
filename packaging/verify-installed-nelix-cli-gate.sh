@@ -95,6 +95,30 @@ run_json() {
   fi
 }
 
+run_failing_json() {
+  label="$1"
+  fail_target="$2"
+  shift 2
+  out="$tmp/$label.json"
+  err="$tmp/$label.err"
+  set +e
+  env \
+    "PATH=$tmp/bin:$PATH" \
+    "HOME=$tmp/home" \
+    "XDG_STATE_HOME=$tmp/state" \
+    "NELIX_FAKE_NIX_LOG=$fake_log" \
+    "NELIX_FAKE_NIX_FAIL_TARGET=$fail_target" \
+    "$nelix_bin" --json "$@" >"$out" 2>"$err"
+  status=$?
+  set -e
+  if [ "$status" -eq 0 ]; then
+    echo "nelix installed CLI gate expected failure but command succeeded: label=$label" >&2
+    sed 's/^/nelix_installed_cli_stdout /' "$out" >&2
+    sed 's/^/nelix_installed_cli_stderr /' "$err" >&2
+    exit 1
+  fi
+}
+
 expect_json() {
   label="$1"
   pattern="$2"
@@ -415,6 +439,26 @@ expect_json locked_dry_run '"lock-check":'
 expect_json locked_dry_run '"locked-installed":'
 reject_log 'profile install'
 reject_log 'profile remove'
+
+: >"$fake_log"
+run_failing_json failed_apply fd apply "$manifest" --locked --allow-remove-count 1
+expect_log 'profile install --profile .+nixpkgs#ripgrep'
+expect_log 'profile install --profile .+nixpkgs#fd'
+expect_log 'profile rollback --profile '
+reject_log 'profile remove'
+failed_record="$(latest_transaction_record)"
+run_json transaction_show_error transaction show "$failed_record"
+expect_json transaction_show_error '"operation":"transaction-show"'
+expect_json transaction_show_error '"record":'
+expect_json transaction_show_error '"schema":"nelix-apply-transaction"'
+expect_json transaction_show_error '"status":"error"'
+expect_json transaction_show_error '"record-status":"error"'
+expect_json transaction_show_error '"rollback-plan":'
+expect_json transaction_show_error '"rollback":'
+expect_json transaction_show_error '"verified":true'
+expect_json_any transaction_show_error \
+  '"action":"install","name":"ripgrep"' \
+  '"name":"ripgrep","action":"install"'
 
 : >"$fake_log"
 run_json locked_apply apply "$manifest" --locked --allow-remove-count 1
