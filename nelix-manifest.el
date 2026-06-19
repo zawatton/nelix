@@ -83,6 +83,9 @@ When nil, records are written under the user's state directory at
                  directory)
   :group 'anvil-pkg)
 
+(defvar nelix-manifest--transaction-record-counter 0
+  "Process-local suffix counter for generated transaction record files.")
+
 (defun nelix-schema--manifest-dsl-v1 ()
   "Return the public manifest DSL v1 schema summary."
   (list :name "manifest-dsl-v1"
@@ -986,6 +989,39 @@ manifest targets."
   "Return a compact timestamp for transaction records."
   (format-time-string "%Y-%m-%dT%H:%M:%S%z"))
 
+(defun nelix-manifest--transaction-record-file (root)
+  "Return a new transaction record path below ROOT.
+
+Do not use `make-temp-file' here.  Standalone NeLisp's compatibility
+implementation treats an absolute prefix as relative to TMPDIR, which would
+move transaction records outside the configured log root."
+  (let* ((pid (cond
+               ((fboundp 'emacs-pid) (emacs-pid))
+               ((fboundp 'nelisp-syscall-getpid)
+                (nelisp-syscall-getpid))
+               (t 0)))
+         (root-dir (file-name-as-directory (expand-file-name root)))
+         (stamp (format-time-string "%Y%m%dT%H%M%S%z"))
+         file)
+    (while (or (not file)
+               (anvil-pkg-compat-file-exists-p file))
+      (setq nelix-manifest--transaction-record-counter
+            (1+ nelix-manifest--transaction-record-counter))
+      (setq file
+            (expand-file-name
+             (format "apply-%s-%s-%s.el"
+                     stamp pid nelix-manifest--transaction-record-counter)
+             root-dir)))
+    file))
+
+(defun nelix-manifest--transaction-record-id (file)
+  "Return the generated transaction record id for FILE."
+  (let ((name (file-name-nondirectory file)))
+    (if (and (>= (length name) 3)
+             (equal (substring name (- (length name) 3)) ".el"))
+        (substring name 0 (- (length name) 3))
+      name)))
+
 (defun nelix-manifest--transaction-record-write (file record)
   "Write transaction RECORD to FILE."
   (anvil-pkg-compat-make-directory (file-name-directory file) t)
@@ -1041,9 +1077,8 @@ manifest targets."
       transaction
     (let* ((root (nelix-manifest--transaction-log-root))
            (_dir (anvil-pkg-compat-make-directory root t))
-           (file (make-temp-file (expand-file-name "apply-" root)
-                                 nil ".el"))
-           (id (file-name-base file))
+           (file (nelix-manifest--transaction-record-file root))
+           (id (nelix-manifest--transaction-record-id file))
            (started-at (nelix-manifest--timestamp)))
       (setq transaction (plist-put transaction :record-id id))
       (setq transaction (plist-put transaction :record-file file))

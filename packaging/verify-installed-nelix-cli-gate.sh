@@ -122,6 +122,29 @@ reject_log() {
   fi
 }
 
+expect_json_any() {
+  label="$1"
+  shift
+  for pattern in "$@"; do
+    if grep -Eq "$pattern" "$tmp/$label.json"; then
+      return 0
+    fi
+  done
+  echo "nelix installed CLI gate missing any pattern: label=$label patterns=$*" >&2
+  sed 's/^/nelix_installed_cli_stdout /' "$tmp/$label.json" >&2
+  sed 's/^/nelix_installed_cli_stderr /' "$tmp/$label.err" >&2
+  exit 1
+}
+
+latest_transaction_record() {
+  txn_dir="$tmp/state/nelix/transactions"
+  if ! ls -t "$txn_dir"/apply-*.el >/dev/null 2>&1; then
+    echo "nelix installed CLI gate missing transaction record: $txn_dir" >&2
+    exit 1
+  fi
+  ls -t "$txn_dir"/apply-*.el | head -n 1
+}
+
 /usr/bin/nelix --help | grep -Fq 'registry list [--system SYSTEM]' || {
   echo "nelix installed CLI gate: help omits registry list command" >&2
   exit 1
@@ -257,6 +280,28 @@ expect_log 'profile install --profile .+nixpkgs#ripgrep'
 expect_log 'profile install --profile .+nixpkgs#fd'
 expect_log 'profile remove bat --profile '
 expect_log 'profile history --json --profile '
+
+ok_record="$(latest_transaction_record)"
+run_json transaction_list transaction list --limit 5
+expect_json transaction_list '"operation":"transaction-list"'
+expect_json transaction_list '"rollback-available":true'
+expect_json transaction_list '"status":"ok"'
+expect_json transaction_list '"command-count":3'
+expect_json transaction_list '"executed-count":3'
+run_json transaction_show_ok transaction show "$ok_record"
+expect_json transaction_show_ok '"operation":"transaction-show"'
+expect_json transaction_show_ok '"schema":"nelix-apply-transaction"'
+expect_json transaction_show_ok '"schema-version":1'
+expect_json transaction_show_ok '"status":"ok"'
+expect_json transaction_show_ok '"rollback-plan":'
+expect_json transaction_show_ok '"available":true'
+expect_json transaction_show_ok '"executed":'
+expect_json_any transaction_show_ok \
+  '"action":"install","name":"ripgrep"' \
+  '"name":"ripgrep","action":"install"'
+expect_json_any transaction_show_ok \
+  '"action":"remove","name":"bat"' \
+  '"name":"bat","action":"remove"'
 
 NELIX_BIN=/usr/bin/nelix bash "$script_dir/verify-nelix-native-cli-gate.sh"
 NELIX_BIN=/usr/bin/nelix bash "$script_dir/verify-nelix-aot-cache-gate.sh"

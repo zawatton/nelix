@@ -255,6 +255,10 @@
                      (record (nelix-manifest-test--read-sexp-file
                               record-file)))
                 (should (file-exists-p record-file))
+                (should (string-prefix-p
+                         (file-name-as-directory
+                          (expand-file-name nelix-transaction-log-root))
+                         (expand-file-name record-file)))
                 (should (equal "nelix-apply-transaction"
                                (plist-get record :schema)))
                 (should (= 1 (plist-get record :schema-version)))

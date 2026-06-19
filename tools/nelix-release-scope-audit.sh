@@ -310,6 +310,10 @@ require_autopkgtest_gate_strength() {
     "native remove NAME [--profile PROFILE] [--system SYSTEM]"
   require_contains packaging/verify-installed-nelix-cli-gate.sh \
     "native rollback [--profile PROFILE] [--generation GENERATION]"
+  require_contains packaging/verify-installed-nelix-cli-gate.sh \
+    'run_json transaction_show_ok transaction show "$ok_record"'
+  require_contains packaging/verify-installed-nelix-cli-gate.sh \
+    '"rollback-plan":'
   require_contains packaging/verify-nelix-native-cli-gate.sh \
     "registry list --system x86_64-linux"
   require_contains packaging/verify-nelix-native-cli-gate.sh \

@@ -165,6 +165,15 @@ reject_log() {
   fi
 }
 
+latest_transaction_record() {
+  local txn_dir="$TMP_DIR/state/nelix/transactions"
+  if ! ls -t "$txn_dir"/apply-*.el >/dev/null 2>&1; then
+    echo "nelix_lock_gate_fail reason=missing-transaction-record dir=$txn_dir" >&2
+    exit 1
+  fi
+  ls -t "$txn_dir"/apply-*.el | head -n 1
+}
+
 run_nelix lock --json lock "$MANIFEST"
 LOCK_FILE="$MANIFEST.nelix-lock"
 test -f "$LOCK_FILE" || {
@@ -222,6 +231,28 @@ expect_log 'profile install --profile .+nixpkgs#fd'
 expect_log 'profile remove bat --profile '
 expect_log 'profile history --json --profile '
 
+ok_record="$(latest_transaction_record)"
+run_nelix transaction_list --json transaction list --limit 5
+expect_out transaction_list '"operation":"transaction-list"'
+expect_out transaction_list '"rollback-available":true'
+expect_out transaction_list '"status":"ok"'
+expect_out transaction_list '"command-count":3'
+expect_out transaction_list '"executed-count":3'
+run_nelix transaction_show_ok --json transaction show "$ok_record"
+expect_out transaction_show_ok '"operation":"transaction-show"'
+expect_out transaction_show_ok '"schema":"nelix-apply-transaction"'
+expect_out transaction_show_ok '"schema-version":1'
+expect_out transaction_show_ok '"status":"ok"'
+expect_out transaction_show_ok '"rollback-plan":'
+expect_out transaction_show_ok '"available":true'
+expect_out transaction_show_ok '"executed":'
+expect_out_any transaction_show_ok \
+  '"action":"install","name":"ripgrep"' \
+  '"name":"ripgrep","action":"install"'
+expect_out_any transaction_show_ok \
+  '"action":"remove","name":"bat"' \
+  '"name":"bat","action":"remove"'
+
 : >"$FAKE_LOG"
 run_nelix apply --json apply "$MANIFEST" --allow-remove-count 1
 expect_out apply '"status":"ok"'
@@ -237,5 +268,21 @@ NELIX_FAKE_NIX_FAIL_TARGET='nixpkgs#fd' run_nelix_expect_fail rollback_on_failur
 expect_out_any rollback_on_failure '"status":"error"' '^nelix: nelix-apply: command failed'
 expect_out rollback_on_failure 'rollback=ok'
 expect_log 'profile rollback --profile .+ --to-generation 7'
+
+error_record="$(latest_transaction_record)"
+run_nelix transaction_show_error --json transaction show "$error_record"
+expect_out transaction_show_error '"operation":"transaction-show"'
+expect_out transaction_show_error '"schema":"nelix-apply-transaction"'
+expect_out transaction_show_error '"status":"error"'
+expect_out transaction_show_error '"executed":'
+expect_out_any transaction_show_error \
+  '"action":"install","name":"ripgrep"' \
+  '"name":"ripgrep","action":"install"'
+expect_out transaction_show_error '"rollback":'
+expect_out transaction_show_error '"attempted":true'
+expect_out transaction_show_error '"ok":true'
+expect_out transaction_show_error '"verified":true'
+expect_out transaction_show_error '"rollback-plan":'
+expect_out transaction_show_error '"generation":7'
 
 echo "nelix_lock_gate_result label=nelix_lock_plan_apply_gate rc=0"
