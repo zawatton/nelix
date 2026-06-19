@@ -378,7 +378,19 @@ NAME may be nil, \"all\", \"manifest-dsl-v1\", \"lock-v2\", or
             (list (format "nelix-manifest :remove-policy: unsupported value %S"
                           value))))))
 
-(defun nelix-manifest--normalize-package-rows (caller rows)
+(defun nelix-manifest--package-row-options (row)
+  "Return ROW option plist without the required DSL identity keys."
+  (let ((rest row)
+        options)
+    (while rest
+      (let ((key (car rest))
+            (value (cadr rest)))
+        (unless (memq key '(:kind :name))
+          (setq options (append options (list key value)))))
+      (setq rest (cddr rest)))
+    options))
+
+(defun nelix-manifest--normalize-package-rows (caller rows &optional expected-kind)
   "Validate ROWS as DSL package metadata rows for CALLER."
   (cond
    ((null rows) nil)
@@ -386,13 +398,26 @@ NAME may be nil, \"all\", \"manifest-dsl-v1\", \"lock-v2\", or
     (mapcar
      (lambda (row)
        (unless (and (listp row)
-                    (memq (plist-get row :kind)
-                          '(package linux-package))
-                    (or (symbolp (plist-get row :name))
-                        (stringp (plist-get row :name))))
+                    (condition-case nil
+                        (= 0 (% (length row) 2))
+                      (error nil)))
          (signal 'anvil-pkg-error
                  (list (format "%s: malformed package row %S"
                                caller row))))
+       (let ((kind (plist-get row :kind))
+             (name (plist-get row :name)))
+         (unless (and (memq kind '(package linux-package))
+                      (or (symbolp name) (stringp name)))
+           (signal 'anvil-pkg-error
+                   (list (format "%s: malformed package row %S"
+                                 caller row))))
+         (when (and expected-kind (not (eq kind expected-kind)))
+           (signal 'anvil-pkg-error
+                   (list (format "%s: expected :kind %S, got %S"
+                                 caller expected-kind kind))))
+         (nelix-environment--validate-package-options
+          (format "%s row %S" caller name)
+          (nelix-manifest--package-row-options row)))
        row)
      rows))
    (t
@@ -830,10 +855,12 @@ file."
                      (plist-get plist :imports)))
            (package-rows (nelix-manifest--normalize-package-rows
                           "nelix-manifest :package-rows"
-                          (plist-get plist :package-rows)))
+                          (plist-get plist :package-rows)
+                          'package))
            (linux-package-rows (nelix-manifest--normalize-package-rows
                                 "nelix-manifest :linux-package-rows"
-                                (plist-get plist :linux-package-rows)))
+                                (plist-get plist :linux-package-rows)
+                                'linux-package))
            (version-pins (nelix-manifest--normalize-version-pins
                           (plist-get plist :version-pins)))
            (remove-policy (nelix-manifest--normalize-remove-policy

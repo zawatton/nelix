@@ -270,6 +270,55 @@
     (should (string-match-p "private data option :secret"
                             (cadr err)))))
 
+(ert-deftest nelix-manifest-test-normalized-package-rows-share-dsl-option-contract ()
+  "Raw manifest package rows obey the same DSL v1 option contract."
+  (let ((manifest (nelix-manifest
+                   :name "raw-rows"
+                   :package-rows
+                   '((:kind package :name magit :backend elpa
+                            :group editor :feature git))
+                   :linux-package-rows
+                   '((:kind linux-package :name ripgrep :backend nix
+                            :pin t :platform gnu/linux)))))
+    (should (equal '((:kind package :name magit :backend elpa
+                            :group editor :feature git))
+                   (plist-get manifest :package-rows)))
+    (should (equal '((:kind linux-package :name ripgrep :backend nix
+                            :pin t :platform gnu/linux))
+                   (plist-get manifest :linux-package-rows))))
+  (let ((err (should-error
+              (nelix-manifest
+               :name "raw-private"
+               :package-rows
+               '((:kind package :name magit :secret "token-value")))
+              :type 'anvil-pkg-error)))
+    (should (string-match-p "private data option :secret"
+                            (cadr err))))
+  (let ((err (should-error
+              (nelix-manifest
+               :name "raw-unknown"
+               :package-rows
+               '((:kind package :name magit :unsupported t)))
+              :type 'anvil-pkg-error)))
+    (should (string-match-p "unknown option :unsupported"
+                            (cadr err))))
+  (let ((err (should-error
+              (nelix-manifest
+               :name "raw-bad-pin"
+               :linux-package-rows
+               '((:kind linux-package :name ripgrep :pin yes)))
+              :type 'anvil-pkg-error)))
+    (should (string-match-p ":pin must be t or nil"
+                            (cadr err))))
+  (let ((err (should-error
+              (nelix-manifest
+               :name "raw-wrong-kind"
+               :package-rows
+               '((:kind linux-package :name ripgrep)))
+              :type 'anvil-pkg-error)))
+    (should (string-match-p "expected :kind package"
+                            (cadr err)))))
+
 (ert-deftest nelix-manifest-test-environment-dsl-v1-validates-backend-policy ()
   "DSL v1 backend-policy accepts only stable backend symbols and OS rows."
   (let ((flat (nelix-environment

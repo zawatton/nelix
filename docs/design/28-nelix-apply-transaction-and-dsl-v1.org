@@ -475,7 +475,10 @@ Rules:
   =linux-package=, and =version-pin= rows; invalid duplicates are hard errors
   in both the normal Emacs loader and the standalone NeLisp fast validator;
 - plist =nelix-manifest= remains supported indefinitely for generated files and
-  backward compatibility;
+  backward compatibility.  When raw plist manifests provide =:package-rows= or
+  =:linux-package-rows=, those rows use the same DSL v1 option validator as
+  =package= and =linux-package= macro rows, including backend validation,
+  option value types, per-row kind checks, and private-data rejection;
 - package list subforms accept either a variable symbol or literal package
   symbols/strings;
 - =emacs-packages= and =linux-packages= are bulk desired-state declarations.
@@ -579,10 +582,12 @@ Scope decisions for the user-requested Nix/Guix-style surface:
   =(secret ...)= and =(private-repo ...)= explicitly.
 
 Implementation status: =nelix-environment= is implemented as a macro expanding
-to =nelix-manifest=.  Existing plist manifests remain valid.  The Debian
-installed CLI gate loads a real =nelix-dsl= manifest using imports, package
-variables, OS-row backend policy, bootstrap package declarations, package row
-declarations, version pins, remove policy, and pins, then runs =validate= and
+to =nelix-manifest=.  Existing plist manifests remain valid, but package row
+metadata in plist manifests is no longer a weaker bypass around the DSL v1
+private-data and option-type contract.  The Debian installed CLI gate loads a
+real =nelix-dsl= manifest using imports, package variables, OS-row backend
+policy, bootstrap package declarations, package row declarations, version pins,
+remove policy, and pins, then runs =validate= and
 =plan --dry-run= through the public command line.
 
 * 6. Lockfile Schema Direction

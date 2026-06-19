@@ -683,6 +683,18 @@ expect_json dsl_validate '"emacs":2'
 expect_json dsl_validate '"linux":3'
 expect_json dsl_validate '"pins":3'
 
+raw_private_manifest="$tmp/raw-private-manifest.el"
+cat >"$raw_private_manifest" <<'EOF'
+(require 'nelix-manifest)
+(nelix-manifest
+ :name "installed-cli-raw-private"
+ :package-rows
+ '((:kind package :name magit :secret "token-value")))
+EOF
+run_failing_json raw_private_validate none validate "$raw_private_manifest"
+expect_json raw_private_validate '"status":"error"'
+expect_json raw_private_validate 'private data option :secret'
+
 run_json dsl_plan plan "$dsl_manifest" --dry-run
 expect_json dsl_plan '"status":"planned"'
 expect_json dsl_plan '"backend":"nix"'
