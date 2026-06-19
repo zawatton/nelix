@@ -238,7 +238,13 @@ runs the personal manifest through =nelix --runtime nelisp= read-only commands
 =apply --dry-run=), then loads =~/.emacs.d/early-init.el= and
 =~/.emacs.d/init.el= in Emacs batch and runs =my-nelix-audit=.  This target is
 not part of =deb-full-gate=; run it when verifying the real desktop Emacs
-configuration.
+configuration.  By default it verifies the Debian package version only when it
+is using the installed =/usr/bin/nelix= or installed ELPA source directory; set
+=NELIX_INIT_MIGRATION_REQUIRE_DEB=required= to force the package-version check
+or =skip= to disable it explicitly.  The default
+=NELIX_INIT_MIGRATION_AUDIT=required= runs =my-nelix-audit= after loading init;
+use =NELIX_INIT_MIGRATION_AUDIT=load-only= while developing against the source
+tree when the installed Debian bootstrap package is intentionally behind.
 
 When =autopkgtest= is available, run the Debian smoke gate too.  On a normal
 host backend, autopkgtest needs root because it writes temporary APT

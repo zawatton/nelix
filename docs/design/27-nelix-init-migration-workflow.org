@@ -196,7 +196,16 @@ It performs two checks in order:
   followed by =my-nelix-audit=.
 
 This target is the current evidence that the extracted package manifest and the
-real editor startup path agree.
+real editor startup path agree.  It can run against the source tree without
+requiring the installed Debian package to be current.  The Debian package
+version check is enabled automatically only when the verifier is using the
+installed =/usr/bin/nelix= or installed ELPA source directory; set
+=NELIX_INIT_MIGRATION_REQUIRE_DEB=required= to force it or =skip= to disable it
+explicitly.  The standard audit mode is =NELIX_INIT_MIGRATION_AUDIT=required=,
+which runs =my-nelix-audit= after loading init.  During source-tree development,
+=NELIX_INIT_MIGRATION_AUDIT=load-only= verifies that the real init path loads
+and defines =my-nelix-audit= without requiring the installed Debian bootstrap
+package to already match the source-tree version.
 
 * 7. Debian Package Verification
 

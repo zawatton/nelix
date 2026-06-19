@@ -19,6 +19,7 @@ fi
 manifest="${NELIX_USER_MANIFEST:-$target_home/.emacs.d/nelix-package.el}"
 init_file="${NELIX_USER_INIT:-$target_home/.emacs.d/init.el}"
 early_init_file="${NELIX_USER_EARLY_INIT:-$target_home/.emacs.d/early-init.el}"
+audit_mode="${NELIX_INIT_MIGRATION_AUDIT:-required}"
 
 if [ ! -f "$manifest" ]; then
   echo "Nelix user manifest is missing: $manifest" >&2
@@ -30,18 +31,13 @@ if [ ! -f "$init_file" ]; then
   exit 1
 fi
 
-expected_deb_version="${NELIX_INIT_MIGRATION_EXPECTED_DEB_VERSION:-0.1.0-4}"
-if command -v dpkg-query >/dev/null 2>&1; then
-  installed_deb_version="$(dpkg-query -W -f='${Version}' elpa-nelix 2>/dev/null || true)"
-  if [ -z "$installed_deb_version" ]; then
-    echo "elpa-nelix is not installed; install the Debian package before init migration verification" >&2
-    exit 1
-  fi
-  if ! dpkg --compare-versions "$installed_deb_version" ge "$expected_deb_version"; then
-    echo "elpa-nelix is too old for init migration: installed=$installed_deb_version expected>=$expected_deb_version" >&2
-    exit 1
-  fi
-fi
+case "$audit_mode" in
+  required|load-only) ;;
+  *)
+    echo "invalid NELIX_INIT_MIGRATION_AUDIT value: $audit_mode" >&2
+    exit 64
+    ;;
+esac
 
 if [ -n "${NELIX_BIN:-}" ]; then
   nelix_bin="$NELIX_BIN"
@@ -62,6 +58,47 @@ elif [ -d /usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0 ]; then
 else
   nelix_lispdir="$repo_dir"
 fi
+
+check_deb_version() {
+  expected_deb_version="${NELIX_INIT_MIGRATION_EXPECTED_DEB_VERSION:-0.1.0-4}"
+  if ! command -v dpkg-query >/dev/null 2>&1; then
+    echo "dpkg-query is required for Debian package version verification" >&2
+    exit 1
+  fi
+  installed_deb_version="$(dpkg-query -W -f='${Version}' elpa-nelix 2>/dev/null || true)"
+  if [ -z "$installed_deb_version" ]; then
+    echo "elpa-nelix is not installed; install the Debian package before init migration verification" >&2
+    exit 1
+  fi
+  if ! dpkg --compare-versions "$installed_deb_version" ge "$expected_deb_version"; then
+    echo "elpa-nelix is too old for init migration: installed=$installed_deb_version expected>=$expected_deb_version" >&2
+    exit 1
+  fi
+}
+
+resolved_nelix_bin="$nelix_bin"
+case "$nelix_bin" in
+  */*) ;;
+  *) resolved_nelix_bin="$(command -v "$nelix_bin" 2>/dev/null || printf '%s' "$nelix_bin")" ;;
+esac
+
+case "${NELIX_INIT_MIGRATION_REQUIRE_DEB:-auto}" in
+  1|true|yes|required)
+    check_deb_version
+    ;;
+  0|false|no|skip)
+    ;;
+  auto)
+    if [ "$resolved_nelix_bin" = /usr/bin/nelix ] ||
+       [ "$nelix_lispdir" = /usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0 ]; then
+      check_deb_version
+    fi
+    ;;
+  *)
+    echo "invalid NELIX_INIT_MIGRATION_REQUIRE_DEB value: ${NELIX_INIT_MIGRATION_REQUIRE_DEB}" >&2
+    exit 64
+    ;;
+esac
 
 run_nelix_json() {
   env NELIX_LISPDIR="$nelix_lispdir" "$nelix_bin" "$@" >/dev/null
@@ -112,13 +149,17 @@ cat >"$elisp" <<EOF
 (load-file "$init_file")
 (unless (fboundp 'my-nelix-audit)
   (error "my-nelix-audit is missing after init load"))
-(let ((audit (my-nelix-audit)))
-  (unless (and (plist-get audit :package)
-               (plist-get audit :linux))
-    (error "my-nelix-audit returned malformed result: %S" audit))
-  (princ
-   (format "nelix user init migration ok: manifest=%s init=%s\\n"
-           "$manifest" "$init_file")))
+(if (string= "$audit_mode" "load-only")
+    (princ
+     (format "nelix user init migration load ok: manifest=%s init=%s\\n"
+             "$manifest" "$init_file"))
+  (let ((audit (my-nelix-audit)))
+    (unless (and (plist-get audit :package)
+                 (plist-get audit :linux))
+      (error "my-nelix-audit returned malformed result: %S" audit))
+    (princ
+     (format "nelix user init migration ok: manifest=%s init=%s\\n"
+             "$manifest" "$init_file"))))
 EOF
 
 if command -v timeout >/dev/null 2>&1; then

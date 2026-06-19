@@ -144,6 +144,7 @@ path_in_release_scope() {
     packaging/verify-extracted-nelix-debian.sh|\
     packaging/verify-installed-nelix-cli-gate.sh|\
     packaging/verify-nelix-user-manifest-dsl.sh|\
+    packaging/verify-nelix-user-init-migration.sh|\
     packaging/verify-nelix-aot-cache-gate.sh|\
     packaging/verify-nelix-native-cli-gate.sh|\
     packaging/verify-installed-nelix-debian.sh|\
