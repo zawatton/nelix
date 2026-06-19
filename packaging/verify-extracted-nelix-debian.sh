@@ -91,10 +91,45 @@ if [ -n "${NELIX_USER_MANIFEST:-}" ]; then
     exit 1
   fi
 
-  NELIX_LISPDIR="$elpa_src_dir" "$nelix_bin" --json validate "$NELIX_USER_MANIFEST" >/dev/null
-  NELIX_LISPDIR="$elpa_src_dir" "$nelix_bin" --json lock "$NELIX_USER_MANIFEST" >/dev/null
-  NELIX_LISPDIR="$elpa_src_dir" "$nelix_bin" --json plan "$NELIX_USER_MANIFEST" >/dev/null
-  NELIX_LISPDIR="$elpa_src_dir" "$nelix_bin" --json apply "$NELIX_USER_MANIFEST" --dry-run >/dev/null
+  (
+    lock_tmp="$(mktemp -d)"
+    lock_file="$NELIX_USER_MANIFEST.nelix-lock"
+    lock_backup="$lock_tmp/manifest.nelix-lock.backup"
+    had_lock=0
+
+    cleanup_lock() {
+      if [ "$had_lock" -eq 1 ]; then
+        cp -p "$lock_backup" "$lock_file"
+      else
+        rm -f "$lock_file"
+      fi
+      rm -rf "$lock_tmp"
+    }
+    trap cleanup_lock EXIT HUP INT TERM
+
+    if [ -f "$lock_file" ]; then
+      cp -p "$lock_file" "$lock_backup"
+      had_lock=1
+    fi
+
+    NELIX_LISPDIR="$elpa_src_dir" "$nelix_bin" --json validate "$NELIX_USER_MANIFEST" >/dev/null
+    NELIX_LISPDIR="$elpa_src_dir" "$nelix_bin" --json lock "$NELIX_USER_MANIFEST" >/dev/null
+    NELIX_LISPDIR="$elpa_src_dir" "$nelix_bin" --json plan "$NELIX_USER_MANIFEST" >/dev/null
+    NELIX_LISPDIR="$elpa_src_dir" "$nelix_bin" --json apply "$NELIX_USER_MANIFEST" --dry-run >/dev/null
+
+    case "${NELIX_USER_MANIFEST_LOCKED:-0}" in
+      1|true|yes|required)
+        NELIX_LISPDIR="$elpa_src_dir" "$nelix_bin" \
+          --json apply "$NELIX_USER_MANIFEST" --locked --dry-run >/dev/null
+        ;;
+      0|false|no|skip)
+        ;;
+      *)
+        echo "invalid NELIX_USER_MANIFEST_LOCKED value: ${NELIX_USER_MANIFEST_LOCKED}" >&2
+        exit 64
+        ;;
+    esac
+  )
 
   if [ "${NELIX_USER_MANIFEST_NELISP:-0}" = 1 ]; then
     NELIX_LISPDIR="$elpa_src_dir" "$nelix_bin" \

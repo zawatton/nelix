@@ -4,6 +4,7 @@ set -eu
 repo_dir="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 manifest="${NELIX_USER_MANIFEST:-$HOME/.emacs.d/nelix-package.el}"
 nelisp_mode="${NELIX_USER_MANIFEST_NELISP:-auto}"
+locked_mode="${NELIX_USER_MANIFEST_LOCKED:-auto}"
 
 if [ ! -f "$manifest" ]; then
   echo "Nelix user manifest is missing: $manifest" >&2
@@ -61,6 +62,56 @@ expect_json_fragment() {
     return 1
   fi
 }
+
+run_locked_readonly_checks() (
+  locked_tmp="$(mktemp -d)"
+  lock_file="$manifest.nelix-lock"
+  backup="$locked_tmp/manifest.nelix-lock.backup"
+  had_lock=0
+
+  cleanup_locked() {
+    if [ "$had_lock" -eq 1 ]; then
+      cp -p "$backup" "$lock_file"
+    else
+      rm -f "$lock_file"
+    fi
+    rm -rf "$locked_tmp"
+  }
+  trap cleanup_locked EXIT HUP INT TERM
+
+  if [ -f "$lock_file" ]; then
+    cp -p "$lock_file" "$backup"
+    had_lock=1
+  fi
+
+  if ! run_nelix_with_timeout --json lock "$manifest" \
+    >"$locked_tmp/lock.json" \
+    2>"$locked_tmp/lock.err"; then
+    sed -n '1,3p' "$locked_tmp/lock.json" >&2
+    sed -n '1,20p' "$locked_tmp/lock.err" >&2
+    return 1
+  fi
+  expect_json_fragment lock "$locked_tmp/lock.json" '"schema":"nelix-lock"' || return 1
+  expect_json_fragment lock "$locked_tmp/lock.json" '"schema-version":2' || return 1
+  test -f "$lock_file" || {
+    echo "nelix user manifest lock did not create lock file: $lock_file" >&2
+    return 1
+  }
+
+  if ! run_nelix_with_timeout --json apply "$manifest" --locked --dry-run \
+    >"$locked_tmp/locked-dry-run.json" \
+    2>"$locked_tmp/locked-dry-run.err"; then
+    sed -n '1,3p' "$locked_tmp/locked-dry-run.json" >&2
+    sed -n '1,20p' "$locked_tmp/locked-dry-run.err" >&2
+    return 1
+  fi
+  expect_json_fragment locked-dry-run "$locked_tmp/locked-dry-run.json" '"status":"dry-run"' || return 1
+  expect_json_fragment locked-dry-run "$locked_tmp/locked-dry-run.json" '"locked":true' || return 1
+  expect_json_fragment locked-dry-run "$locked_tmp/locked-dry-run.json" '"lock-enforced":true' || return 1
+  expect_json_fragment locked-dry-run "$locked_tmp/locked-dry-run.json" '"lock-check":' || return 1
+
+  printf 'nelix user manifest locked dry-run ok: %s\n' "$manifest"
+)
 
 run_nelisp_aot_readonly() {
   nelisp_tmp="$(mktemp -d)"
@@ -156,6 +207,33 @@ case "$nelisp_mode" in
     ;;
   *)
     echo "invalid NELIX_USER_MANIFEST_NELISP value: $nelisp_mode" >&2
+    exit 64
+    ;;
+esac
+
+case "$locked_mode" in
+  1|true|yes|required)
+    run_locked_readonly_checks
+    ;;
+  0|false|no|skip)
+    ;;
+  auto)
+    if command -v nix >/dev/null 2>&1; then
+      locked_log="$(mktemp)"
+      if run_locked_readonly_checks 2>"$locked_log"; then
+        rm -f "$locked_log"
+      else
+        rc=$?
+        echo "nelix user manifest locked dry-run checks failed in auto mode; continuing because normal validation passed (exit $rc)" >&2
+        sed -n '1,20p' "$locked_log" >&2
+        rm -f "$locked_log"
+      fi
+    else
+      echo "nix not found; skipped user manifest locked dry-run validation" >&2
+    fi
+    ;;
+  *)
+    echo "invalid NELIX_USER_MANIFEST_LOCKED value: $locked_mode" >&2
     exit 64
     ;;
 esac

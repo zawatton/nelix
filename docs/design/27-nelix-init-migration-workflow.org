@@ -118,6 +118,13 @@ must report =:nelisp-aot-cache= as the fallback and must not enter the slow full
 standalone manifest path.  =lock= may still run through Emacs batch until the
 NeLisp process/runtime path is complete enough for mutating lock writes.
 
+=NELIX_USER_MANIFEST_LOCKED=required= strengthens the same source-tree verifier
+with a real manifest lock cycle: it backs up any existing
+=MANIFEST.nelix-lock=, runs =nelix --json lock MANIFEST=, verifies
+=nelix --json apply MANIFEST --locked --dry-run=, and restores the previous
+lock file.  This covers the daily locked review path without mutating the real
+profile.
+
 The lock file path is:
 
 #+begin_example
@@ -174,6 +181,7 @@ sudo apt install --reinstall ../elpa-nelix_0.1.0-4_all.deb
 
 NELIX_USER_MANIFEST="$HOME/.emacs.d/nelix-package.el" \
 NELIX_USER_MANIFEST_NELISP=1 \
+NELIX_USER_MANIFEST_LOCKED=required \
 NELISP=/home/madblack-21/Cowork/Notes/dev/nelisp/target/nelisp \
 NELISP_ROOT=/home/madblack-21/Cowork/Notes/dev/nelisp \
 packaging/verify-installed-nelix-debian.sh 0.1.0-4
@@ -184,6 +192,7 @@ Without root access, the package payload can still be verified by extraction:
 #+begin_src sh
 NELIX_USER_MANIFEST="$HOME/.emacs.d/nelix-package.el" \
 NELIX_USER_MANIFEST_NELISP=1 \
+NELIX_USER_MANIFEST_LOCKED=required \
 NELISP=/home/madblack-21/Cowork/Notes/dev/nelisp/target/nelisp \
 NELISP_ROOT=/home/madblack-21/Cowork/Notes/dev/nelisp \
 packaging/verify-extracted-nelix-debian.sh ../elpa-nelix_0.1.0-4_all.deb 0.1.0-4
