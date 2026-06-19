@@ -23,6 +23,8 @@ audit_mode="${NELIX_INIT_MIGRATION_AUDIT:-required}"
 max_missing="${NELIX_INIT_MIGRATION_MAX_MISSING:-${NELIX_USER_MANIFEST_MAX_MISSING:-}}"
 max_extra="${NELIX_INIT_MIGRATION_MAX_EXTRA:-${NELIX_USER_MANIFEST_MAX_EXTRA:-}}"
 max_remove="${NELIX_INIT_MIGRATION_MAX_REMOVE:-${NELIX_USER_MANIFEST_MAX_REMOVE:-}}"
+nelisp_max_seconds="${NELIX_INIT_MIGRATION_NELISP_MAX_SECONDS:-${NELIX_USER_MANIFEST_NELISP_MAX_SECONDS:-5}}"
+nelisp_min_targets="${NELIX_INIT_MIGRATION_MIN_TARGETS:-${NELIX_USER_MANIFEST_MIN_TARGETS:-0}}"
 
 if [ ! -f "$manifest" ]; then
   echo "Nelix user manifest is missing: $manifest" >&2
@@ -53,6 +55,20 @@ for limit_name in max_missing max_extra max_remove; do
       ;;
   esac
 done
+
+case "$nelisp_max_seconds" in
+  ''|*[!0-9]*)
+    echo "invalid NELIX_INIT_MIGRATION_NELISP_MAX_SECONDS value: $nelisp_max_seconds" >&2
+    exit 64
+    ;;
+esac
+
+case "$nelisp_min_targets" in
+  ''|*[!0-9]*)
+    echo "invalid NELIX_INIT_MIGRATION_MIN_TARGETS value: $nelisp_min_targets" >&2
+    exit 64
+    ;;
+esac
 
 if [ -n "${NELIX_BIN:-}" ]; then
   nelix_bin="$NELIX_BIN"
@@ -123,6 +139,29 @@ run_nelix_json_capture() {
   out="$1"
   shift
   env NELIX_LISPDIR="$nelix_lispdir" "$nelix_bin" "$@" >"$out"
+}
+
+run_nelix_timed() {
+  label="$1"
+  out="$2"
+  shift 2
+  start="$(date +%s)"
+  if env NELIX_LISPDIR="$nelix_lispdir" "$nelix_bin" "$@" >"$out"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  end="$(date +%s)"
+  elapsed=$((end - start))
+  printf 'nelix init migration timing: %s elapsed=%ss max=%ss\n' \
+    "$label" "$elapsed" "$nelisp_max_seconds" >&2
+  if [ "$rc" -ne 0 ]; then
+    return "$rc"
+  fi
+  if [ "$nelisp_max_seconds" -gt 0 ] && [ "$elapsed" -gt "$nelisp_max_seconds" ]; then
+    echo "nelix init migration $label exceeded NELIX_INIT_MIGRATION_NELISP_MAX_SECONDS=${nelisp_max_seconds}s" >&2
+    return 1
+  fi
 }
 
 compare_init_json() {
@@ -204,11 +243,34 @@ cleanup_json() {
 }
 trap cleanup_json EXIT HUP INT TERM
 
-run_nelix_json --runtime nelisp --json validate "$manifest"
-run_nelix_json --runtime nelisp --json list
-run_nelix_json_capture "$json_tmp/audit.json" --runtime nelisp --json audit "$manifest"
-run_nelix_json_capture "$json_tmp/plan.json" --runtime nelisp --json plan "$manifest" --dry-run
-run_nelix_json_capture "$json_tmp/apply-dry-run.json" --runtime nelisp --json apply "$manifest" --dry-run
+run_nelix_timed aot-cache "$json_tmp/aot-cache.out" \
+  --runtime nelisp aot-cache "$manifest"
+if ! grep -Fq ':status ok' "$json_tmp/aot-cache.out"; then
+  echo "nelix init migration aot-cache did not report ok" >&2
+  sed -n '1,20p' "$json_tmp/aot-cache.out" >&2
+  exit 1
+fi
+target_count="$(
+  grep -c '^target-id[[:space:]]' "$manifest.nelix-aot-targets" 2>/dev/null ||
+    printf '0\n'
+)"
+printf 'nelix init migration target-count: %s min=%s\n' \
+  "$target_count" "$nelisp_min_targets" >&2
+if [ "$nelisp_min_targets" -gt 0 ] && [ "$target_count" -lt "$nelisp_min_targets" ]; then
+  echo "nelix init migration target count $target_count is below NELIX_INIT_MIGRATION_MIN_TARGETS=$nelisp_min_targets" >&2
+  exit 1
+fi
+
+run_nelix_timed validate "$json_tmp/validate.json" \
+  --runtime nelisp --json validate "$manifest"
+run_nelix_timed list "$json_tmp/list.json" \
+  --runtime nelisp --json list
+run_nelix_timed audit "$json_tmp/audit.json" \
+  --runtime nelisp --json audit "$manifest"
+run_nelix_timed plan-dry-run "$json_tmp/plan.json" \
+  --runtime nelisp --json plan "$manifest" --dry-run
+run_nelix_timed apply-dry-run "$json_tmp/apply-dry-run.json" \
+  --runtime nelisp --json apply "$manifest" --dry-run
 check_json_array_limit audit-missing "$json_tmp/audit.json" missing "$max_missing"
 check_json_array_limit audit-extra "$json_tmp/audit.json" extra "$max_extra"
 check_json_array_limit remove "$json_tmp/apply-dry-run.json" remove "$max_remove"
@@ -216,8 +278,10 @@ compare_init_json init-plan-apply-dry-run \
   "$json_tmp/plan.json" \
   "$json_tmp/apply-dry-run.json" \
   install remove keep protected commands
-run_nelix_json --runtime nelisp --json upgrade-plan "$manifest"
-run_nelix_json --runtime nelisp --json lock-check "$manifest"
+run_nelix_timed upgrade-plan "$json_tmp/upgrade-plan.json" \
+  --runtime nelisp --json upgrade-plan "$manifest"
+run_nelix_timed lock-check "$json_tmp/lock-check.json" \
+  --runtime nelisp --json lock-check "$manifest"
 
 (
   lock_tmp="$(mktemp -d)"
@@ -241,7 +305,8 @@ run_nelix_json --runtime nelisp --json lock-check "$manifest"
   fi
 
   run_nelix_json --json lock "$manifest"
-  run_nelix_json --runtime nelisp --json apply "$manifest" --locked --dry-run
+  run_nelix_timed locked-apply-dry-run "$lock_tmp/locked-apply-dry-run.json" \
+    --runtime nelisp --json apply "$manifest" --locked --dry-run
 )
 
 rm -rf "$json_tmp"
