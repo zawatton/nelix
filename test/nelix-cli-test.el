@@ -309,6 +309,39 @@
     (should (equal "manifest-dsl-v1" (alist-get 'name parsed)))
     (should (= 1 (alist-get 'schema-version parsed)))))
 
+(ert-deftest nelix-cli-test-schema-lock-contract-matches-json-schema-file ()
+  "The CLI lock schema contract matches the documented JSON schema."
+  (let* ((schema-file (nelix-cli-test--schema
+                       "nelix-lock-v2.schema.json"))
+         (json (nelix-cli-format-result
+                (nelix-cli-dispatch
+                 '(:command "schema" :args ("lock-v2") :json t))
+                t))
+         (parsed (json-parse-string json :object-type 'alist))
+         (properties (alist-get 'properties schema-file))
+         (package-schema
+          (alist-get
+           'package
+           (alist-get '$defs schema-file)))
+         (required (alist-get 'required schema-file))
+         (package-required (alist-get 'required package-schema)))
+    (should (equal "ok" (alist-get 'status parsed)))
+    (should (equal "lock-v2" (alist-get 'name parsed)))
+    (should (equal (alist-get 'const (alist-get 'schema properties))
+                   (alist-get 'schema parsed)))
+    (should (= (alist-get 'const (alist-get 'schema-version properties))
+               (alist-get 'schema-version parsed)))
+    (should (= (alist-get 'const (alist-get 'version properties))
+               (alist-get 'version parsed)))
+    (should (equal (alist-get 'const (alist-get 'format properties))
+                   (alist-get 'format parsed)))
+    (should (equal required
+                   (nelix-cli-test--json-array-list
+                    (alist-get 'required parsed))))
+    (should (equal package-required
+                   (nelix-cli-test--json-array-list
+                    (alist-get 'package-required parsed))))))
+
 (ert-deftest nelix-cli-test-lock-json-round-trips-schema ()
   "Lock JSON can be parsed back by standard JSON consumers."
   (let ((anvil-pkg-profile-dir "/tmp/nelix-profile"))

@@ -238,6 +238,8 @@ verify-deb-contents:
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/doc/elpa-nelix/packaging/verify-nelix-user-init-migration.sh'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-init-migration.sh | grep -Fq 'my-nelix-audit is missing after init load'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/doc/elpa-nelix/packaging/verify-extracted-nelix-debian.sh'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/doc/elpa-nelix/schema/nelix-lock-v2.schema.json'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/schema/nelix-lock-v2.schema.json | grep -Fq '"title": "Nelix lockfile schema v2"'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-extracted-nelix-debian.sh | grep -Fq 'NELIX_USER_MANIFEST_LOCKED'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/doc/elpa-nelix/packaging/verify-publication-urls.sh'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/apt/verify-public-tree.sh | grep -Fq 'public APT Packages has stale elpa-nelix version'
