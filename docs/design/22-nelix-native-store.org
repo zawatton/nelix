@@ -1170,6 +1170,8 @@ The next concrete deliverables should be:
    review paths that do not require Nix and do not invoke native install.
 10. Packaged native registry seed — implemented with built-in system-command
     recipes for =ripgrep=, =git=, and =curl= plus installed CLI coverage.
+    The native CLI gate installs the packaged =ripgrep= recipe against a fake
+    =rg= command, activates the profile, and executes the generated shim.
 
 =nelix-apply= can now review native backend changes with =--dry-run= before
 mutating native store profiles.  Broader real fetch/build recipe coverage is

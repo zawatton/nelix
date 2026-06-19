@@ -33,8 +33,9 @@ state="$tmp/state"
 source_dir="$tmp/source"
 registry="$data/nelix/registry/packages/local"
 profile_root="$state/nelix/profiles"
+packaged_bin="$tmp/packaged-bin"
 
-mkdir -p "$home" "$data" "$state" "$source_dir" "$registry"
+mkdir -p "$home" "$data" "$state" "$source_dir" "$registry" "$packaged_bin"
 
 payload="$source_dir/fixture-tool"
 cat >"$payload" <<'EOF'
@@ -90,6 +91,16 @@ fi
 printf '\n'
 EOF
 chmod +x "$payload_app"
+
+cat >"$packaged_bin/rg" <<'EOF'
+#!/bin/sh
+printf 'packaged-rg-ok'
+if [ "$#" -gt 0 ]; then
+  printf ' %s' "$@"
+fi
+printf '\n'
+EOF
+chmod +x "$packaged_bin/rg"
 
 sha256="sha256-$(sha256sum "$payload" | awk '{print $1}')"
 sha256_extra="sha256-$(sha256sum "$payload_extra" | awk '{print $1}')"
@@ -166,18 +177,29 @@ cat >"$registry/fixture-app.el" <<EOF
               :bin ("fixture-app")))))
 EOF
 
+nelix_lisp_env=()
+if [ -n "${NELIX_LISPDIR:-}" ]; then
+  nelix_lisp_env+=("NELIX_LISPDIR=$NELIX_LISPDIR")
+elif [ -n "$repo_root" ] && [ "$nelix_bin" = "$repo_root/bin/nelix" ]; then
+  nelix_lisp_env+=("NELIX_LISPDIR=$repo_root")
+fi
+
 env_args=(
   "HOME=$home"
   "XDG_DATA_HOME=$data"
   "XDG_STATE_HOME=$state"
   "NELIX_REGISTRY_INCLUDE_PACKAGED=0"
+  "${nelix_lisp_env[@]}"
 )
 
-if [ -n "${NELIX_LISPDIR:-}" ]; then
-  env_args+=("NELIX_LISPDIR=$NELIX_LISPDIR")
-elif [ -n "$repo_root" ] && [ "$nelix_bin" = "$repo_root/bin/nelix" ]; then
-  env_args+=("NELIX_LISPDIR=$repo_root")
-fi
+packaged_env_args=(
+  "PATH=$packaged_bin:${PATH:-}"
+  "HOME=$home"
+  "XDG_DATA_HOME=$data"
+  "XDG_STATE_HOME=$state"
+  "NELIX_REGISTRY_INCLUDE_PACKAGED=1"
+  "${nelix_lisp_env[@]}"
+)
 
 run_json() {
   local label="$1"
@@ -185,6 +207,18 @@ run_json() {
   local out="$tmp/$label.json"
   local err="$tmp/$label.err"
   if ! env "${env_args[@]}" "$nelix_bin" --json "$@" >"$out" 2>"$err"; then
+    sed 's/^/nelix_native_cli_stdout /' "$out" >&2
+    sed 's/^/nelix_native_cli_stderr /' "$err" >&2
+    exit 1
+  fi
+}
+
+run_json_packaged() {
+  local label="$1"
+  shift
+  local out="$tmp/$label.json"
+  local err="$tmp/$label.err"
+  if ! env "${packaged_env_args[@]}" "$nelix_bin" --json "$@" >"$out" 2>"$err"; then
     sed 's/^/nelix_native_cli_stdout /' "$out" >&2
     sed 's/^/nelix_native_cli_stderr /' "$err" >&2
     exit 1
@@ -243,6 +277,32 @@ expect_json registry_list '"name":"fixture-app"'
 expect_json registry_list '"name":"fixture-dep"'
 expect_json registry_list '"name":"fixture-extra"'
 expect_json registry_list '"name":"fixture-tool"'
+
+run_json_packaged packaged_registry registry list --system x86_64-linux
+expect_json packaged_registry '"operation":"registry-list"'
+expect_json packaged_registry '"name":"ripgrep"'
+
+run_json_packaged packaged_install native install ripgrep --profile packaged --system x86_64-linux
+expect_json packaged_install '"operation":"native-install"'
+expect_json packaged_install '"status":"ok"'
+expect_json packaged_install '"name":"ripgrep"'
+expect_json packaged_install '"version":"system"'
+expect_json packaged_install '"runtime-bins":\["bin/rg"\]'
+
+run_json_packaged packaged_activate native activate --profile packaged
+expect_json packaged_activate '"operation":"native-activate"'
+expect_json packaged_activate '"command":"rg"'
+
+packaged_shim="$profile_root/packaged/active/bin/rg"
+test -x "$packaged_shim" || {
+  echo "nelix native CLI gate: packaged ripgrep activation shim missing: $packaged_shim" >&2
+  exit 1
+}
+packaged_output="$(PATH="$packaged_bin:${PATH:-}" "$packaged_shim" --nelix-gate)"
+test "$packaged_output" = "packaged-rg-ok --nelix-gate" || {
+  echo "nelix native CLI gate: packaged ripgrep shim output mismatch: $packaged_output" >&2
+  exit 1
+}
 
 generated_index="$tmp/generated-registry-index.el"
 run_json registry_index registry index "$data/nelix/registry" "$generated_index"

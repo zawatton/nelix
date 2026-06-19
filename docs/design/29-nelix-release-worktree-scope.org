@@ -451,7 +451,9 @@ to dry-run.  It stages files only when =--stage= is passed explicitly.
 - Native packaged registry: the installed Nelix Lisp tree includes initial
   system-command =script-shim= recipes for =ripgrep=, =git=, and =curl=.
   Packaged recipes load before user registries and can be disabled with
-  =NELIX_REGISTRY_INCLUDE_PACKAGED=0= for isolated/private registries.
+  =NELIX_REGISTRY_INCLUDE_PACKAGED=0= for isolated/private registries.  The
+  native CLI gate installs the packaged =ripgrep= recipe with a fake =rg=
+  target, activates the profile, and executes the generated shim.
 - Native registry parser: local and remote recipe/index files are read as
   data-only forms, so unsupported Elisp forms are rejected without execution.
 - Native archive install: =nelix-native= unpack and substitute materialization
@@ -483,8 +485,9 @@ to dry-run.  It stages files only when =--stage= is passed explicitly.
   registry/store/profile and verifies install, list, profile, activate, shim
   execution, =active/profile= link/copy tree execution, native rollback with
   reactivation, registry dependency install through =nelix native install=,
-  and GC dry-run.  =verify-installed-cli-gate= runs the same gate through installed
-  =/usr/bin/nelix=.
+  packaged =ripgrep= install/activation through the installed registry seed,
+  and GC dry-run.  =verify-installed-cli-gate= runs the same gate through
+  installed =/usr/bin/nelix=.
 - AOT cache CLI gate: =make smoke-nelix-aot-cache-cli= runs
   =packaging/verify-nelix-aot-cache-gate.sh= with isolated fake Nix and fake
   NeLisp fixtures.  It verifies that =nelix --runtime nelisp list=, =audit=,

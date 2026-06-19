@@ -264,6 +264,10 @@ require_autopkgtest_gate_strength() {
   require_contains Makefile \
     "grep -Fq 'registry list --system x86_64-linux'"
   require_contains Makefile \
+    "grep -Fq 'packaged_install native install ripgrep'"
+  require_contains Makefile \
+    "grep -Fq 'packaged-rg-ok --nelix-gate'"
+  require_contains Makefile \
     "grep -Fxq './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/registry/packages/system/ripgrep.el'"
   require_contains Makefile \
     "grep -Fq 'packaged_registry'"
@@ -281,6 +285,10 @@ require_autopkgtest_gate_strength() {
     "native rollback [--profile PROFILE] [--generation GENERATION]"
   require_contains packaging/verify-nelix-native-cli-gate.sh \
     "registry list --system x86_64-linux"
+  require_contains packaging/verify-nelix-native-cli-gate.sh \
+    "run_json_packaged packaged_install native install ripgrep"
+  require_contains packaging/verify-nelix-native-cli-gate.sh \
+    "packaged-rg-ok --nelix-gate"
   require_contains packaging/verify-nelix-native-cli-gate.sh \
     'registry index "$data/nelix/registry" "$generated_index"'
   require_contains packaging/verify-nelix-native-cli-gate.sh \
@@ -632,6 +640,8 @@ require_native_store_gate_docs() {
   require_contains docs/design/22-nelix-native-store.org \
     'Packaged registry root under the installed Nelix Lisp directory.'
   require_contains docs/design/22-nelix-native-store.org \
+    'installs the packaged =ripgrep= recipe'
+  require_contains docs/design/22-nelix-native-store.org \
     'Failed fetch/verify/unpack/copy/script-shim installs do'
   require_contains docs/design/22-nelix-native-store.org \
     'Commit native store entries from temporary build directories'
@@ -654,6 +664,8 @@ require_native_store_gate_docs() {
   require_contains docs/design/29-nelix-release-worktree-scope.org \
     'Native packaged registry:'
   require_contains docs/design/29-nelix-release-worktree-scope.org \
+    'packaged =ripgrep= install/activation'
+  require_contains docs/design/29-nelix-release-worktree-scope.org \
     'Source-free =script-shim= lock rows replay'
   require_contains docs/design/29-nelix-release-worktree-scope.org \
     'native dependency closure fixture coverage'
@@ -665,6 +677,8 @@ require_native_store_gate_docs() {
     'registry dependency install through =nelix native install='
   require_contains packaging/README.org \
     'packaged registry root through'
+  require_contains packaging/README.org \
+    'installs and activates the'
 }
 
 require_aot_plan_gate_docs() {
@@ -689,7 +703,7 @@ require_aot_plan_gate_docs() {
   require_contains README.org \
     'use the AOT cache fast lane by default under =--runtime nelisp='
   require_contains packaging/README.org \
-    'lane is the default for supported =--runtime nelisp= manifest commands'
+    'cache shell lane is the default for supported =--runtime nelisp= manifest'
   require_contains docs/design/25-nelix-native-aot-manifest-engine.org \
     '=plan MANIFEST= and =--json plan MANIFEST='
   require_contains docs/design/25-nelix-native-aot-manifest-engine.org \
