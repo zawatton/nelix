@@ -141,11 +141,11 @@ SMOKE_BUILD_PAIRS = \
   examples/stdenv-hello.el:gnu-hello \
   examples/python-black.el:black
 
-.PHONY: all check verify-local release-scope-audit release-scope-status release-scope-stage release-scope-stage-a release-scope-stage-b release-scope-stage-c release-scope-stage-d publication-local-gate publication-url-check publication-preflight publication-public-smoke deb-orig deb-source deb-source-lint deb-source-gate deb-build verify-deb-contents deb-lint deb-local-gate install-built-deb deb-release-gate deb-full-gate fix-debian-ownership apt-repo verify-apt-repo apt-repo-gate apt-sign-repo verify-signed-apt-repo apt-signed-repo-gate apt-publish-static verify-apt-public-tree apt-publication-preflight apt-http-smoke apt-http-gate apt-public-url-smoke fedora-source fedora-source-verify fedora-source-gate fedora-rpm-build fedora-rpm-lint fedora-repo fedora-publish-static verify-fedora-public-tree fedora-publication-preflight fedora-dnf-smoke fedora-local-gate fedora-container-gate fedora-public-url-smoke verify-user-manifest-dsl verify-user-runtime-gate verify-installed-user-manifest-runtime verify-installed-debian verify-installed-cli-gate verify-user-environment verify-user-init-migration autopkgtest-debian check-whitespace nix-check test compile compile-tests check-declare install install-elisp install-doc install-bin uninstall clean deb-clean distclean lint help smoke-render smoke-pairs-check smoke-eval-pairs-check smoke-build-pairs-check smoke-eval smoke-build smoke-nelisp smoke-nelix-nelisp smoke-nelix-cli-nelisp smoke-nelix-lock-schema smoke-nelix-lock-plan-apply smoke-nelix-lock-plan-apply-nelisp smoke-nelix-native-cli smoke-nelix-aot-cache-cli smoke-nelix-aot-engine-nelisp smoke-nelix-aot-cache-fast-lane smoke-nelix-aot-artifact-nelisp smoke-nelix-aot-native-cli-proof smoke-nelix-aot-native-artifact-host smoke-nelix-cli-image-build smoke-nelix-cli-image smoke-nelisp-capabilities smoke-nelisp-suite-readiness smoke-nelisp-suite-loadability smoke-nelisp-suite smoke-nelisp-suite-image-build smoke-nelisp-suite-image smoke-nelisp-local smoke-clean
+.PHONY: all check verify-local release-scope-audit release-scope-status release-scope-stage release-scope-stage-a release-scope-stage-b release-scope-stage-c release-scope-stage-d publication-local-gate publication-url-check publication-preflight publication-public-smoke deb-orig deb-source deb-source-lint deb-source-gate deb-build verify-deb-contents deb-lint deb-local-gate install-built-deb deb-release-gate deb-full-gate fix-debian-ownership apt-repo verify-apt-repo apt-repo-gate apt-sign-repo verify-signed-apt-repo apt-signed-repo-gate apt-publish-static verify-apt-public-tree apt-publication-preflight apt-http-smoke apt-http-gate apt-public-url-smoke fedora-source fedora-source-verify fedora-source-gate fedora-rpm-build fedora-rpm-lint fedora-repo fedora-publish-static verify-fedora-public-tree fedora-publication-preflight fedora-dnf-smoke fedora-local-gate fedora-container-gate fedora-public-url-smoke verify-user-manifest-dsl verify-user-runtime-gate verify-installed-user-manifest-runtime verify-installed-debian verify-installed-cli-gate verify-user-environment verify-user-init-migration autopkgtest-debian check-whitespace nix-check test compile compile-tests check-declare install install-elisp install-doc install-bin uninstall clean deb-clean distclean lint help smoke-render smoke-pairs-check smoke-eval-pairs-check smoke-build-pairs-check smoke-eval smoke-build smoke-nelisp smoke-nelix-nelisp smoke-nelix-cli-nelisp smoke-nelix-manifest-dsl-schema smoke-nelix-lock-schema smoke-nelix-lock-plan-apply smoke-nelix-lock-plan-apply-nelisp smoke-nelix-native-cli smoke-nelix-aot-cache-cli smoke-nelix-aot-engine-nelisp smoke-nelix-aot-cache-fast-lane smoke-nelix-aot-artifact-nelisp smoke-nelix-aot-native-cli-proof smoke-nelix-aot-native-artifact-host smoke-nelix-cli-image-build smoke-nelix-cli-image smoke-nelisp-capabilities smoke-nelisp-suite-readiness smoke-nelisp-suite-loadability smoke-nelisp-suite smoke-nelisp-suite-image-build smoke-nelisp-suite-image smoke-nelisp-local smoke-clean
 
 all: check
 
-check: lint test smoke-pairs-check smoke-render smoke-nelix-lock-schema smoke-nelix-native-cli smoke-nelix-aot-cache-cli
+check: lint test smoke-pairs-check smoke-render smoke-nelix-manifest-dsl-schema smoke-nelix-lock-schema smoke-nelix-native-cli smoke-nelix-aot-cache-cli
 
 verify-local: check nix-check smoke-eval smoke-build smoke-nelisp-local check-whitespace
 
@@ -624,6 +624,7 @@ help:
 	@echo "make smoke-nelix-aot-native-cli-proof — verify public standalone .neln native CLI proof"
 	@echo "make smoke-nelix-cli-image-build — build a NeLisp runtime-image probe at $(NELIX_CLI_IMAGE)"
 	@echo "make smoke-nelix-cli-image — verify explicit NeLisp runtime-image CLI mode"
+	@echo "make smoke-nelix-manifest-dsl-schema — verify manifest DSL v1 schema and CLI summary contract"
 	@echo "make smoke-nelix-lock-schema — verify lockfile schema, CLI summary, JSON, and migration contract"
 	@echo "make smoke-nelix-lock-plan-apply-nelisp — verify lock/plan/apply/rollback through standalone NeLisp"
 	@echo "make smoke-nelix-native-cli — verify native store CLI install/list/profile/activate/gc with fixture registry"
@@ -977,6 +978,11 @@ smoke-nelix-cli-nelisp:
 	    exit 1; \
 	  }
 	@echo "smoke-nelix-cli-nelisp: bin/nelix direct mode ran under $(NELISP)"
+
+smoke-nelix-manifest-dsl-schema:
+	python3 -m json.tool docs/schema/nelix-manifest-dsl-v1.schema.json >/dev/null
+	$(EMACS_BATCH) -l ert -l test/nelix-cli-test.el \
+	  --eval '(ert-run-tests-batch-and-exit "nelix-cli-test-schema-\\(json-exposes-dsl-and-lock-contracts\\|manifest-dsl-contract-matches-json-schema-file\\|selects-single-contract\\)")'
 
 smoke-nelix-lock-schema:
 	tools/nelix-lock-schema-gate.sh

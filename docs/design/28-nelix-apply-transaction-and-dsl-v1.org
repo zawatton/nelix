@@ -443,7 +443,7 @@ The v1 DSL target syntax is:
  (backend-policy
   (gnu/linux nix nelix-native apt dnf)
   (darwin nix nelix-native)
- (windows-nt nix))
+  (windows-nt nix))
  (emacs-packages nelix-package-emacs-packages)
  (linux-packages nelix-linux-base-nix-packages)
  (bootstrap-apt-packages nelix-linux-bootstrap-apt-packages)
@@ -457,7 +457,12 @@ Rules:
 
 - =nelix-dsl.el= is the public require boundary for DSL v1; it must provide
   =nelix-environment= and report =nelix-dsl-version= as =1=;
-- subform names are stable once v1 ships;
+- subform names, manifest-key mapping, backend symbols, package row option
+  names, option value types, remove-policy values, deferred forms, and
+  forbidden private-data forms are the DSL v1 compatibility surface;
+- any incompatible change to that surface requires a new schema version, while
+  additive metadata keys in normalized manifests are allowed when old readers
+  can ignore them safely;
 - each subform is single-assignment except repeated =package=,
   =linux-package=, and =version-pin= rows; invalid duplicates are hard errors
   in both the normal Emacs loader and the standalone NeLisp fast validator;
@@ -465,6 +470,10 @@ Rules:
   backward compatibility;
 - package list subforms accept either a variable symbol or literal package
   symbols/strings;
+- =emacs-packages= and =linux-packages= are bulk desired-state declarations.
+  They preserve the existing init migration path from package variables and do
+  not carry per-package metadata; use =package= / =linux-package= rows when
+  metadata is needed;
 - =package= and =linux-package= are first-class v1 environment rows.  They
   record metadata and also contribute their name to the normalized =:emacs= or
   =:linux= target list so existing plan/apply remains the only mutation path;
@@ -491,6 +500,10 @@ Rules:
   =nelix-native= are profile-owning backends today; OS package managers are
   declared as bootstrap/fallback capabilities until their mutation backends are
   explicitly implemented;
+- =apt=, =dnf=, =homebrew=, =scoop=, and =winget= are accepted as intent and
+  backend-policy names, but their system mutation semantics are not part of DSL
+  v1.  They must not be treated as transactional until backend-specific
+  transaction contracts exist;
 - unknown subforms are hard errors;
 - the DSL must expand to =nelix-manifest= so existing lock/plan/apply code stays
   the single implementation path;
