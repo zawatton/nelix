@@ -315,6 +315,14 @@ require_autopkgtest_gate_strength() {
     'run_json transaction_show_ok transaction show "$ok_record"'
   require_contains packaging/verify-installed-nelix-cli-gate.sh \
     '"rollback-plan":'
+  require_contains packaging/verify-installed-nelix-cli-gate.sh \
+    'assert_transaction_record_count apply-dry-run'
+  require_contains packaging/verify-installed-nelix-cli-gate.sh \
+    'assert_transaction_record_count locked-apply-dry-run'
+  require_contains tools/nelix-lock-plan-apply-gate.sh \
+    'assert_transaction_record_count apply-dry-run'
+  require_contains tools/nelix-lock-plan-apply-gate.sh \
+    'assert_transaction_record_count locked-apply-dry-run'
   require_contains packaging/verify-nelix-native-cli-gate.sh \
     "registry list --system x86_64-linux"
   require_contains packaging/verify-nelix-native-cli-gate.sh \

@@ -81,6 +81,8 @@ Safety invariants:
   that real apply would execute after remove-safety confirmation.  The
   installed CLI gate compares =plan --dry-run= and =apply --dry-run= JSON for
   =install=, =remove=, =keep=, =protected=, =commands=, =count=, and =empty=.
+  It also asserts that =plan=, =plan --dry-run=, =apply --dry-run=, and
+  =apply --locked --dry-run= do not create =apply-*.el= transaction records.
 - *lockfile timing*: =apply --locked= validates and loads the lockfile before
   transaction begin and before any profile mutation.  Current apply does not
   rewrite the lockfile; lockfile creation, migration, and refresh are explicit
@@ -249,7 +251,7 @@ follows:
 | 実行 plan の保存 | Write the full =nelix-plan= plist into the transaction record at =started=, before any install/remove command. |
 | 成功済み step の記録 | Rewrite the transaction record after each successful command row with appended =:executed= rows and =:status running=. |
 | 失敗時 rollback plan | Derive =:rollback-plan= from =:before-generation= and =:rollback-on-error=.  On failure, attempt rollback when available and persist =:rollback=. |
-| =--dry-run= と実 apply の差分保証 | =plan --dry-run= and =apply --dry-run= share the same plan path and gates compare =install=, =remove=, =keep=, =protected=, and =commands=.  Dry-run never writes transaction records or queries generation history. |
+| =--dry-run= と実 apply の差分保証 | =plan --dry-run= and =apply --dry-run= share the same plan path and gates compare =install=, =remove=, =keep=, =protected=, and =commands=.  Dry-run never writes transaction records or queries generation history; installed and source CLI gates assert the transaction record count is unchanged across dry-run review commands. |
 | lockfile 更新タイミング | =apply --locked= validates the lock before transaction begin.  =apply= does not rewrite locks; =nelix lock= and =nelix lock migrate= are the explicit lock mutation commands. |
 
 Current implementation evidence:

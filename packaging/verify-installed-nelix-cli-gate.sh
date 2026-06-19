@@ -444,6 +444,26 @@ latest_transaction_record() {
   ls -t "$txn_dir"/apply-*.el | head -n 1
 }
 
+transaction_record_count() {
+  txn_dir="$tmp/state/nelix/transactions"
+  if [ ! -d "$txn_dir" ]; then
+    printf '0\n'
+  else
+    find "$txn_dir" -maxdepth 1 -type f -name 'apply-*.el' | wc -l
+  fi
+}
+
+assert_transaction_record_count() {
+  label="$1"
+  expected="$2"
+  actual="$(transaction_record_count)"
+  if [ "$actual" -ne "$expected" ]; then
+    echo "nelix installed CLI gate: $label changed transaction record count: expected=$expected actual=$actual" >&2
+    find "$tmp/state/nelix/transactions" -maxdepth 1 -type f -name 'apply-*.el' -print 2>/dev/null >&2 || true
+    exit 1
+  fi
+}
+
 "$nelix_bin" --help | grep -Fq 'registry list [--system SYSTEM]' || {
   echo "nelix installed CLI gate: help omits registry list command" >&2
   exit 1
@@ -731,12 +751,14 @@ expect_json lock_check '"ok":true'
 expect_json lock_check '"schema-check":'
 expect_json lock_check '"schema-version":2'
 
+dry_run_record_count_before="$(transaction_record_count)"
 run_json plan plan "$manifest" --dry-run
 expect_json plan '"status":"planned"'
 expect_json plan '"action":"install"'
 expect_json plan '"name":"ripgrep"'
 expect_json plan '"action":"remove"'
 expect_json plan '"name":"bat"'
+assert_transaction_record_count plan-dry-run "$dry_run_record_count_before"
 
 run_json dry_run apply "$manifest" --dry-run
 expect_json dry_run '"status":"dry-run"'
@@ -745,6 +767,7 @@ expect_json dry_run '"rollback-on-error":true'
 validate_plan_apply_dry_run_equivalence
 reject_log 'profile install'
 reject_log 'profile remove'
+assert_transaction_record_count apply-dry-run "$dry_run_record_count_before"
 
 : >"$fake_log"
 run_json locked_dry_run apply "$manifest" --locked --dry-run
@@ -755,6 +778,7 @@ expect_json locked_dry_run '"lock-check":'
 expect_json locked_dry_run '"locked-installed":'
 reject_log 'profile install'
 reject_log 'profile remove'
+assert_transaction_record_count locked-apply-dry-run "$dry_run_record_count_before"
 
 : >"$fake_log"
 run_failing_json no_rollback_failed_apply fd apply "$manifest" --locked --allow-remove-count 1 --no-rollback

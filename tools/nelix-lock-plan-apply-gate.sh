@@ -174,6 +174,27 @@ latest_transaction_record() {
   ls -t "$txn_dir"/apply-*.el | head -n 1
 }
 
+transaction_record_count() {
+  local txn_dir="$TMP_DIR/state/nelix/transactions"
+  if [ ! -d "$txn_dir" ]; then
+    printf '0\n'
+  else
+    find "$txn_dir" -maxdepth 1 -type f -name 'apply-*.el' | wc -l
+  fi
+}
+
+assert_transaction_record_count() {
+  local label="$1"
+  local expected="$2"
+  local actual
+  actual="$(transaction_record_count)"
+  if [ "$actual" -ne "$expected" ]; then
+    echo "nelix_lock_gate_fail label=$label reason=transaction-record-count expected=$expected actual=$actual" >&2
+    find "$TMP_DIR/state/nelix/transactions" -maxdepth 1 -type f -name 'apply-*.el' -print 2>/dev/null >&2 || true
+    exit 1
+  fi
+}
+
 run_nelix lock --json lock "$MANIFEST"
 LOCK_FILE="$MANIFEST.nelix-lock"
 test -f "$LOCK_FILE" || {
@@ -188,6 +209,7 @@ expect_out lock '"packages":'
 expect_out lock '"schema":"nelix-lock"'
 expect_out lock '"schema-version":2'
 
+dry_run_record_count_before="$(transaction_record_count)"
 run_nelix plan --json plan "$MANIFEST"
 expect_out plan '"status":"planned"'
 expect_out plan '"lock-present":true'
@@ -198,6 +220,7 @@ expect_out plan '"action":"remove"'
 expect_out plan '"name":"bat"'
 expect_out plan '"profile","install","--profile"'
 expect_out plan '"profile","remove","bat"'
+assert_transaction_record_count plan "$dry_run_record_count_before"
 
 : >"$FAKE_LOG"
 run_nelix dry_run --json apply "$MANIFEST" --dry-run
@@ -208,6 +231,7 @@ expect_out dry_run '"remove-safety":'
 expect_out dry_run '"remove-count":1'
 reject_log 'profile install'
 reject_log 'profile remove'
+assert_transaction_record_count apply-dry-run "$dry_run_record_count_before"
 
 : >"$FAKE_LOG"
 run_nelix locked_dry_run --json apply "$MANIFEST" --locked --dry-run
@@ -218,6 +242,7 @@ expect_out locked_dry_run '"lock-check":'
 expect_out locked_dry_run '"locked-installed":'
 reject_log 'profile install'
 reject_log 'profile remove'
+assert_transaction_record_count locked-apply-dry-run "$dry_run_record_count_before"
 
 : >"$FAKE_LOG"
 run_nelix locked_apply --json apply "$MANIFEST" --locked --allow-remove-count 1
