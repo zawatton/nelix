@@ -835,6 +835,11 @@ expect_json transaction_show_no_rollback_error '"attempted":null'
 expect_json_any transaction_show_no_rollback_error \
   '"action":"install","name":"ripgrep"' \
   '"name":"ripgrep","action":"install"'
+run_failing_json transaction_recover_no_rollback fd transaction \
+  recover "$no_rollback_record" --dry-run
+expect_json transaction_recover_no_rollback '"status":"error"'
+expect_json transaction_recover_no_rollback 'rollback unavailable'
+expect_json transaction_recover_no_rollback 'rollback-disabled'
 
 : >"$fake_log"
 run_failing_json failed_apply fd apply "$manifest" --locked --allow-remove-count 1

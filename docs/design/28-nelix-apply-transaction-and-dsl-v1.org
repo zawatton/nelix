@@ -231,6 +231,12 @@ The =rollback-result-keys= schema entry lists the stable keys a failed apply may
 write under =:rollback=.  =:verified t= is the only success proof; command exit
 alone is not enough.
 
+Transaction record validation treats rollback unavailability as schema data,
+not free-form text.  When =:rollback-plan :available= is nil, =:reason= must be
+one of =transaction-disabled=, =rollback-disabled=, or
+=before-generation-missing=.  Unknown reasons are rejected before
+=transaction show= or =transaction recover= can trust the record.
+
 Failure signals =anvil-pkg-error= with:
 
 - human message including =rollback=ok= or =rollback=not-ok=;

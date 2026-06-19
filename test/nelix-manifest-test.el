@@ -800,6 +800,53 @@
                                     (cadr err)))))
       (delete-directory dir t))))
 
+(ert-deftest nelix-manifest-test-transaction-record-rejects-unstable-rollback-reason ()
+  "Unavailable rollback plans must use stable schema v1 reason labels."
+  (let* ((dir (make-temp-file "nelix-transaction-record-reason-" t))
+         (file (expand-file-name "apply-bad-reason.el" dir))
+         (record (list :schema "nelix-apply-transaction"
+                       :schema-version 1
+                       :id "apply-bad-reason"
+                       :status 'error
+                       :manifest "/tmp/manifest.el"
+                       :profile "/tmp/profile"
+                       :started-at "2026-06-19T00:00:00+0000"
+                       :updated-at "2026-06-19T00:00:00+0000"
+                       :plan '(:operation plan
+                               :manifest "/tmp/manifest.el"
+                               :commands nil)
+                       :transaction '(:enabled t
+                                      :backend nix
+                                      :profile nil
+                                      :system nil
+                                      :rollback-on-error nil
+                                      :generation-captured t
+                                      :rollback-available nil
+                                      :before-generation 7
+                                      :before-generation-error nil
+                                      :after-generation nil
+                                      :record-id "apply-bad-reason"
+                                      :record-file "/tmp/apply-bad-reason.el"
+                                      :record-started-at "2026-06-19T00:00:00+0000"
+                                      :record-status error)
+                       :executed nil
+                       :rollback-plan '(:available nil :reason "surprise")
+                       :rollback '(:attempted nil
+                                   :ok nil
+                                   :reason "rollback-disabled")
+                       :error "install failed")))
+    (unwind-protect
+        (progn
+          (nelix-manifest-test--write
+           dir "apply-bad-reason.el"
+           (concat (prin1-to-string record) "\n"))
+          (let ((err (should-error
+                      (nelix-transaction-record-read file)
+                      :type 'anvil-pkg-error)))
+            (should (string-match-p "unstable unavailable reason"
+                                    (cadr err)))))
+      (delete-directory dir t))))
+
 (ert-deftest nelix-manifest-test-apply-nelisp-installs-missing-via-nix ()
   "NeLisp runtime apply can dry-run the Nix convergence plan."
   (let ((dir (make-temp-file "nelix-manifest-nelisp-apply-" t))

@@ -1261,6 +1261,33 @@
            :type 'anvil-pkg-error))
       (delete-directory dir t))))
 
+(ert-deftest nelix-cli-test-transaction-recover-rejects-unavailable-rollback ()
+  "Transaction recovery refuses records whose rollback plan is unavailable."
+  (let* ((dir (make-temp-file "nelix-cli-transaction-no-rollback-" t))
+         (nelix-transaction-log-root dir)
+         (file (expand-file-name "apply-no-rollback.el" dir)))
+    (unwind-protect
+        (progn
+          (nelix-cli-test--write-transaction-record file 'error)
+          (let* ((record (nelix-transaction-record-read file))
+                 (record (plist-put
+                          record :rollback-plan
+                          '(:available nil :reason "rollback-disabled"))))
+            (with-temp-file file
+              (insert ";;; generated Nelix apply transaction record -*- lexical-binding: t; -*-\n\n")
+              (prin1 record (current-buffer))
+              (insert "\n")))
+          (let ((err (should-error
+                      (nelix-cli-dispatch
+                       '(:command "transaction"
+                         :args ("recover" "apply-no-rollback" "--dry-run")))
+                      :type 'anvil-pkg-error)))
+            (should (string-match-p "rollback unavailable"
+                                    (cadr err)))
+            (should (string-match-p "rollback-disabled"
+                                    (cadr err)))))
+      (delete-directory dir t))))
+
 (ert-deftest nelix-cli-test-formats-string-list-as-lines ()
   "Name-only CLI results stay useful without generic prin1 support."
   (should (equal (nelix-cli-format-result '("magit" "ripgrep") nil)

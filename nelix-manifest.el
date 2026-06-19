@@ -1854,6 +1854,14 @@ move transaction records outside the configured log root."
       (nelix-transaction--require-keys
        "record rollback-plan" rollback-plan
        nelix-transaction-rollback-plan-available-required-keys))
+    (unless (plist-get rollback-plan :available)
+      (let ((reason (plist-get rollback-plan :reason)))
+        (unless (and (stringp reason)
+                     (member reason
+                             nelix-transaction-rollback-unavailable-reasons))
+          (signal 'anvil-pkg-error
+                  (list (format "nelix transaction: record rollback-plan has unstable unavailable reason in %s: %S"
+                                file reason))))))
     (dolist (row (plist-get record :executed))
       (unless (and (listp row)
                    (plist-member row :action)
