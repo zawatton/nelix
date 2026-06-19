@@ -217,7 +217,7 @@ verify-deb-contents:
 	@test -f "$(DEB)" || { echo "missing Debian package: $(DEB)" >&2; exit 1; }
 	sh -n debian/tests/load
 	! grep -Eq '^Restrictions:.*(^|[[:space:],])superficial([[:space:],]|$$)' debian/tests/control
-	grep -q 'sh /usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh' debian/tests/load
+	grep -q 'bash /usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh' debian/tests/load
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/anvil-pkg.el | grep -q '"nelix/profile"'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-debian.sh'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-debian.sh | grep -Fq 'NELIX_USER_MANIFEST_LOCKED'

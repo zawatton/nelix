@@ -3,6 +3,7 @@ nelix (0.1.0-5) unstable; urgency=medium
   * Add a strict source-tree real user manifest NeLisp runtime gate.
   * Include the standalone-safe balanced JSON list builder for Nelix fast
     paths.
+  * Run the installed CLI autopkgtest verifier with bash explicitly.
 
  -- zawatton <zawatton@example.invalid>  Sat, 20 Jun 2026 01:51:36 +0900
 

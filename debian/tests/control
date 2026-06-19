@@ -1,3 +1,3 @@
 Tests: load
-Depends: @, emacs-nox | emacs
+Depends: @, bash, emacs-nox | emacs
 Restrictions: allow-stderr

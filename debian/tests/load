@@ -49,4 +49,4 @@ printf '%s\n' "$cli_version" | grep -q '"version":"0.1.0"' || {
   exit 1
 }
 
-sh /usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh
+bash /usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh
