@@ -1778,6 +1778,29 @@
                               (nelix-store-test--read-binary-file
                                path-fragment))))))
 
+(ert-deftest nelix-store-test-profile-activate-runtime-can-copy-profile-tree ()
+  "Runtime activation can materialize the profile tree without symlinks."
+  (nelix-store-test--with-temp-roots
+    (let* ((archive (nelix-store-test--make-tar-fixture
+                     (file-name-directory nelix-store-root)
+                     "fixture-runtime-copy"))
+           (recipe (nelix-store-test--fixture-recipe "fixture-runtime-copy"
+                                                     archive))
+           (nelix-profile-activation-link-mode 'copy)
+           (_report (nelix-native-install-recipe
+                     recipe "default" 'x86_64-linux))
+           (activation (nelix-profile-activate-runtime "default"))
+           (link-row (car (plist-get activation :links)))
+           (profile-link (plist-get link-row :link))
+           (target (plist-get link-row :target)))
+      (should (eq 'ok (plist-get activation :status)))
+      (should (eq 'copy (plist-get link-row :mode)))
+      (should (file-exists-p profile-link))
+      (when (fboundp 'file-symlink-p)
+        (should-not (file-symlink-p profile-link)))
+      (should (equal (nelix-store-test--read-binary-file target)
+                     (nelix-store-test--read-binary-file profile-link))))))
+
 (ert-deftest nelix-store-test-profile-activate-runtime-forces-posix-symlinks ()
   "Runtime activation creates profile symlinks when POSIX symlink mode is set."
   (when (eq system-type 'windows-nt)
