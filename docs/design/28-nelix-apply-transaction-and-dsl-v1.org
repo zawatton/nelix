@@ -122,6 +122,9 @@ nelix --json transaction show ~/.local/state/nelix/transactions/apply-....el
 manifest, command count, executed count, and rollback availability.
 =transaction show= returns the validated record body under =:record= so that
 the CLI status and the apply record status do not collide.
+Record validation rejects schema v1 files missing the stable top-level,
+=:plan=, =:transaction=, =:rollback-plan=, or executed-row keys needed for
+post-failure diagnosis.
 
 Failure signals =anvil-pkg-error= with:
 

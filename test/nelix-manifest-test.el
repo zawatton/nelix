@@ -515,6 +515,50 @@
                                (plist-get rollback :reason)))))))
       (delete-directory dir t))))
 
+(ert-deftest nelix-manifest-test-transaction-record-rejects-missing-required-keys ()
+  "Transaction records must keep the stable schema v1 key shape."
+  (let* ((dir (make-temp-file "nelix-transaction-record-shape-" t))
+         (file (expand-file-name "apply-bad.el" dir))
+         (record (list :schema "nelix-apply-transaction"
+                       :schema-version 1
+                       :id "apply-bad"
+                       :status 'ok
+                       :manifest "/tmp/manifest.el"
+                       :profile "/tmp/profile"
+                       :started-at "2026-06-19T00:00:00+0000"
+                       :updated-at "2026-06-19T00:00:00+0000"
+                       :plan '(:operation plan
+                               :manifest "/tmp/manifest.el"
+                               :commands nil)
+                       :transaction '(:enabled t
+                                      :backend nix
+                                      :profile nil
+                                      :system nil
+                                      :rollback-on-error t
+                                      :generation-captured t
+                                      :rollback-available t
+                                      :before-generation 7
+                                      :before-generation-error nil
+                                      :after-generation 7
+                                      :record-id "apply-bad"
+                                      :record-file "/tmp/apply-bad.el"
+                                      :record-started-at "2026-06-19T00:00:00+0000"
+                                      :record-status ok)
+                       :executed nil
+                       :rollback nil
+                       :error nil)))
+    (unwind-protect
+        (progn
+          (nelix-manifest-test--write
+           dir "apply-bad.el"
+           (concat (prin1-to-string record) "\n"))
+          (let ((err (should-error
+                      (nelix-transaction-record-read file)
+                      :type 'anvil-pkg-error)))
+            (should (string-match-p "rollback-plan"
+                                    (cadr err)))))
+      (delete-directory dir t))))
+
 (ert-deftest nelix-manifest-test-apply-nelisp-installs-missing-via-nix ()
   "NeLisp runtime apply can dry-run the Nix convergence plan."
   (let ((dir (make-temp-file "nelix-manifest-nelisp-apply-" t))

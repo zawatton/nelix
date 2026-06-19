@@ -67,16 +67,33 @@
            :profile "/tmp/profile"
            :started-at "2026-06-19T18:00:00+0900"
            :updated-at "2026-06-19T18:00:01+0900"
-           :plan '(:commands ((:operation install
+           :plan '(:operation apply
+                   :manifest "/tmp/manifest.el"
+                   :commands ((:operation install
                                 :name "ripgrep"
                                 :argv ("profile" "install" "ripgrep"))))
            :transaction '(:enabled t
+                          :backend nix
+                          :profile "/tmp/profile"
+                          :system nil
                           :rollback-on-error t
-                          :before-generation 7)
-           :executed '((:operation install :name "ripgrep" :ok t))
+                          :generation-captured t
+                          :rollback-available t
+                          :before-generation 7
+                          :before-generation-error nil
+                          :after-generation 7
+                          :record-id "apply-alpha"
+                          :record-file "/tmp/apply-alpha.el"
+                          :record-started-at "2026-06-19T18:00:00+0900"
+                          :record-status error)
+           :executed '((:operation install
+                         :action install
+                         :name "ripgrep"
+                         :ok t))
            :rollback-plan '(:available t
                             :operation rollback
-                            :generation 7)
+                            :generation 7
+                            :argv ("profile" "rollback" "--to" "7"))
            :rollback (and (eq status 'error)
                           '(:attempted t :ok t :generation 7))
            :error (and (eq status 'error) "install failed"))

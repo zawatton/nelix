@@ -92,6 +92,23 @@
 (defconst nelix-transaction-schema-version 1
   "Current stable Nelix apply transaction record schema version.")
 
+(defconst nelix-transaction-record-required-keys
+  '(:schema :schema-version :id :status :manifest :profile
+    :started-at :updated-at :plan :transaction :executed
+    :rollback-plan :rollback :error)
+  "Required top-level keys in a Nelix apply transaction record.")
+
+(defconst nelix-transaction-plan-required-keys
+  '(:operation :manifest :commands)
+  "Required plan keys in a Nelix apply transaction record.")
+
+(defconst nelix-transaction-metadata-required-keys
+  '(:enabled :backend :profile :system :rollback-on-error
+    :generation-captured :rollback-available :before-generation
+    :before-generation-error :after-generation :record-id
+    :record-file :record-started-at :record-status)
+  "Required transaction metadata keys in a Nelix apply transaction record.")
+
 (defcustom nelix-transaction-log-root nil
   "Directory used for Nelix apply transaction records.
 
@@ -1311,6 +1328,53 @@ move transaction records outside the configured log root."
               (plist-get result :executed)))))
     result))
 
+(defun nelix-transaction--require-keys (where plist keys)
+  "Signal unless PLIST contains every key in KEYS for WHERE."
+  (dolist (key keys)
+    (unless (plist-member plist key)
+      (signal 'anvil-pkg-error
+              (list (format "nelix transaction: %s is missing required key %S"
+                            where key))))))
+
+(defun nelix-transaction--validate-record-shape (record file)
+  "Validate stable transaction RECORD shape read from FILE."
+  (nelix-transaction--require-keys
+   "record" record nelix-transaction-record-required-keys)
+  (let ((plan (plist-get record :plan))
+        (transaction (plist-get record :transaction))
+        (rollback-plan (plist-get record :rollback-plan)))
+    (unless (listp plan)
+      (signal 'anvil-pkg-error
+              (list (format "nelix transaction: record plan is not a plist in %s"
+                            file))))
+    (unless (listp transaction)
+      (signal 'anvil-pkg-error
+              (list (format "nelix transaction: record transaction is not a plist in %s"
+                            file))))
+    (unless (listp rollback-plan)
+      (signal 'anvil-pkg-error
+              (list (format "nelix transaction: record rollback-plan is not a plist in %s"
+                            file))))
+    (nelix-transaction--require-keys
+     "record plan" plan nelix-transaction-plan-required-keys)
+    (nelix-transaction--require-keys
+     "record transaction" transaction
+     nelix-transaction-metadata-required-keys)
+    (nelix-transaction--require-keys
+     "record rollback-plan" rollback-plan '(:available))
+    (when (plist-get rollback-plan :available)
+      (nelix-transaction--require-keys
+       "record rollback-plan" rollback-plan
+       '(:operation :generation :argv)))
+    (dolist (row (plist-get record :executed))
+      (unless (and (listp row)
+                   (plist-member row :action)
+                   (plist-member row :name))
+        (signal 'anvil-pkg-error
+                (list (format "nelix transaction: executed row is missing action/name in %s"
+                              file))))))
+  record)
+
 (defun nelix-transaction-record-read (file)
   "Read and validate a generated Nelix apply transaction record FILE."
   (unless (anvil-pkg-compat-file-exists-p file)
@@ -1327,7 +1391,8 @@ move transaction records outside the configured log root."
       (signal 'anvil-pkg-error
               (list (format "nelix transaction: unsupported record schema in %s"
                             file))))
-    (nelix-transaction--normalize-record record)))
+    (setq record (nelix-transaction--normalize-record record))
+    (nelix-transaction--validate-record-shape record file)))
 
 (defun nelix-transaction--record-files ()
   "Return generated transaction record files in the transaction log root."
