@@ -255,6 +255,54 @@ Expected value for the smoke payload is 556:
         "error\tunsupported-native-id-upgrade\n")
     "error\tunsupported-native-id-upgrade\n"))
 
+(defun nelix-aot-native-cli-target-id-tag-at (text pos)
+  "Return 1 when TEXT has a target-id record tag at POS."
+  (if (= (str-byte-at text pos) 116)
+      (if (= (str-byte-at text (+ pos 1)) 97)
+          (if (= (str-byte-at text (+ pos 2)) 114)
+              (if (= (str-byte-at text (+ pos 3)) 103)
+                  (if (= (str-byte-at text (+ pos 4)) 101)
+                      (if (= (str-byte-at text (+ pos 5)) 116)
+                          (if (= (str-byte-at text (+ pos 6)) 45)
+                              (if (= (str-byte-at text (+ pos 7)) 105)
+                                  (if (= (str-byte-at text (+ pos 8)) 100)
+                                      1
+                                    0)
+                                0)
+                            0)
+                        0)
+                    0)
+                0)
+            0)
+        0)
+    0))
+
+(defun nelix-aot-native-cli-count-target-id-loop (text pos limit count)
+  "Count target-id record tags in TEXT from POS up to LIMIT."
+  (if (>= pos limit)
+      count
+    (nelix-aot-native-cli-count-target-id-loop
+     text
+     (+ pos 1)
+     limit
+     (if (= (nelix-aot-native-cli-target-id-tag-at text pos) 1)
+         (+ count 1)
+       count))))
+
+(defun nelix-aot-native-cli-count-target-id (text)
+  "Return the number of target-id record tags in TEXT."
+  (nelix-aot-native-cli-count-target-id-loop
+   text 0 (- (str-len text) 8) 0))
+
+(defun nelix-aot-native-cli-large-id-scan-proof (text)
+  "Return a compact proof for a larger numeric-ID manifest payload.
+The expected gate payload has 204 target-id rows.  The extra points prove
+that the payload is large enough to exercise the standalone string scanner
+and that it still starts with the Nelix AOT protocol header."
+  (+ (nelix-aot-native-cli-count-target-id text)
+     (if (>= (str-len text) 2500) 1 0)
+     (if (= (str-byte-at text 0) 78) 1 0)))
+
 (provide 'nelix-aot-native-cli-proof)
 
 ;;; nelix-aot-native-cli-proof.el ends here

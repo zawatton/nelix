@@ -82,4 +82,22 @@ subset_cli_id_upgrade_expected_lisp='"operation\tupgrade\nupgrade\tmagit\npinned
   exit 1
 }
 
+large_id_payload="$(
+  {
+    printf 'NELIX-AOT-MANIFEST-V1\n'
+    i=1
+    while [ "$i" -le 204 ]; do
+      id=$(( (i - 1) % 4 + 1 ))
+      printf 'target-id\t%s\t%s\n' "$id" "$id"
+      i=$(( i + 1 ))
+    done
+    printf 'pin-id\t2\ninstalled-id\t1\ninstalled-id\t2\nend\n'
+  }
+)"
+large_id_scan_proof="$("$NELISP" native-exec-elisp-artifact "$artifact" nelix-aot-native-cli-large-id-scan-proof "$large_id_payload")"
+test "$large_id_scan_proof" = "206" || {
+  echo "error: standalone large ID scan proof returned $large_id_scan_proof" >&2
+  exit 1
+}
+
 echo "nelix-aot-native-cli-proof-gate: standalone .neln CLI proof passed"
