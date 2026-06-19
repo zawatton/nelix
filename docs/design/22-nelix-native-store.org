@@ -1218,7 +1218,7 @@ The next concrete deliverables should be:
     remove stale dependency/app shims and =active/profile= files while keeping
     the original fixture tool executable through the regenerated profile tree.
     The verifier emits explicit MVP checkpoint lines for recipe registry,
-    fetch, hash verification, unpack, profile activation, rollback, and
+    fetch, hash verification, unpack, profile symlink, rollback, and
     lockfile recording; Debian package content checks ensure those checkpoint
     calls remain packaged.
 
