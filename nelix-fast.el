@@ -348,11 +348,16 @@ prescient-1 from collapsing to the same target."
     (dolist (target targets (nreverse rows))
       (push (nelix-fast--target-row target) rows))))
 
-(defun nelix-fast--compile-manifest-fields
-    (file name profile imports emacs linux debian-tools bootstrap-apt pins)
-  "Compile manifest field values into the fast manifest shape."
-  (let ((rows (nelix-fast--target-rows-from-fields emacs linux debian-tools))
-        (desired-set (make-hash-table :test 'equal))
+(defun nelix-fast--manifest-shape
+    (file name profile imports bootstrap-apt rows pins)
+  "Assemble the canonical fast manifest plist from already-compiled parts.
+
+Single source of truth for the fast manifest shape so the field-based
+entry point (`nelix-fast--compile-manifest-fields', used by the DSL v1
+`nelix-environment' fast loader) and the normalized-manifest entry point
+(`nelix-fast--compile-manifest', the `nelix-manifest-load' fallback)
+cannot drift apart -- e.g. a key added to one branch but not the other."
+  (let ((desired-set (make-hash-table :test 'equal))
         (desired-names nil)
         (pins-set (nelix-fast--name-set pins)))
     (dolist (row rows)
@@ -376,33 +381,24 @@ prescient-1 from collapsing to the same target."
           :pins-set pins-set
           :bootstrap-apt bootstrap-apt)))
 
+(defun nelix-fast--compile-manifest-fields
+    (file name profile imports emacs linux debian-tools bootstrap-apt pins)
+  "Compile manifest field values into the fast manifest shape."
+  (nelix-fast--manifest-shape
+   file name profile imports bootstrap-apt
+   (nelix-fast--target-rows-from-fields emacs linux debian-tools)
+   pins))
+
 (defun nelix-fast--compile-manifest (manifest)
   "Compile normalized MANIFEST into the fast manifest shape."
-  (let ((rows (nelix-fast--target-rows manifest))
-        (desired-set (make-hash-table :test 'equal))
-        (desired-names nil)
-        (pins (plist-get manifest :pins))
-        (pins-set (nelix-fast--name-set (plist-get manifest :pins))))
-    (dolist (row rows)
-      (push (nelix-fast--row-name row) desired-names)
-      (dolist (candidate (nelix-fast--row-candidates row))
-        (puthash candidate t desired-set)
-        (puthash (nelix-fast--strip-duplicate-suffix candidate)
-                 t
-                 desired-set)))
-    (list :file (plist-get manifest :file)
-          :name (plist-get manifest :name)
-          :profile (plist-get manifest :profile)
-          :imports (plist-get manifest :imports)
-          :backend 'nix
-          :backend-selection '(:backend nix :system x86_64-linux :fallback :nelisp-fast)
-          :system 'x86_64-linux
-          :targets rows
-          :desired-order (nreverse desired-names)
-          :desired-set desired-set
-          :pins-order pins
-          :pins-set pins-set
-          :bootstrap-apt (plist-get manifest :bootstrap-apt))))
+  (nelix-fast--manifest-shape
+   (plist-get manifest :file)
+   (plist-get manifest :name)
+   (plist-get manifest :profile)
+   (plist-get manifest :imports)
+   (plist-get manifest :bootstrap-apt)
+   (nelix-fast--target-rows manifest)
+   (plist-get manifest :pins)))
 
 (defun nelix-fast-load-manifest (manifest-file)
   "Load MANIFEST-FILE and compile it into the fast manifest shape."
