@@ -714,6 +714,28 @@ run_failing_json raw_private_validate none validate "$raw_private_manifest"
 expect_json raw_private_validate '"status":"error"'
 expect_json raw_private_validate 'private data option :secret'
 
+dsl_private_form_manifest="$tmp/dsl-private-form.el"
+cat >"$dsl_private_form_manifest" <<'EOF'
+(require 'nelix-dsl)
+(nelix-environment
+ (name "installed-cli-dsl-private-form")
+ (secret github-token "token-value"))
+EOF
+run_failing_json dsl_private_form_validate none validate "$dsl_private_form_manifest"
+expect_json dsl_private_form_validate '"status":"error"'
+expect_json dsl_private_form_validate 'private data form secret'
+
+dsl_private_option_manifest="$tmp/dsl-private-option.el"
+cat >"$dsl_private_option_manifest" <<'EOF'
+(require 'nelix-dsl)
+(nelix-environment
+ (name "installed-cli-dsl-private-option")
+ (package magit :private-repo "git@example.invalid:private/magit.git"))
+EOF
+run_failing_json dsl_private_option_validate none validate "$dsl_private_option_manifest"
+expect_json dsl_private_option_validate '"status":"error"'
+expect_json dsl_private_option_validate 'private data option :private-repo'
+
 run_json dsl_plan plan "$dsl_manifest" --dry-run
 expect_json dsl_plan '"status":"planned"'
 expect_json dsl_plan '"backend":"nix"'
