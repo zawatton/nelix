@@ -15,7 +15,7 @@
 (require 'cl-lib)
 (require 'anvil-pkg-dsl)
 
-(defvar anvil-pkg-emacs--render-fetch-fn)
+(defvar anvil-pkg-emacs--render-fetch-fn nil)
 
 (declare-function anvil-pkg-render-example "scripts/anvil-pkg-render")
 (declare-function anvil-pkg-render-example-attr "scripts/anvil-pkg-render")
@@ -25,6 +25,23 @@
   (declare (indent 0))
   `(let ((anvil-pkg--registry (make-hash-table :test 'eq)))
      ,@body))
+
+(defun anvil-pkg-dsl-test--contains-p (needle haystack)
+  "Return non-nil when literal NEEDLE occurs in HAYSTACK.
+Keep this helper regex-free so the standalone NeLisp suite does
+not depend on regex features for plain generated-output checks."
+  (let ((n-len (length needle))
+        (h-len (length haystack))
+        (i 0)
+        found)
+    (if (= n-len 0)
+        t
+      (while (and (not found)
+                  (<= (+ i n-len) h-len))
+        (when (equal needle (substring haystack i (+ i n-len)))
+          (setq found t))
+        (setq i (1+ i)))
+      found)))
 
 ;;;; --- pkg-define / parser ---------------------------------------------------
 
@@ -439,6 +456,67 @@ cargoDeps, or cargoLock must be set'."
       (should (equal "melpa" (plist-get bs :format)))
       (should (eq t (plist-get bs :native-comp))))))
 
+(ert-deftest anvil-pkg-dsl-test-define-build-system-emacs-package-pname ()
+  ":pname round-trips into the IR build-system plist."
+  (anvil-pkg-dsl-test--with-clean-registry
+    (eval '(pkg-define emacs-async
+             (version "0.0.0")
+             (source (github-fetch :owner "jwiegley"
+                                   :repo "emacs-async"
+                                   :rev "rev"
+                                   :sha256 "sha256-async"))
+             (build-system (emacs-package :format "melpa"
+                                          :pname "async")))
+          t)
+    (let ((bs (plist-get (gethash 'emacs-async anvil-pkg--registry) :build-system)))
+      (should (eq 'emacs-package (plist-get bs :type)))
+      (should (equal "melpa" (plist-get bs :format)))
+      (should (equal "async" (plist-get bs :pname))))))
+
+(ert-deftest anvil-pkg-dsl-test-define-build-system-emacs-package-ignore-compilation-error ()
+  ":ignore-compilation-error round-trips into the IR build-system plist."
+  (anvil-pkg-dsl-test--with-clean-registry
+    (eval '(pkg-define noisy-elisp
+             (version "0.0.0")
+             (source (github-fetch :owner "example"
+                                   :repo "noisy-elisp"
+                                   :rev "rev"
+                                   :sha256 "sha256-noisy"))
+             (build-system (emacs-package :format "melpa"
+                                          :ignore-compilation-error t)))
+          t)
+    (let ((bs (plist-get (gethash 'noisy-elisp anvil-pkg--registry) :build-system)))
+      (should (eq 'emacs-package (plist-get bs :type)))
+      (should (equal "melpa" (plist-get bs :format)))
+      (should (eq t (plist-get bs :ignore-compilation-error))))))
+
+(ert-deftest anvil-pkg-dsl-test-define-rejects-bad-emacs-package-pname ()
+  ":pname must be a non-empty string."
+  (should-error
+   (macroexpand-1
+    '(pkg-define emacs-async
+       (version "0.0.0")
+       (source (github-fetch :owner "jwiegley"
+                             :repo "emacs-async"
+                             :rev "rev"
+                             :sha256 "sha256-async"))
+       (build-system (emacs-package :format "melpa" :pname async))))
+   :type 'anvil-pkg-dsl-error))
+
+(ert-deftest anvil-pkg-dsl-test-define-rejects-bad-ignore-compilation-error ()
+  ":ignore-compilation-error must be boolean."
+  (should-error
+   (macroexpand-1
+    '(pkg-define noisy-elisp
+       (version "0.0.0")
+       (source (github-fetch :owner "example"
+                             :repo "noisy-elisp"
+                             :rev "rev"
+                             :sha256 "sha256-noisy"))
+       (build-system (emacs-package :format "melpa"
+                                    :ignore-compilation-error yes))))
+   :type 'anvil-pkg-dsl-error))
+
 (ert-deftest anvil-pkg-dsl-test-define-rejects-native-comp-on-non-emacs-package ()
   ":native-comp on stdenv / rust / python / go raises at parse time (L13)."
   (should-error
@@ -475,7 +553,7 @@ Phase 4-E L28: default :files comes from
           (concat "    (magit :fetcher git :url "
                   "\"https://github.com/magit/magit\" :files "
                   (format "(%s)"
-                          (mapconcat (lambda (f) (format "%S" f))
+                          (mapconcat #'anvil-pkg--render-elisp-literal
                                      anvil-pkg--default-melpa-files
                                      " "))
                   ")\n"))
@@ -491,13 +569,47 @@ Phase 4-E L28: default :files comes from
                     "  };\n"
                     "  packageRequires = with pkgs.emacsPackages; [ dash transient ];\n"
                     "  postUnpack = ''\n"
-                    "    mkdir -p $sourceRoot/recipes\n"
-                    "    cat > $sourceRoot/recipes/magit <<'ANVIL_PKG_RECIPE_EOF'\n"
+                    "    mkdir -p \"$NIX_BUILD_TOP/recipes\"\n"
+                    "    cat > \"$NIX_BUILD_TOP/recipes/magit\" <<'ANVIL_PKG_RECIPE_EOF'\n"
                     recipe-line
                     "    ANVIL_PKG_RECIPE_EOF\n"
                     "  '';\n"
                     "}")))
     (should (equal expected (anvil-pkg-render-nix ir)))))
+
+(ert-deftest anvil-pkg-dsl-test-render-emacs-package-ignore-compilation-error ()
+  "Renderer emits ignoreCompilationError for emacs-package builders."
+  (let* ((ir '(:name noisy-elisp
+               :version "0.0.0"
+               :source (:type github-fetch
+                        :owner "example"
+                        :repo "noisy-elisp"
+                        :rev "rev"
+                        :sha256 "sha256-noisy")
+               :build-system (:type emacs-package
+                              :format "trivial"
+                              :ignore-compilation-error t)))
+         (out (anvil-pkg-render-nix ir)))
+    (should (string-match-p "  ignoreCompilationError = true;" out))))
+
+(ert-deftest anvil-pkg-dsl-test-render-emacs-package-pname-golden ()
+  ":pname overrides derivation pname and synthetic MELPA recipe name."
+  (let* ((ir '(:name emacs-async
+               :version "0.0.0"
+               :source (:type github-fetch
+                        :owner "jwiegley"
+                        :repo "emacs-async"
+                        :rev "rev"
+                        :sha256 "sha256-async")
+               :build-system (:type emacs-package
+                              :format "melpa"
+                              :pname "async")))
+         (out (anvil-pkg-render-nix ir)))
+    (should (string-match-p "  pname = \"async\";" out))
+    (should (string-match-p "cat > \"\\$NIX_BUILD_TOP/recipes/async\"" out))
+    (should (string-match-p
+             "(async :fetcher git :url \"https://github\\.com/jwiegley/emacs-async\""
+             out))))
 
 (ert-deftest anvil-pkg-dsl-test-render-emacs-package-native-comp-golden ()
   "Renderer wraps with (emacsPackagesFor pkgs.emacs) when :native-comp t."
@@ -538,16 +650,18 @@ Phase 4-E L28: synth uses the full default :files spec when
                         :sha256 "sha256-helm")
                :build-system (:type emacs-package :format "melpa")))
          (out (anvil-pkg-render-nix ir)))
-    (should (string-match-p "postUnpack = ''" out))
-    (should (string-match-p "mkdir -p \\$sourceRoot/recipes" out))
-    (should (string-match-p "cat > \\$sourceRoot/recipes/helm" out))
-    (should (string-match-p
-             "(helm :fetcher git :url \"https://github\\.com/emacs-helm/helm\" :files ("
+    (should (anvil-pkg-dsl-test--contains-p "postUnpack = ''" out))
+    (should (anvil-pkg-dsl-test--contains-p
+             "mkdir -p \"$NIX_BUILD_TOP/recipes\"" out))
+    (should (anvil-pkg-dsl-test--contains-p
+             "cat > \"$NIX_BUILD_TOP/recipes/helm\"" out))
+    (should (anvil-pkg-dsl-test--contains-p
+             "(helm :fetcher git :url \"https://github.com/emacs-helm/helm\" :files ("
              out))
     ;; L28: new default expands to lisp/*.el etc., so the synth carries
     ;; more than the bare ("*.el") glob.
-    (should (string-match-p "\"lisp/\\*\\.el\"" out))
-    (should (string-match-p ":exclude" out))))
+    (should (anvil-pkg-dsl-test--contains-p "\"lisp/*.el\"" out))
+    (should (anvil-pkg-dsl-test--contains-p ":exclude" out))))
 
 (ert-deftest anvil-pkg-dsl-test-melpa-synth-auto-with-git-fetch ()
   "L23: :format \"melpa\" + git-fetch + default `auto' uses the upstream URL.
@@ -560,12 +674,12 @@ Phase 4-E L28: default :files spec is the full package-build glob."
                         :sha256 "sha256-myelp")
                :build-system (:type emacs-package :format "melpa")))
          (out (anvil-pkg-render-nix ir)))
-    (should (string-match-p "postUnpack = ''" out))
-    (should (string-match-p
-             "(myelp :fetcher git :url \"https://example\\.com/myelp\\.git\" :files ("
+    (should (anvil-pkg-dsl-test--contains-p "postUnpack = ''" out))
+    (should (anvil-pkg-dsl-test--contains-p
+             "(myelp :fetcher git :url \"https://example.com/myelp.git\" :files ("
              out))
-    (should (string-match-p "\"lisp/\\*\\.el\"" out))
-    (should (string-match-p ":exclude" out))))
+    (should (anvil-pkg-dsl-test--contains-p "\"lisp/*.el\"" out))
+    (should (anvil-pkg-dsl-test--contains-p ":exclude" out))))
 
 (ert-deftest anvil-pkg-dsl-test-melpa-synth-auto-skipped-for-url-fetch ()
   "L23: :format \"melpa\" + url-fetch + `auto' silently skips synth
@@ -577,8 +691,9 @@ Phase 4-E L28: default :files spec is the full package-build glob."
                         :sha256 "sha256-foo")
                :build-system (:type emacs-package :format "melpa")))
          (out (anvil-pkg-render-nix ir)))
-    (should-not (string-match-p "postUnpack" out))
-    (should (string-match-p "pkgs.emacsPackages.melpaBuild {" out))))
+    (should-not (anvil-pkg-dsl-test--contains-p "postUnpack" out))
+    (should (anvil-pkg-dsl-test--contains-p
+             "pkgs.emacsPackages.melpaBuild {" out))))
 
 (ert-deftest anvil-pkg-dsl-test-melpa-synth-never-disables ()
   "L23: :melpa-synth `never' suppresses synth even on github-fetch."
@@ -593,7 +708,7 @@ Phase 4-E L28: default :files spec is the full package-build glob."
                               :format "melpa"
                               :melpa-synth never)))
          (out (anvil-pkg-render-nix ir)))
-    (should-not (string-match-p "postUnpack" out))))
+    (should-not (anvil-pkg-dsl-test--contains-p "postUnpack" out))))
 
 (ert-deftest anvil-pkg-dsl-test-melpa-synth-force-on-url-fetch-errors ()
   "L23: :melpa-synth `force' over url-fetch raises `anvil-pkg-error'."
@@ -625,14 +740,15 @@ synthesised recipe."
                            :melpa-recipe
                            "(helm :fetcher git :url \"u\" :files (\"*.el\" \"lisp/*.el\"))")))
          (out-explicit (anvil-pkg-render-nix ir-explicit)))
-    (should (string-match-p "postUnpack = ''" out-explicit))
+    (should (anvil-pkg-dsl-test--contains-p "postUnpack = ''" out-explicit))
     ;; The user string is emitted verbatim, including its own URL "u".
-    (should (string-match-p
-             "(helm :fetcher git :url \"u\" :files (\"\\*\\.el\" \"lisp/\\*\\.el\"))"
+    (should (anvil-pkg-dsl-test--contains-p
+             "(helm :fetcher git :url \"u\" :files (\"*.el\" \"lisp/*.el\"))"
              out-explicit))
     ;; Auto-synth would have used the github URL — verify it did NOT.
     (should-not
-     (string-match-p "https://github\\.com/emacs-helm/helm" out-explicit)))
+     (anvil-pkg-dsl-test--contains-p
+      "https://github.com/emacs-helm/helm" out-explicit)))
   ;; Part 2: :melpa-files overrides the default ("*.el") glob list.
   (let* ((ir-files
           '(:name helm
@@ -646,9 +762,9 @@ synthesised recipe."
                            :format "melpa"
                            :melpa-files ("*.el" "lisp/*.el"))))
          (out-files (anvil-pkg-render-nix ir-files)))
-    (should (string-match-p "postUnpack = ''" out-files))
-    (should (string-match-p
-             "(helm :fetcher git :url \"https://github\\.com/emacs-helm/helm\" :files (\"\\*\\.el\" \"lisp/\\*\\.el\"))"
+    (should (anvil-pkg-dsl-test--contains-p "postUnpack = ''" out-files))
+    (should (anvil-pkg-dsl-test--contains-p
+             "(helm :fetcher git :url \"https://github.com/emacs-helm/helm\" :files (\"*.el\" \"lisp/*.el\"))"
              out-files))))
 
 ;;;; --- Phase 4-E sub-task: L27 upstream MELPA recipe fetch + L28 default ----
@@ -669,15 +785,15 @@ When :melpa-files is omitted, the synth carries the full
                :build-system (:type emacs-package :format "melpa")))
          (out (anvil-pkg-render-nix ir)))
     ;; Top-level patterns
-    (should (string-match-p "\"\\*\\.el\"" out))
-    (should (string-match-p "\"\\*\\.el\\.in\"" out))
+    (should (anvil-pkg-dsl-test--contains-p "\"*.el\"" out))
+    (should (anvil-pkg-dsl-test--contains-p "\"*.el.in\"" out))
     ;; Subdir patterns
-    (should (string-match-p "\"lisp/\\*\\.el\"" out))
+    (should (anvil-pkg-dsl-test--contains-p "\"lisp/*.el\"" out))
     ;; Doc patterns
-    (should (string-match-p "\"\\*\\.info\"" out))
+    (should (anvil-pkg-dsl-test--contains-p "\"*.info\"" out))
     ;; Exclusion clause
-    (should (string-match-p ":exclude" out))
-    (should (string-match-p "\"\\*-test\\.el\"" out))))
+    (should (anvil-pkg-dsl-test--contains-p ":exclude" out))
+    (should (anvil-pkg-dsl-test--contains-p "\"*-test.el\"" out))))
 
 (ert-deftest anvil-pkg-dsl-test-l27-auto-uses-upstream-recipe-when-fluid-hits ()
   "L27: :melpa-synth `auto' + render-fetch fluid returning recipe →
@@ -690,8 +806,7 @@ fluid value, so re-binding it directly with a stub bypasses the
 defcustom gate for test purposes."
   (let* ((upstream-recipe
           "(magit :fetcher github :repo \"magit/magit\" :files (\"lisp/*.el\" \"*.texi\"))")
-         (anvil-pkg-emacs--render-fetch-fn
-          (lambda (pname) (when (equal pname "magit") upstream-recipe)))
+         (saved-fetch-fn anvil-pkg-emacs--render-fetch-fn)
          (ir '(:name magit
                :version "3.3.0"
                :source (:type github-fetch
@@ -700,15 +815,24 @@ defcustom gate for test purposes."
                         :rev "v3.3.0"
                         :sha256 "sha256-magit")
                :build-system (:type emacs-package :format "melpa")))
-         (out (anvil-pkg-render-nix ir)))
-    (should (string-match-p "postUnpack = ''" out))
-    ;; The upstream body landed verbatim.
-    (should (string-match-p
-             ":fetcher github :repo \"magit/magit\" :files (\"lisp/\\*\\.el\" \"\\*\\.texi\")"
-             out))
-    ;; The local synth's :fetcher-git URL did NOT.
-    (should-not (string-match-p "fetcher git :url \"https://github\\.com/magit/magit\""
-                                out))))
+         out)
+    (unwind-protect
+        (progn
+          (setq anvil-pkg-emacs--render-fetch-fn
+                (lambda (pname) (when (equal pname "magit") upstream-recipe)))
+          (setq out (anvil-pkg-render-nix ir))
+          (should (anvil-pkg-dsl-test--contains-p "postUnpack = ''" out))
+          ;; The upstream body landed verbatim.
+          (should (anvil-pkg-dsl-test--contains-p ":fetcher github" out))
+          (should (anvil-pkg-dsl-test--contains-p
+                   ":repo \"magit/magit\"" out))
+          (should (anvil-pkg-dsl-test--contains-p "\"lisp/*.el\"" out))
+          (should (anvil-pkg-dsl-test--contains-p "\"*.texi\"" out))
+          ;; The local synth's :fetcher-git URL did NOT.
+          (should-not (anvil-pkg-dsl-test--contains-p
+                       "fetcher git :url \"https://github.com/magit/magit\""
+                       out)))
+      (setq anvil-pkg-emacs--render-fetch-fn saved-fetch-fn))))
 
 (ert-deftest anvil-pkg-dsl-test-l27-auto-falls-back-to-synth-on-miss ()
   "L27: :melpa-synth `auto' + render-fetch fluid returning nil →
@@ -723,10 +847,10 @@ synth proceeds normally (Phase 4-D behaviour)."
                         :sha256 "sha256-magit")
                :build-system (:type emacs-package :format "melpa")))
          (out (anvil-pkg-render-nix ir)))
-    (should (string-match-p "postUnpack = ''" out))
+    (should (anvil-pkg-dsl-test--contains-p "postUnpack = ''" out))
     ;; Synth always uses :fetcher git.
-    (should (string-match-p
-             "(magit :fetcher git :url \"https://github\\.com/magit/magit\""
+    (should (anvil-pkg-dsl-test--contains-p
+             "(magit :fetcher git :url \"https://github.com/magit/magit\""
              out))))
 
 (ert-deftest anvil-pkg-dsl-test-l27-force-skips-upstream-fetch ()
@@ -748,16 +872,17 @@ MELPA\" signal."
                               :melpa-synth force)))
          (out (anvil-pkg-render-nix ir)))
     (should (= 0 calls))
-    (should (string-match-p
-             "(magit :fetcher git :url \"https://github\\.com/magit/magit\""
+    (should (anvil-pkg-dsl-test--contains-p
+             "(magit :fetcher git :url \"https://github.com/magit/magit\""
              out))))
 
 ;;;; --- render script (Phase 4-H) -------------------------------------------
 
 (defun anvil-pkg-dsl-test--load-render-script ()
   "Load the batch render helper used by smoke tests."
-  (load (expand-file-name "scripts/anvil-pkg-render.el" default-directory)
-        nil :nomessage))
+  (unless (fboundp 'anvil-pkg-render-example)
+    (load (expand-file-name "scripts/anvil-pkg-render.el" default-directory)
+          nil :nomessage)))
 
 (ert-deftest anvil-pkg-render-script-test-write-flake ()
   "Render script writes a non-empty flake.nix for the stdenv example."

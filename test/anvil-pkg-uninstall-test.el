@@ -28,7 +28,7 @@ version so uninstall-path tests that do not care about a
 `nix --version' probe do not need to mock it.
 
 The state file is bound to a tmp path so the real
-~/.local/state/anvil-pkg/state.json is never touched and the
+~/.local/state/nelix/state.json is never touched and the
 in-process state cache is reset between tests."
   (declare (indent 1))
   `(let* ((tmp (make-temp-file "anvil-pkg-uninstall-test-" nil ".json"))

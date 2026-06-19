@@ -25,6 +25,8 @@
 (defvar anvil-pkg-compat-nelisp-executable-find-function)
 (defvar anvil-pkg-nelisp-ert--tests)
 (defvar anvil-pkg-nelisp-ert-register-only)
+(defvar anvil-pkg-nelisp-ert-progress-file)
+(defvar anvil-pkg-nelisp-ert-selector)
 
 (defvar anvil-pkg-nelisp-smoke-json-source nil
   "Optional path to nelisp-json.el for a real backend parse smoke.")
@@ -66,20 +68,53 @@
     "anvil-pkg-dsl.el"
     "anvil-pkg-import.el"
     "anvil-pkg-emacs.el"
+    "nelix-store.el"
+    "nelix-registry.el"
+    "nelix-fetch.el"
+    "nelix-builder.el"
+    "nelix-backend.el"
+    "nelix-manifest.el"
+    "nelix-fast.el"
+    "nelix-substitute.el"
+    "nelix-dsl.el"
+    "nelix-import.el"
+    "nelix-emacs.el"
+    "nelix.el"
     "scripts/anvil-pkg-render.el")
   "Runtime and helper files loaded before a full standalone suite run.")
 
 (defvar anvil-pkg-nelisp-smoke-suite-test-files
   '("test/anvil-pkg-test.el"
+    "test/anvil-pkg-uninstall-test.el"
+    "test/anvil-pkg-upgrade-test.el"
+    "test/anvil-pkg-pin-test.el"
+    "test/anvil-pkg-info-test.el"
+    "test/anvil-pkg-doctor-test.el"
     "test/anvil-pkg-dsl-test.el"
+    "test/anvil-pkg-buildsys-test.el"
     "test/anvil-pkg-import-test.el"
     "test/anvil-pkg-compat-test.el"
     "test/anvil-pkg-emacs-test.el"
     "test/anvil-pkg-state-test.el")
   "ERT files loaded by a full standalone suite run.")
 
+(defvar anvil-pkg-nelisp-smoke-suite-source-loaded-p nil
+  "Non-nil when runtime suite source files have already been loaded.")
+
+(defvar anvil-pkg-nelisp-smoke-progress-file nil
+  "Optional file path updated during standalone smoke suite loading.")
+
+(defvar anvil-pkg-nelisp-smoke-ert-selector nil
+  "Optional test selector forwarded to the standalone ERT shim.")
+
 (unless (fboundp 'declare-function)
   (defmacro declare-function (&rest _ignored) nil))
+
+(unless (fboundp 'interactive)
+  (defmacro interactive (&rest _ignored) nil))
+
+(unless (fboundp 'called-interactively-p)
+  (defun called-interactively-p (&rest _ignored) nil))
 
 (declare-function anvil-pkg-compat--detect-nelisp-runtime-p
                   "anvil-pkg-compat")
@@ -149,6 +184,8 @@
    (anvil-pkg-nelisp-smoke--load-optional
     anvil-pkg-nelisp-smoke-cl-macros-source)
    (anvil-pkg-nelisp-smoke--load-optional
+    anvil-pkg-nelisp-smoke-json-source)
+   (anvil-pkg-nelisp-smoke--load-optional
     anvil-pkg-nelisp-smoke-ert-shim-source)
    (anvil-pkg-nelisp-smoke--load-optional
     anvil-pkg-nelisp-smoke-actor-source)))
@@ -157,12 +194,14 @@
   "Return non-nil when async has a real lower spawn primitive.
 Runtime-aware: on the Emacs / nemacs branch the lower primitive is
 `make-process' (which `anvil-pkg-compat-make-process-async' dispatches
-through); on the NeLisp branch it is `nelisp-make-process' paired with
-`make-process'."
+through); on the standalone NeLisp suite path the prelude `make-process'
+shim is enough because tests that force the NeLisp backend explicitly
+assert the unsupported branch."
   (if (eq (anvil-pkg-compat-runtime) 'emacs)
       (fboundp 'make-process)
-    (and (fboundp 'nelisp-make-process)
-         (fboundp 'make-process))))
+    (or (and (fboundp 'nelisp-process-async-ready-p)
+             (nelisp-process-async-ready-p))
+        (fboundp 'make-process))))
 
 (defun anvil-pkg-nelisp-smoke--curl-process-lower-primitive-p ()
   "Return non-nil when curl can run through Emacs or Doc 44 NeLisp process APIs."
@@ -274,10 +313,10 @@ of by an anvil-pkg dispatch regression."
 (defun anvil-pkg-nelisp-smoke-suite-readiness ()
   "Return whether the standalone image can run the full ERT suite.
 
-This is an audit result, not the suite itself.  Phase 5 can load the
-compat layer under standalone NeLisp, but the current local image still
-lacks the ERT batch runner and the lower process / URL primitives that
-would make production async and text HTTP execution possible."
+This is an audit result, not the suite itself.  The suite may run with
+mocked HTTP paths before standalone NeLisp has production text HTTP
+lower primitives, but native async still needs a process lower primitive
+because async tests exercise that path directly."
   (anvil-pkg-nelisp-smoke--load-compat)
   (anvil-pkg-nelisp-smoke--load-native-prereqs)
   (anvil-pkg-nelisp-smoke--load-optional
@@ -293,11 +332,8 @@ would make production async and text HTTP execution possible."
          (has-text-http-lower
           (anvil-pkg-nelisp-smoke--native-text-http-lower-primitive-p))
          (suite-ready
-          (and has-ert has-cl-letf has-async-lower has-text-http-lower))
+          (and has-ert has-cl-letf has-async-lower))
          (blocked-by nil))
-    (unless has-text-http-lower
-      (setq blocked-by
-            (cons 'native-text-http-lower-primitive blocked-by)))
     (unless has-async-lower
       (setq blocked-by
             (cons 'native-async-lower-primitive blocked-by)))
@@ -320,12 +356,84 @@ would make production async and text HTTP execution possible."
           :native-text-http-lower-primitive has-text-http-lower
           :readiness-audit-ok (and (or suite-ready blocked-by) t))))
 
+(defun anvil-pkg-nelisp-smoke-public-entrypoints ()
+  "Return whether standalone NeLisp can load Nelix public entry points."
+  (anvil-pkg-nelisp-smoke--load-native-prereqs)
+  (anvil-pkg-nelisp-smoke--load-optional
+   anvil-pkg-nelisp-smoke-process-source)
+  (condition-case err
+      (progn
+        (anvil-pkg-nelisp-smoke--load-suite-files
+         '("anvil-pkg-compat.el"
+           "anvil-pkg-state.el"
+           "anvil-pkg.el"
+           "anvil-pkg-dsl.el"
+           "anvil-pkg-import.el"
+           "anvil-pkg-emacs.el"
+           "nelix.el"
+           "nelix-dsl.el"
+           "nelix-import.el"
+           "nelix-emacs.el"))
+        (list :nelix-load t
+              :runtime (anvil-pkg-compat-runtime)
+              :nelix-install (fboundp 'nelix-install)
+              :nelix-define (fboundp 'nelix-define)
+              :nelix-render-nix (fboundp 'nelix-render-nix)
+              :nelix-import (fboundp 'nelix-import-async-installer)
+              :nelix-emacs (fboundp 'nelix-emacs-derive-deps)))
+    (error
+     (list :nelix-load nil
+           :error err
+           :runtime (if (fboundp 'anvil-pkg-compat-runtime)
+                        (anvil-pkg-compat-runtime)
+                      'unknown)))))
+
 (defun anvil-pkg-nelisp-smoke--load-suite-files (files)
   "Load each path in FILES for a standalone suite run."
   (let ((cur files))
     (while cur
+      (anvil-pkg-nelisp-smoke--write-progress
+       (list :loading (car cur)))
       (load (car cur))
       (setq cur (cdr cur)))))
+
+(defun anvil-pkg-nelisp-smoke-preload-suite-runtime ()
+  "Preload runtime sources needed by standalone suite execution.
+
+This is intended for runtime-image/cache creation.  Test files are not
+loaded here; callers set `anvil-pkg-nelisp-smoke-suite-test-files' at
+execution time and then call `anvil-pkg-nelisp-smoke-run-suite'."
+  (anvil-pkg-nelisp-smoke--load-compat)
+  (anvil-pkg-nelisp-smoke--load-native-prereqs)
+  (anvil-pkg-nelisp-smoke--load-optional
+   anvil-pkg-nelisp-smoke-process-source)
+  (anvil-pkg-nelisp-smoke--load-optional
+   anvil-pkg-nelisp-smoke-network-source)
+  (anvil-pkg-nelisp-smoke--load-optional
+   anvil-pkg-nelisp-smoke-http-source)
+  (anvil-pkg-nelisp-smoke--load-suite-files
+   anvil-pkg-nelisp-smoke-suite-source-files)
+  (setq anvil-pkg-nelisp-smoke-suite-source-loaded-p t)
+  t)
+
+(defun anvil-pkg-nelisp-smoke--write-progress (value)
+  "Write standalone suite progress VALUE when a progress file is configured."
+  (let ((file (or anvil-pkg-nelisp-smoke-progress-file
+                  (and (boundp 'anvil-pkg-nelisp-ert-progress-file)
+                       anvil-pkg-nelisp-ert-progress-file)))
+        (payload (format "%S\n" value)))
+    (when file
+      (or
+       (condition-case _err
+           (progn
+             (write-region payload nil file 0)
+             t)
+         (error nil))
+       (condition-case _err
+           (and (fboundp 'nelisp-process-call-process)
+                (zerop (nelisp-process-call-process
+                        "/usr/bin/printf" nil file nil "%s" payload)))
+         (error nil))))))
 
 (defun anvil-pkg-nelisp-smoke-run-suite ()
   "Run the full anvil-pkg ERT suite when standalone readiness passes.
@@ -334,18 +442,36 @@ When the current standalone image is not ready, return a plist with
 `:suite-run nil' and the readiness blockers.  When it is ready, load
 runtime sources, helper scripts, and ERT files, then delegate to
 `ert-run-tests-batch-and-exit'."
+  (anvil-pkg-nelisp-smoke--write-progress
+   (list :phase 'readiness))
   (let ((readiness (anvil-pkg-nelisp-smoke-suite-readiness)))
     (if (not (plist-get readiness :suite-ready))
         (append (list :suite-run nil) readiness)
-      (anvil-pkg-nelisp-smoke--load-suite-files
-       anvil-pkg-nelisp-smoke-suite-source-files)
+      (unless anvil-pkg-nelisp-smoke-suite-source-loaded-p
+        (anvil-pkg-nelisp-smoke--write-progress
+         (list :phase 'load-suite-source))
+        (anvil-pkg-nelisp-smoke--load-suite-files
+         anvil-pkg-nelisp-smoke-suite-source-files)
+        (setq anvil-pkg-nelisp-smoke-suite-source-loaded-p t))
+      (anvil-pkg-nelisp-smoke--write-progress
+       (list :phase 'load-suite-tests))
       (anvil-pkg-nelisp-smoke--load-suite-files
        anvil-pkg-nelisp-smoke-suite-test-files)
-      (if (fboundp 'ert-run-tests-batch-and-exit)
-          (ert-run-tests-batch-and-exit)
+      (anvil-pkg-nelisp-smoke--write-progress
+       (list :phase 'run-tests))
+      (when anvil-pkg-nelisp-smoke-progress-file
+        (setq anvil-pkg-nelisp-ert-progress-file
+              anvil-pkg-nelisp-smoke-progress-file))
+      (when anvil-pkg-nelisp-smoke-ert-selector
+        (setq anvil-pkg-nelisp-ert-selector
+              anvil-pkg-nelisp-smoke-ert-selector))
+      (if (fboundp 'anvil-pkg-nelisp-ert-run-tests)
+          (anvil-pkg-nelisp-ert-run-tests)
+        (if (fboundp 'ert-run-tests-batch-and-exit)
+            (ert-run-tests-batch-and-exit)
         (append (list :suite-run nil
                       :suite-blocked-by '(ert-batch-runner))
-                readiness)))))
+                readiness))))))
 
 (defun anvil-pkg-nelisp-smoke-suite-loadability ()
   "Return whether standalone NeLisp can load configured suite definitions.
@@ -378,7 +504,11 @@ needed for execution are available."
              :runtime (anvil-pkg-compat-runtime))))))
 
 (defun anvil-pkg-nelisp-smoke--unsupported-branches-ok-p ()
-  "Return non-nil when real NeLisp unsupported branches signal correctly."
+  "Return non-nil when NeLisp fallback branches are accounted for.
+Older standalone images signaled unsupported-runtime for async and
+HTTP paths.  Newer images may execute those paths through native or
+curl-backed lower primitives.  Both outcomes are acceptable here; a
+plain unexpected error is not."
   (let ((anvil-pkg-compat--nelisp-runtime-p t)
         (anvil-pkg-compat--nelisp-backend-require-attempted t)
         (anvil-pkg-compat-curl-program
@@ -390,29 +520,32 @@ needed for execution are available."
         (anvil-pkg-compat-nelisp-http-get-function nil)
         (anvil-pkg-compat-nelisp-http-get-binary-function nil))
     (and
-     (eq (condition-case _err
-             (progn
-               (anvil-pkg-compat-make-process-async
-                :name "anvil-pkg-smoke"
-                :command (list "sh" "-c" "true"))
-               'not-signaled)
-           (anvil-pkg-async-not-supported 'signaled))
-         'signaled)
+     (memq (condition-case _err
+               (progn
+                 (anvil-pkg-compat-make-process-async
+                  :name "anvil-pkg-smoke"
+                  :command (list "sh" "-c" "true"))
+                 'executed)
+             (anvil-pkg-async-not-supported 'unsupported)
+             (error 'error))
+           '(executed unsupported))
      (or (fboundp 'nelisp-http-get)
-         (eq (condition-case _err
-                 (progn
-                   (anvil-pkg-compat-http-get "https://example.invalid" 1)
-                   'not-signaled)
-               (anvil-pkg-http-not-supported 'signaled))
-             'signaled))
+         (memq (condition-case _err
+                   (progn
+                     (anvil-pkg-compat-http-get "https://example.invalid" 1)
+                     'executed)
+                 (anvil-pkg-http-not-supported 'unsupported)
+                 (error 'error))
+               '(executed unsupported)))
      (or (fboundp 'nelisp-http-get-binary)
-         (eq (condition-case _err
-                 (progn
-                   (anvil-pkg-compat-http-get-binary
-                    "https://example.invalid" 1)
-                   'not-signaled)
-               (anvil-pkg-http-not-supported 'signaled))
-             'signaled)))))
+         (memq (condition-case _err
+                   (progn
+                     (anvil-pkg-compat-http-get-binary
+                      "https://example.invalid" 1)
+                     'executed)
+                 (anvil-pkg-http-not-supported 'unsupported)
+                 (error 'error))
+               '(executed unsupported))))))
 
 (defun anvil-pkg-nelisp-smoke--explicit-hooks-ok-p ()
   "Return non-nil when explicit backend hooks dispatch on standalone NeLisp."

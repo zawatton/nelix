@@ -14,7 +14,7 @@
 ;; anvil-pkg caches survive Emacs restarts.
 ;;
 ;; Backend: JSON file under `anvil-pkg-state-file' (default
-;; ~/.local/state/anvil-pkg/state.json).  The file is loaded lazily on the
+;; ~/.local/state/nelix/state.json).  The file is loaded lazily on the
 ;; first read / write and re-saved after every put / delete.  Layout:
 ;;
 ;;     {
@@ -61,10 +61,11 @@
 
 (defcustom anvil-pkg-state-file
   (expand-file-name
-   "anvil-pkg/state.json"
+   "nelix/state.json"
    (or (anvil-pkg-compat-getenv "XDG_STATE_HOME")
-       (expand-file-name ".local/state" "~")))
-  "Path to the anvil-pkg JSON state file."
+       (expand-file-name ".local/state"
+                         (or (anvil-pkg-compat-getenv "HOME") "~"))))
+  "Path to the Nelix JSON state file."
   :type 'file
   :group 'anvil-pkg-state)
 

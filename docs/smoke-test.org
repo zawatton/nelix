@@ -87,7 +87,7 @@ Failure modes:
 Verify in shell:
 
 #+begin_src shell
-~/.local/state/anvil-pkg/profile/bin/hello
+~/.local/state/nelix/profile/bin/hello
 # expect: "Hello, world!"
 #+end_src
 
@@ -100,7 +100,7 @@ Failure modes:
 |-------------------------------------------------------+---------------------------------------------------------+---------------------------------------------------------------------------|
 | =anvil-pkg-nix-not-found=                             | =nix= not on PATH from inside Emacs                     | Set =anvil-pkg-nix-program= to absolute path (e.g. =/nix/var/nix/profiles/default/bin/nix=) |
 | =anvil-pkg-nix-failed= "experimental feature flakes"  | flakes not enabled                                      | See "Verify Nix install + flakes" above                                  |
-| =anvil-pkg-nix-failed= "permission denied" on profile | profile dir conflict with another nix profile           | =rm -rf ~/.local/state/anvil-pkg= and retry                              |
+| =anvil-pkg-nix-failed= "permission denied" on profile | profile dir conflict with another nix profile           | =rm -rf ~/.local/state/nelix= and retry                                  |
 | =pkg-list= returns nil after a successful install     | profile path mismatch between commands                   | check =anvil-pkg-profile-dir= matches what =nix profile list= sees       |
 
 * Step 3 — search
@@ -155,7 +155,7 @@ to the build / fetch step.
 The flake.nix file should now exist:
 
 #+begin_src shell
-cat ~/.local/state/anvil-pkg/flake.nix
+cat ~/.local/state/nelix/flake.nix
 # expect: a real flake declaring `packages.x86_64-linux.my-hello-test`
 #+end_src
 
@@ -245,21 +245,21 @@ Recovery:
 
 #+begin_src shell
 nix profile remove dash-test
-rm -rf ~/.local/state/anvil-pkg
+rm -rf ~/.local/state/nelix
 #+end_src
 
 * Cleanup after the test run
 
 #+begin_src shell
 # remove the test profile and generated flake
-rm -rf ~/.local/state/anvil-pkg
+rm -rf ~/.local/state/nelix
 
 # verify your normal nix profile is untouched
 nix profile list
 #+end_src
 
-Because anvil-pkg uses an isolated profile dir, removing
-=~/.local/state/anvil-pkg= cannot affect your default
+Because Nelix uses an isolated profile dir, removing
+=~/.local/state/nelix= cannot affect your default
 =~/.nix-profile= installs.
 
 * What to capture as bugs

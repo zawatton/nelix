@@ -107,7 +107,7 @@ rollback, and cross-session caching all "just work":
   the L19 contract: we mirror what we install / rollback through
   our API, not what the user does via raw =nix= commands.
 - Multi-profile support.  Phase 4-D continues to assume a single
-  =~/.local/state/anvil-pkg/profile= per machine; per-project
+  =~/.local/state/nelix/profile= per machine; per-project
   profiles are a separate Phase 5+ design pass.
 - =git-fetch= shallow-clone authentication.  L24 only handles
   publicly-accessible git URLs.  Private repo support (SSH key /

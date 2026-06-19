@@ -42,13 +42,14 @@ L20.  Tests that care about the dispatch overwrite the cache
 themselves via `anvil-pkg-state-put'.
 
 The state file is bound to a tmp path so the real
-~/.local/state/anvil-pkg/state.json is never touched and the
+~/.local/state/nelix/state.json is never touched and the
 in-process state cache is reset between tests."
   (declare (indent 1))
   `(let* ((tmp (make-temp-file "anvil-pkg-test-" nil ".json"))
           (anvil-pkg-state-file tmp)
           (anvil-pkg-state--cache 'unloaded)
           (anvil-pkg-state--loaded-from nil)
+          (anvil-pkg-compat--nelisp-runtime-p nil)
           (anvil-pkg--call-nix-fn ,mock-fn)
           (anvil-pkg-nix-channel "nixpkgs")
           (anvil-pkg-profile-dir "/tmp/anvil-pkg-test-profile"))
@@ -60,6 +61,21 @@ in-process state cache is reset between tests."
                                 "2.18.0")
            ,@body)
        (when (file-exists-p tmp) (delete-file tmp)))))
+
+;;;; --- defaults ---------------------------------------------------------------
+
+(ert-deftest anvil-pkg-test-default-profile-dir-is-nelix ()
+  "The product default profile lives under ~/.local/state/nelix."
+  (let ((expected (expand-file-name
+                   "nelix/profile"
+                   (or (anvil-pkg-compat-getenv "XDG_STATE_HOME")
+                       (expand-file-name ".local/state"
+                                         (or (anvil-pkg-compat-getenv "HOME")
+                                             "~"))))))
+    (should (equal (expand-file-name anvil-pkg-profile-dir)
+                   expected))
+    (should-not (string-match-p (regexp-quote "anvil-pkg/profile")
+                                anvil-pkg-profile-dir))))
 
 ;;;; --- install ---------------------------------------------------------------
 
@@ -342,6 +358,65 @@ the version-suffixed directory itself is what lands on
       (when (file-exists-p "/tmp/anvil-pkg-test")
         (delete-directory "/tmp/anvil-pkg-test" t)))))
 
+(ert-deftest anvil-pkg-test-install-emacs-package-elpa-style-layout-pname ()
+  "pkg-install uses emacs-package :pname for elpa-style load-path lookup.
+The Nix profile element can be named `emacs-async' while the
+installed elpa directory is `async-<version>'."
+  (require 'anvil-pkg-dsl)
+  (let* ((store-root "/tmp/anvil-pkg-test/fakestore-pname/async-store")
+         (flat-dir (expand-file-name "share/emacs/site-lisp" store-root))
+         (elpa-subdir (expand-file-name "elpa/async-0.0.0" flat-dir))
+         (flake-path "/tmp/anvil-pkg-test/flake.nix")
+         (load-path (copy-sequence load-path)))
+    (unwind-protect
+        (progn
+          (anvil-pkg--registry-clear)
+          (anvil-pkg--register
+           'emacs-async
+           '(:name emacs-async
+             :version "0.0.0"
+             :source (:type url-fetch
+                      :url "https://example.invalid/async.tar.gz"
+                      :sha256 "sha256-async")
+             :build-system (:type emacs-package :pname "async")
+             :inputs nil
+             :native-inputs nil))
+          (anvil-pkg-compat-make-directory elpa-subdir t)
+          (let ((anvil-pkg--write-flake-fn (lambda () flake-path)))
+            (anvil-pkg-test--with-mock
+                (lambda (args)
+                  (cond
+                   ((and (member "profile" args)
+                         (member "install" args))
+                    (list :exit 0 :stdout "" :stderr ""))
+                   ((and (member "profile" args)
+                         (member "list" args)
+                         (member "--json" args))
+                    (list :exit 0
+                          :stdout (concat
+                                   "{\"version\":3,"
+                                   "\"elements\":{"
+                                   "\"emacs-async\":{"
+                                   "\"active\":true,"
+                                   "\"attrPath\":\"emacs-async\","
+                                   "\"originalUrl\":\"path:/tmp/anvil-pkg-test#emacs-async\","
+                                   "\"storePaths\":[\""
+                                   store-root
+                                   "\"]"
+                                   "}"
+                                   "}}")
+                          :stderr ""))
+                   (t (ert-fail (format "unexpected nix args: %S" args)))))
+              (should (eq t (pkg-install 'emacs-async)))
+              (should (member elpa-subdir load-path))
+              (should-not (member (expand-file-name "emacs-async" flat-dir)
+                                  load-path))
+              (should-not (member (expand-file-name "elpa/emacs-async-0.0.0" flat-dir)
+                                  load-path)))))
+      (anvil-pkg--registry-clear)
+      (when (file-exists-p "/tmp/anvil-pkg-test")
+        (delete-directory "/tmp/anvil-pkg-test" t)))))
+
 ;;;; --- Phase 4-B sub-task C: :async pkg-install -----------------------------
 ;; The async path uses `make-process' under the hood.  Tests intercept
 ;; `anvil-pkg--make-process-fn' and substitute a `true' / `sh -c
@@ -433,19 +508,32 @@ fire."
           (should (string-match-p "cannot resolve"
                                   (or (plist-get captured-err :stderr) ""))))))))
 
-(ert-deftest anvil-pkg-test-install-async-on-nelisp-rejects ()
-  "pkg-install :async t signals on the NeLisp runtime.
+(ert-deftest anvil-pkg-test-install-async-on-nelisp-uses-backend ()
+  "pkg-install :async t delegates to the NeLisp async backend.
 `anvil-pkg-compat-runtime' is the sole branching authority and is
 consulted inside `anvil-pkg-compat-make-process-async'; this test
-forces it to return `nelisp' and verifies the spawn helper refuses
-to invoke the underlying `make-process'."
-  (cl-letf (((symbol-function 'anvil-pkg-compat-runtime)
-             (lambda () 'nelisp)))
-    (anvil-pkg-test--with-mock
-        (lambda (_args)
-          (list :exit 0 :stdout "" :stderr ""))
-      (should-error (pkg-install "ripgrep" :async t)
-                    :type 'anvil-pkg-async-not-supported))))
+forces it to return `nelisp' and verifies the spawn helper uses the
+loaded NeLisp backend instead of rejecting async installs."
+  (let ((anvil-pkg-compat-nelisp-make-process-function
+         (lambda (&rest plist)
+           (make-process
+            :name (or (plist-get plist :name) "nelisp-async-test")
+            :command (list "true")
+            :noquery t))))
+    (cl-letf (((symbol-function 'anvil-pkg-compat-runtime)
+               (lambda () 'nelisp)))
+      (anvil-pkg-test--with-mock
+          (lambda (_args)
+            (list :exit 0 :stdout "" :stderr ""))
+        (let ((proc (pkg-install "ripgrep" :async t)))
+          (unwind-protect
+              (progn
+                (should (processp proc))
+                (should (equal "ripgrep"
+                               (anvil-pkg-compat-process-get
+                                proc 'anvil-pkg--name))))
+            (when (processp proc)
+              (delete-process proc))))))))
 
 ;;;; --- Phase 4-C sub-task B (L19): rollback API ---------------------------
 
@@ -554,15 +642,15 @@ bar's lineage stays out of the result."
       (dolist (ev events)
         (should-not (memq 'bar (or (plist-get ev :packages) '())))))))
 
-;;;; --- Phase 4-C sub-task C (L20): Nix 2.34 install→add dispatch ----------
+;;;; --- Phase 4-C sub-task C (L20): Nix profile install dispatch ------------
 
-(ert-deftest anvil-pkg-test-install-uses-add-on-nix-2-34 ()
-  "pkg-install passes `add' (not `install') as the subcommand on Nix >= 2.34.
+(ert-deftest anvil-pkg-test-install-uses-install-on-nix-2-34 ()
+  "pkg-install keeps using `install' as the subcommand on Nix >= 2.34.
 
 Pins the persistent Nix-version cache to a 2.34 string inside the
 macro body so the detect helper short-circuits without consulting
-the mock; verifies the captured args carry `add' instead of
-`install'."
+the mock; verifies the captured args carry the CLI-supported
+`install' spelling."
   (let (captured-args)
     (anvil-pkg-test--with-mock
         (lambda (args)
@@ -570,10 +658,10 @@ the mock; verifies the captured args carry `add' instead of
           (list :exit 0 :stdout "" :stderr ""))
       (anvil-pkg-state-put anvil-pkg--nix-version-namespace
                            anvil-pkg--nix-version-key "2.34.0")
-      (should (eq t (pkg-install "ripgrep"))))
+    (should (eq t (pkg-install "ripgrep"))))
     (should (member "profile" captured-args))
-    (should (member "add" captured-args))
-    (should-not (member "install" captured-args))
+    (should (member "install" captured-args))
+    (should-not (member "add" captured-args))
     (should (member "nixpkgs#ripgrep" captured-args))))
 
 (ert-deftest anvil-pkg-test-install-uses-install-on-pre-2-34 ()
@@ -665,7 +753,7 @@ anywhere in the flake and ripgrep MUST."
                     (list :exit 0
                           :stdout "{\"version\":3,\"elements\":{}}"
                           :stderr ""))
-                   ;; The rollback `nix profile add' / `install'
+                   ;; The rollback `nix profile install'
                    ;; invocation we want to inspect.
                    ((and (member "profile" args)
                          (or (member "add" args)
@@ -728,7 +816,7 @@ not, so the safety check fires before any flake render."
         (lambda (_args)
           ;; Mirror is pre-populated; no shell-out should fire before
           ;; the IR check refuses.  The rollback path itself must not
-          ;; reach `nix profile add'.
+          ;; reach `nix profile install'.
           (list :exit 0 :stdout "" :stderr ""))
       (anvil-pkg--generations-cache-put
        (list (list :id 4
@@ -792,7 +880,7 @@ invokes nix once with all flakerefs."
            (lambda () (cl-incf render-count) flake-path)))
       (anvil-pkg-test--with-mock
           (lambda (args)
-            ;; Capture only the install/add invocation; subsequent
+            ;; Capture only the install invocation; subsequent
             ;; `profile list --json' calls from the after-install hook
             ;; should not clobber it.
             (when (and (null install-args)

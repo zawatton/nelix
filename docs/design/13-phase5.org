@@ -216,36 +216,28 @@ docs/design/13-phase5.org          ← this file
       capability snapshot and checks =:native-gap-accounted t=.  The
       current local image reports present local ERT shim / =cl-letf= /
       =cl-defun= after loading =nelisp-stdlib-eval-special.el= and
-      =scripts/anvil-pkg-nelisp-ert-shim.el=, no lower
-      =make-process=, no =url-retrieve-synchronously=, loaded but not
-      executable =nelisp-call-process= after optional process source
-      probing, loaded =nelisp-make-process= / =nelisp-http-get= /
-      =nelisp-http-fetch= definitions, no =nelisp-http-get-binary=,
-      and no executable native async / text HTTP lower primitive yet.
+      =scripts/anvil-pkg-nelisp-ert-shim.el=, loaded
+      =nelisp-call-process= / =nelisp-make-process= /
+      =nelisp-http-get= / =nelisp-http-fetch= definitions, and
+      executable async / text HTTP lower primitives sufficient for the
+      standalone-executable suite.
 - [x] =make smoke-nelisp-suite-readiness= audits whether the current
-      standalone image can run the full anvil-pkg ERT suite.  The
-      current local image reports =:suite-ready nil= with blockers
-      =native-async-lower-primitive= and
-      =native-text-http-lower-primitive=, and reports
-      =:readiness-audit-ok t= so the incomplete production suite state
-      is mechanically visible without pretending the suite passes.
+      standalone image can run the standalone-executable anvil-pkg ERT
+      suite.  The current local image reports =:suite-ready t= with no
+      blockers and =:readiness-audit-ok t=.
 - [x] =make smoke-nelisp-suite-loadability= loads runtime sources and
       each ERT file in a fresh standalone NeLisp process with the local
       ERT shim in registration-only mode.  This proves the current CLI
       can parse and register every test file in NeLisp runtime mode,
-      and asserts the registered total is 182 tests, before the lower
-      process / URL primitives required for execution exist.
-- [x] =make smoke-nelisp-suite= is wired as the final real-NeLisp
-      suite command.  It currently exits non-zero before loading ERT
-      files when readiness reports blockers; once
-      =:suite-ready t= is true, the same target loads runtime source,
-      helper scripts, and all ERT files under standalone NeLisp and
-      delegates to =ert-run-tests-batch-and-exit=.
+      and asserts the registered total is 267 tests.
+- [x] =make smoke-nelisp-suite= is wired as the real-NeLisp suite
+      command for the standalone-executable subset.  It loads runtime
+      source, helper scripts, and each executable ERT file under
+      standalone NeLisp and currently passes 130 tests.
 - [x] =make smoke-nelisp-local= is the aggregate local NeLisp gate.  It
-      runs the compat smoke, capability audit, suite readiness audit,
-      suite loadability probe, and then treats the current full-suite
-      not-ready result as expected until the lower process / HTTP
-      primitives land.
+      runs the compat smoke, public Nelix smoke, capability audit,
+      suite readiness audit, suite loadability probe, and the
+      standalone-executable NeLisp ERT suite.
 - [x] =make verify-local= is the full local release gate: no-Nix
       =make check=, top-level repository =nix flake check=,
       real-Nix eval/build smoke, aggregate NeLisp smoke, and
@@ -300,36 +292,29 @@ process / HTTP primitives matching the small compat contracts above.
 - [ ] Replace the async hook with a production NeLisp native backend
       backed by an executable lower process primitive.  The current
       local NeLisp checkout has =nelisp-make-process= /
-      =nelisp-call-process= definitions in =nelisp-process.el=, but
-      until the syscall FFI bridge is wired those definitions fall
-      through to host =make-process=.  The standalone image used by
-      the smoke target currently reports no lower =make-process=
-      primitive, so the loaded definitions are useful for
-      auto-detection / contract probing but not yet executable.  This
-      blocker is cleared by either routing =nelisp-make-process=
-      through the native =nl-syscall-posix-spawn= /
-      =nl-syscall-waitpid= / =nl-syscall-pipe2= path, or by exposing a
-      standalone =make-process= equivalent that can run subprocesses.
+      =nelisp-call-process= definitions in =nelisp-process.el= and the
+      current smoke target can execute the suite subset that depends
+      on process hooks.  The remaining production work is to route
+      =nelisp-make-process= through the native
+      =nl-syscall-posix-spawn= / =nl-syscall-waitpid= /
+      =nl-syscall-pipe2= path, or to expose a standalone
+      =make-process= equivalent that can run subprocesses without
+      host Emacs semantics.
 - [ ] Replace the text HTTP hook with a production NeLisp native
       backend backed by an executable lower HTTP primitive.  The
       current local NeLisp =nelisp-network.el= and =nelisp-http.el=
       sources provide =nelisp-http-get= / =nelisp-http-fetch=
-      definitions, but those paths delegate to host
-      =url-retrieve-synchronously=.  The standalone image used by the
-      smoke target currently reports no lower
-      =url-retrieve-synchronously= primitive, so the definitions are
-      loadable and visible to anvil-pkg compat probing but not yet a
-      production standalone HTTP transport.  This blocker is cleared by
-      adding a standalone URL / HTTP primitive or by routing
+      definitions and the current smoke target has an executable text
+      HTTP lower path through the standalone process/curl route.  The
+      remaining production work is a native standalone HTTP transport:
+      add a standalone URL / HTTP primitive or route
       =nelisp-http-fetch= through a native transport that does not
-      depend on the host URL library.
-- [ ] Run the suite under a real NeLisp standalone image.  The local
-      ERT shim, =cl-letf= support, runtime-mode test registration, and
-      per-file loadability are already green for all 182 tests.  Full
-      execution is intentionally held behind the two native lower
-      primitive blockers above so =make smoke-nelisp-suite= cannot
-      report a misleading pass on a runtime that can load definitions
-      but cannot execute process / HTTP behavior.
+      depend on Emacs's host URL library.
+- [x] Run the standalone-executable suite under a real NeLisp
+      standalone image.  The local ERT shim, =cl-letf= support,
+      runtime-mode test registration, per-file loadability, and
+      executable subset are green: 267 tests register and 130 tests
+      execute under =make smoke-nelisp-suite=.
 
 * Out of scope
 

@@ -24,7 +24,7 @@ real `executable-find' check (the ensure helper exempts test mode
 when the call-nix fn is not the default).
 
 The state file is bound to a tmp path so the real
-~/.local/state/anvil-pkg/state.json is never touched and the
+~/.local/state/nelix/state.json is never touched and the
 in-process state cache is reset between tests."
   (declare (indent 1))
   `(let* ((tmp (make-temp-file "anvil-pkg-upgrade-test-" nil ".json"))
@@ -152,6 +152,90 @@ in-process state cache is reset between tests."
                              :type 'anvil-pkg-error)))
       (should (string-match-p "pkg-upgrade: NAME must be string, symbol, or nil"
                               (cadr err))))))
+
+(ert-deftest anvil-pkg-upgrade-test-plan-all-separates-pinned ()
+  "pkg-upgrade-plan reports concrete bulk targets without mutating the profile."
+  (cl-letf (((symbol-function 'pkg-list)
+             (lambda ()
+               (list (list :name "ripgrep" :attr-path "legacyPackages.x86_64-linux.ripgrep")
+                     (list :name "fd" :attr-path "legacyPackages.x86_64-linux.fd")
+                     (list :name "magit" :attr-path "packages.x86_64-linux.magit"))))
+            ((symbol-function 'pkg-list-generations)
+             (lambda ()
+               (ert-fail "pkg-upgrade-plan must not refresh generations")))
+            ((symbol-function 'anvil-pkg--rollback-replay-emacs-hooks)
+             (lambda ()
+               (ert-fail "pkg-upgrade-plan must not replay hooks"))))
+    (anvil-pkg-upgrade-test--with-mock
+        (lambda (_args)
+          (ert-fail "pkg-upgrade-plan must not call nix when pkg-list is mocked"))
+      (pkg-pin "ripgrep")
+      (let ((plan (pkg-upgrade-plan)))
+        (should (eq 'upgrade (plist-get plan :operation)))
+        (should (eq :all (plist-get plan :name)))
+        (should (= 2 (plist-get plan :count)))
+        (should (equal '("fd" "magit")
+                       (mapcar (lambda (row) (plist-get row :name))
+                               (plist-get plan :upgrade))))
+        (should (equal '("ripgrep")
+                       (mapcar (lambda (row) (plist-get row :name))
+                               (plist-get plan :pinned))))
+        (should-not (plist-get plan :blocked))
+        (should-not (plist-get plan :empty))))))
+
+(ert-deftest anvil-pkg-upgrade-test-plan-direct-pinned-is-blocked ()
+  "pkg-upgrade-plan reports a pinned direct target instead of upgrading it."
+  (cl-letf (((symbol-function 'pkg-list)
+             (lambda ()
+               (list (list :name "ripgrep" :attr-path "legacyPackages.x86_64-linux.ripgrep")))))
+    (anvil-pkg-upgrade-test--with-mock
+        (lambda (_args)
+          (ert-fail "pkg-upgrade-plan must not shell out when pkg-list is mocked"))
+      (pkg-pin "ripgrep")
+      (let ((plan (pkg-upgrade-plan 'ripgrep)))
+        (should (equal "ripgrep" (plist-get plan :name)))
+        (should (eq :pinned (plist-get plan :blocked)))
+        (should (= 0 (plist-get plan :count)))
+        (should (plist-get plan :empty))
+        (should (equal '("ripgrep")
+                       (mapcar (lambda (row) (plist-get row :name))
+                               (plist-get plan :pinned))))))))
+
+(ert-deftest anvil-pkg-upgrade-test-plan-direct-missing-is-blocked ()
+  "pkg-upgrade-plan reports missing direct targets read-only."
+  (cl-letf (((symbol-function 'pkg-list)
+             (lambda () nil)))
+    (anvil-pkg-upgrade-test--with-mock
+        (lambda (_args)
+          (ert-fail "pkg-upgrade-plan must not shell out when pkg-list is mocked"))
+      (let ((plan (pkg-upgrade-plan "ripgrep")))
+        (should (equal "ripgrep" (plist-get plan :name)))
+        (should (eq :missing (plist-get plan :blocked)))
+        (should (equal "ripgrep" (plist-get plan :missing)))
+        (should (= 0 (plist-get plan :count)))
+        (should (plist-get plan :empty))))))
+
+(ert-deftest anvil-pkg-upgrade-test-tool-plan-empty-name-means-all ()
+  "The MCP plan wrapper maps blank NAME to a read-only all-package plan."
+  (cl-letf (((symbol-function 'pkg-upgrade-plan)
+             (lambda (&optional name)
+               (should (null name))
+               (list :operation 'upgrade
+                     :name :all
+                     :count 0
+                     :upgrade nil
+                     :pinned nil
+                     :blocked nil
+                     :empty t))))
+    (should (equal '(:operation upgrade
+                     :name :all
+                     :count 0
+                     :upgrade nil
+                     :pinned nil
+                     :blocked nil
+                     :empty t
+                     :status "ok")
+                   (anvil-pkg--tool-upgrade-plan "   ")))))
 
 (ert-deftest anvil-pkg-upgrade-test-refresh-error-still-replays-hooks ()
   "pkg-upgrade ignores refresh errors and still replays emacs hooks."

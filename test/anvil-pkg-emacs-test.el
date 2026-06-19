@@ -13,7 +13,7 @@
 ;; `anvil-pkg-state' KV under namespace
 ;; `anvil-pkg:emacs-deps' (Phase 4-D L26 promotion); each test
 ;; binds `anvil-pkg-state-file' to a tmp path so the real
-;; ~/.local/state/anvil-pkg/state.json is never touched and the
+;; ~/.local/state/nelix/state.json is never touched and the
 ;; in-process cache is reset between tests.
 
 ;;; Code:

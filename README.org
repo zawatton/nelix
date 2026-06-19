@@ -1,22 +1,32 @@
-#+title: anvil-pkg — Elisp DSL package manager for anvil, backed by Nix store
+#+title: Nelix — Elisp DSL package manager backed by the Nix store
 #+author: zawatton
 #+date: 2026-04-27
 
 [[https://github.com/zawatton/anvil-pkg/actions/workflows/test.yml][file:https://github.com/zawatton/anvil-pkg/actions/workflows/test.yml/badge.svg]]
 [[https://github.com/zawatton/anvil-pkg/actions/workflows/smoke.yml][file:https://github.com/zawatton/anvil-pkg/actions/workflows/smoke.yml/badge.svg]]
 
-* What is anvil-pkg?
+* What is Nelix?
 
-*anvil-pkg* is a package manager you configure in /Emacs Lisp/, backed
-by the Nix store.  It is a sub-system of [[https://github.com/zawatton/anvil.el][anvil.el]] (the AI tool
-workbench), exposing package install / search / definition both as
-Elisp API and as Claude Code MCP tools.
+*Nelix* is a package manager you configure in /Emacs Lisp/, backed by
+the Nix store.  It began as =anvil-pkg=; the old feature names and
+=anvil-pkg-*= aliases remain available during the compatibility
+transition, but new configuration should use =nelix= entry points.
 
 #+begin_quote
 The same idea as GNU Guix (Scheme over the Nix store) — but in Emacs
 Lisp, integrated with the anvil + NeLisp tool ecosystem so that AI
 agents can install anything by writing one Lisp form.
 #+end_quote
+
+Minimal Emacs setup:
+
+#+begin_src elisp
+(add-to-list 'load-path "/path/to/nelix")
+(require 'nelix)
+(require 'nelix-dsl)
+
+(nelix-install "ripgrep")
+#+end_src
 
 * Status
 
@@ -28,8 +38,8 @@ Elisp libraries through =trivialBuild= / =melpaBuild= with optional
 =:depends-on= derivation from =Package-Requires= for github / tarball /
 git sources with cross-session caching in =anvil-pkg-state=, profile
 generation rollback (=pkg-list-generations= / =pkg-rollback= /
-=pkg-rollback-package= / =pkg-history=), Nix 2.34 =install=→=add=
-dispatch, MELPA recipe auto-synthesis via =postUnpack= with optional
+=pkg-rollback-package= / =pkg-history=), portable
+=nix profile install= dispatch, MELPA recipe auto-synthesis via =postUnpack= with optional
 upstream MELPA recipe lookup, a one-shot =async-installer=
 importer that auto-populates =:depends-on= from local clones, and
 *private repo support* via env-var credentials
@@ -77,46 +87,33 @@ extra-access-tokens= paths.
     evaluator.  It also verifies explicit hook dispatch for sync
     process, async process, env lookup, PATH lookup, text HTTP, and
     binary HTTP under that same standalone evaluator.  Native process /
-    HTTP source probing is kept in =make smoke-nelisp-capabilities=
-    because those definitions can load before the standalone image has
-    the lower runtime primitives needed to execute them.  This is not
-    yet a full NeLisp ERT run.
+    HTTP source probing is kept in =make smoke-nelisp-capabilities=.
   - =make smoke-nelisp-capabilities= (local-only) prints the current
     standalone NeLisp capability snapshot used to explain native
     backend gaps.  With local NeLisp sources discoverable, it loads
     =nelisp-stdlib-eval-special.el= first, the local ERT shim, then
     the native process / network / HTTP package sources.  Locally this
     reports present =ert= / =ert-shim= / =cl-letf= / =cl-defun=,
-    missing lower =make-process= /
-    =url-retrieve-synchronously= primitives, loaded but not executable
-    =nelisp-call-process=, loaded =nelisp-make-process= /
-    =nelisp-http-get= / =nelisp-http-fetch= definitions, absent
-    =nelisp-http-get-binary=, =:native-async-lower-primitive nil=,
-    =:native-text-http-lower-primitive nil=, and
-    =:native-gap-accounted t=.
+    executable process and text HTTP lower primitives, loaded
+    =nelisp-call-process= / =nelisp-make-process= /
+    =nelisp-http-get= / =nelisp-http-fetch= definitions, and
+    =:native-async-lower-primitive t= /
+    =:native-text-http-lower-primitive t=.
   - =make smoke-nelisp-suite-readiness= (local-only) audits whether
     the standalone image is ready to run the full anvil-pkg ERT suite.
-    The current local image reports =:suite-ready nil= with blockers
-    =native-async-lower-primitive= and
-    =native-text-http-lower-primitive=, while keeping the audit itself
-    green via =:readiness-audit-ok t=.
+    The current local image reports =:suite-ready t= with no blockers.
   - =make smoke-nelisp-suite-loadability= (local-only) loads the
     runtime sources and each ERT file in a fresh standalone NeLisp
     process with the local ERT shim in registration-only mode.  This
     proves the current CLI can parse and register every test file in
-    NeLisp runtime mode, and asserts the registered total is 221 tests,
-    before the lower primitives required for execution exist.
+    NeLisp runtime mode, and asserts the registered total is 311 tests.
   - =make smoke-nelisp-suite= (local-only) is the final standalone
-    suite command.  It currently stops before loading the ERT files and
-    exits non-zero with the same blockers; once readiness flips to
-    =:suite-ready t=, it loads the runtime sources, helper scripts, and
-    all ERT files under NeLisp and delegates to
-    =ert-run-tests-batch-and-exit=.
+    suite command.  It runs the standalone-executable ERT subset under
+    NeLisp and currently passes 130 tests.
   - =make smoke-nelisp-local= (local-only) is the aggregate NeLisp
-    gate.  It runs the compat smoke, capability audit, suite readiness
-    audit, suite loadability probe, and then treats the current
-    full-suite not-ready result as expected until the lower process /
-    HTTP primitives land.
+    gate.  It runs the compat smoke, public Nelix smoke, capability
+    audit, suite readiness audit, suite loadability probe, and the
+    standalone-executable NeLisp ERT suite.
   - Real source / cargo / vendor hashes ship in the four smoke-built
     recipes, so those examples need no =sha256-PLACEHOLDER= swap before
     install.  The remaining examples are shape / private-repo examples
@@ -158,15 +155,16 @@ Public Elisp API uses the short =pkg-= prefix:
   layouts work without manual configuration — Phase 4-E
 - =pkg-install= multi-package dispatch: =(pkg-install '(magit dash
   transient))= or =(pkg-install '(magit "ripgrep"))= renders the
-  flake once and invokes =nix profile install/add= once with all
+  flake once and invokes =nix profile install= once with all
   flakerefs (atomic across the bulk via Nix's profile transaction).
   Mixed registry symbols + nixpkgs strings supported.  Async
   callbacks receive =:names NAMES= instead of =:name NAME=.
   =:require= rejected with list NAME (ambiguous) — Phase 4-F
-- =pkg-uninstall= (=nix profile remove=), =pkg-upgrade= (=nix profile
-  upgrade= — all via the portable =.*= matcher or a single element),
-  and =pkg-info= (read-only merged installed-profile + =nix search=
-  metadata) — Phase 6
+- =pkg-uninstall= (=nix profile remove=), =pkg-upgrade-plan=
+  (read-only target / pin / missing report before upgrading),
+  =pkg-upgrade= (=nix profile upgrade= — all via the portable =.*=
+  matcher or a single element), and =pkg-info= (read-only merged
+  installed-profile + =nix search= metadata) — Phase 6
 - =pkg-pin= / =pkg-unpin= / =pkg-list-pins= (hold packages back from a
   bulk =pkg-upgrade=, pins persisted in =anvil-pkg-state=; a pinned name
   passed explicitly to =pkg-upgrade= errors until unpinned),
@@ -174,6 +172,123 @@ Public Elisp API uses the short =pkg-= prefix:
   profile dir, installed count, anvil-server, state file), and the
   =node= (=pkgs.buildNpmPackage=, requires =:npm-deps-hash=) + =haskell=
   (=pkgs.haskellPackages.mkDerivation=) build systems — Phase 7
+- =nelix-manifest.el= desired-state workflow:
+  =nelix-manifest-load=, =nelix-validate=, =nelix-apply=, =nelix-audit=,
+  =nelix-prune-plan=, =nelix-sync=, =nelix-lock-read=,
+  =nelix-lock-write=, =nelix-lock-check=, and manifest-aware
+  =nelix-upgrade-plan=.  This is the first Nix/Guix-like manifest
+  layer for managing Emacs and Linux package lists from one file.
+  Lock files are version 2 and record combined manifest/import digests,
+  per-file digest rows, backend/system metadata, and resolved package
+  rows so generated import drift is detected by =nelix-lock-check= and
+  =nelix-audit=.
+- =nelix-backend.el= / =nelix-store.el= / =nelix-registry.el= native
+  skeleton: backend capabilities and policy selection, Nix-free
+  =nelix-native-audit=, metadata-only native store/profile generations,
+  rollback, profile prune/remove, and local registry list/search/show with
+  fixture recipes.  This
+  starts the path toward Windows/macOS/Nix-free operation.
+- =nelix-fetch.el= / =nelix-builder.el= native install path:
+  hash-verified local/file/HTTP/Git source fetch, GitHub release URL
+  construction, ELPA archive URL resolution, exact Git rev archive
+  export, deterministic local directory hashing, tar/zip extraction,
+  local file/tree copy install, executable bit handling,
+  POSIX shell shim rendering, Windows =.cmd= shim rendering, native
+  store metadata writing, and profile generation creation for simple
+  =:install (:type unpack ...)= and =:install (:type copy ...)= recipes, plus
+  =:install (:type emacs-lisp ...)= recipes.  Emacs Lisp native installs
+  record profile =load-path= metadata and can be activated with
+  =nelix-profile-activate-emacs=.  Runtime installs record
+  =:runtime-bins= and can be activated with
+  =nelix-profile-activate-runtime=, which regenerates profile-local
+  shims under =active/bin= and emits =path.sh= on POSIX systems or
+  =path.cmd= on Windows.
+- Manifest backend dispatch now lets =nelix-apply= and =nelix-audit=
+  choose a backend from policy.  The default keeps Nix when available
+  and falls back to =nelix-native= when Nix is absent.  Native
+  =nelix-sync :prune t= now removes unmanaged entries by creating a
+  new profile generation; =nelix-store-gc= only deletes store paths
+  unreachable from every profile generation, preserving rollback.
+- Native =nelix-backend-upgrade-plan= compares current native profile
+  entries against local registry recipes, reporting upgrade
+  candidates, pins, missing direct targets, missing registry recipes,
+  and up-to-date entries without mutating profiles.
+- =bin/nelix= and =scripts/nelix-cli.el= provide the initial command
+  line wrapper for manifest operations: =validate=, =apply=, =audit=, =sync
+  [--prune]=, =prune-plan=, =lock=, =upgrade-plan=, =outdated=,
+  =upgrade=, =list=, =rollback=, and =doctor=.  =--json= emits
+  normalized JSON for agent use.  The wrapper supports Emacs batch mode
+  and standalone NeLisp direct mode via =--runtime nelisp= or
+  =NELIX_RUNTIME=nelisp=.  =validate= is read-only and avoids profile
+  process/Nix access, so it is the first standalone NeLisp check for
+  generated manifests.  Manifest =audit=, =plan=, =upgrade-plan=, and
+  =list= use the AOT cache fast lane by default under =--runtime nelisp=;
+  run =nelix aot-cache MANIFEST= to prebuild the cache, or set
+  =NELIX_NELISP_AOT=0= to debug the slower direct standalone path.
+  =apply --locked= and =sync --locked=
+  refuse mutation unless the lock file matches the manifest and every
+  imported file, and the lock package rows match the selected
+  backend/profile/system and current manifest targets.  Missing
+  installs in locked mode use the lock row =:target= values.  Native
+  locked installs reconstruct a transient recipe from the lock row
+  source/install/dependency metadata and do not consult the mutable
+  registry after lock generation.  Mutating commands include the
+  target profile path in their result.
+  Manifest-wide =nelix upgrade
+  MANIFEST= now mutates the selected backend by applying the
+  read-only =nelix-outdated= rows; pinned, missing, current, and
+  unsupported backend rows remain report-only.
+- =nelix-outdated= and =nelix outdated [MANIFEST|NAME] [--backend
+  BACKEND]= aggregate read-only upgrade candidates across available
+  upgrade-plan backends.  Unsupported but available OS package
+  backends, such as =apt= before a backend-specific planner exists, are
+  reported under =:skipped= instead of failing the whole report.
+- =nelix-substitute.el= adds native substitute metadata and
+  materialization: descriptors require name/version/system/source/hash,
+  can be written under the substitute metadata root, listed, read back,
+  verified against local payload fixtures, and installed into the
+  native store/profile.  Portable tar/zip payloads unpack through the
+  native builder, while true NAR payloads restore through
+  =nix-store --restore=.  It also includes a precomputed Nix substitute
+  bridge for maintainer-exported cache/store/nar metadata, Nix
+  =.narinfo= parsing, Nix valid-path fingerprint generation for
+  signature input, local trusted-signer policy reports, OpenSSL-backed
+  Nix Ed25519 verification for narinfo signatures, and OpenSSL
+  RSA-SHA256 verification for signed substitute descriptors.  It also
+  exposes a pluggable cryptographic verifier registry and an
+  OpenSSL-free =nelix-sha256-digest= descriptor verifier for native
+  bootstrap integrity checks; public-key Ed25519/RSA verification
+  remains OpenSSL-backed until NeLisp provides native crypto.
+- Debian packaging now has local publication gates:
+  =make apt-repo-gate= builds =elpa-nelix=, verifies the =.deb= with
+  lintian/content checks, generates an APT repository under
+  =../nelix-apt-repo=, and verifies =Packages=, =Packages.gz=,
+  =Release=, and =sources.list=.  =make apt-signed-repo-gate= signs
+  that repository with a temporary GPG key, writes =InRelease=,
+  =Release.gpg=, =nelix-archive-keyring.gpg=, and
+  =sources.list.signed=, then verifies the signatures with =gpgv=.
+  =make apt-http-gate= copies a sanitized static publication tree to
+  =../nelix-apt-public=, rejects accidental GPG secret material, serves
+  it over local HTTP, runs isolated =apt-get update=, downloads
+  =elpa-nelix= through HTTP, and verifies the downloaded =.deb=.
+  =make publication-url-check APT_PUBLIC_URL=https://...
+  FEDORA_PUBLIC_URL=https://...= rejects placeholder or insecure public
+  repository URLs before any public publication work starts.
+  =make publication-preflight APT_PUBLIC_URL=https://...
+  FEDORA_PUBLIC_URL=https://...= runs that URL guard, then verifies both
+  static publication trees against their final public URLs before upload.
+  =make publication-public-smoke= runs the same URL guard before checking
+  those published URLs after upload.
+  =make apt-public-url-smoke APT_PUBLIC_URL=https://...= runs the same
+  rootless isolated APT download check against a real published HTTPS
+  repository URL.
+  Fedora packaging has =make fedora-container-gate=, which builds
+  =nelix= / =emacs-nelix= RPMs in =fedora:latest=, runs =rpmlint=,
+  creates a local =createrepo_c= repository, installs both packages
+  with =dnf= from that repository, and verifies =nelix --help= plus
+  Emacs loadability after install.  =make fedora-public-url-smoke
+  FEDORA_PUBLIC_URL=https://...= installs from a published dnf
+  repository URL on a Fedora host or disposable Fedora container.
 - Phase 5 groundwork: =anvil-pkg-compat= exposes NeLisp backend
   hooks for synchronous process calls, async process spawn, text HTTP
   GET, binary HTTP GET, env lookup, and PATH lookup
@@ -303,8 +418,16 @@ your config should not require learning a new macro language.
 | CI    | GitHub Actions — Emacs 30 × Linux, =make lint= + =make test= + render gate | *SHIPPED*   |
 | 4-H   | Real-Nix smoke (=make smoke-eval=) + cargoSha256→cargoHash renderer fix | *SHIPPED*      |
 | 5+    | NeLisp async backend + HTTP backend (compat hooks + smoke landed)      | research       |
-| 6     | =pkg-uninstall= / =pkg-upgrade= / =pkg-info= (remove / upgrade / query) | *SHIPPED*      |
+| 6     | =pkg-uninstall= / =pkg-upgrade-plan= / =pkg-upgrade= / =pkg-info=      | *SHIPPED*      |
 | 7     | =pkg-pin= / =pkg-doctor= + =node= / =haskell= build systems            | *SHIPPED*      |
+| M1-M4 | Nelix manifest apply/audit/sync/prune/lock v2 + locked apply/sync      | *SHIPPED*      |
+| M5    | Initial =nelix= CLI wrapper with =--json= and Debian command payload   | *SHIPPED*      |
+| M6    | Cross-backend read-only =nelix-outdated= / =nelix outdated=            | *SHIPPED*      |
+| N1/N2/N6 | Native backend protocol, store/profile metadata, local registry      | *SHIPPED*      |
+| N3/N4 | Hash-verified native fetch and unpack builder                         | *SHIPPED*      |
+| N5    | Native Emacs Lisp builder and profile load-path activation             | *SHIPPED*      |
+| N7    | Manifest backend dispatch and Nix-absent native fallback               | *SHIPPED*      |
+| N8    | Native + precomputed Nix substitute materialize/install + signature policy | *SHIPPED*      |
 
 See =docs/design/01-overview.org= for the full Phase 1 contract.
 
@@ -322,6 +445,23 @@ In your Emacs init:
 (require 'anvil-pkg-dsl)        ; Phase 2 — pkg-define macro
 ;; To register pkg-* MCP tools (requires anvil.el loaded):
 (anvil-pkg-enable)
+#+end_src
+
+Command-line wrapper from a checkout:
+
+#+begin_src shell
+bin/nelix --help
+bin/nelix --json doctor
+bin/nelix audit ~/.config/nelix/manifest.el
+bin/nelix sync ~/.config/nelix/manifest.el --prune
+bin/nelix --runtime nelisp --json version
+#+end_src
+
+Local install:
+
+#+begin_src shell
+make install prefix=$HOME/.local
+~/.local/bin/nelix --help
 #+end_src
 
 ** Examples
@@ -459,7 +599,7 @@ In your Emacs init:
 ;; Phase 4-D — per-package rollback (drops one entry, keeps the rest)
 (pkg-rollback-package 'magit)
 ;; → re-renders flake.nix from the registry minus magit, runs
-;;   `nix profile add'.  Other installed packages stay.
+;;   `nix profile install'.  Other installed packages stay.
 
 ;; Phase 4-D — clear caches by scope (default = all)
 (pkg-clear-cache)              ; all anvil-pkg-state namespaces
@@ -493,7 +633,7 @@ In your Emacs init:
 ;; → synth recipe now covers lisp/ subdir + .el.in + .info layouts.
 
 ;; Phase 4-F — multi-package install (atomic bulk).
-;; pkg-install dispatches a single nix profile install/add invocation
+;; pkg-install dispatches a single nix profile install invocation
 ;; with all flakerefs.  Atomic: success or none.
 (pkg-install '(magit dash transient))           ; 3 registry symbols
 (pkg-install '("ripgrep" "fd" "hyperfine"))     ; 3 nixpkgs strings
@@ -602,10 +742,11 @@ make smoke-eval    # real Nix evaluator check for real-hash examples
 make smoke-build   # local real Nix build for cheap examples
 make smoke-nelisp  # load compat layer under local standalone NeLisp
 make smoke-nelisp-capabilities  # print local NeLisp backend capability snapshot
+make smoke-nelix-cli-nelisp  # run bin/nelix through standalone NeLisp
 make smoke-nelisp-suite-readiness  # audit real NeLisp full-suite readiness
 make smoke-nelisp-suite-loadability  # load each ERT file under real NeLisp
-make smoke-nelisp-suite  # run real NeLisp full suite once readiness passes
-make smoke-nelisp-local  # aggregate local NeLisp gate, expected-not-ready aware
+make smoke-nelisp-suite  # run real NeLisp standalone-executable suite
+make smoke-nelisp-local  # aggregate local NeLisp gate
 #+end_src
 
 The Makefile auto-detects =/nix/var/nix/profiles/default/bin/nix= when

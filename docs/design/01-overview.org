@@ -95,8 +95,8 @@ Three Elisp functions, three MCP tools, three Nix sub-commands wrapped.
 
 - Errors from =nix= surface as Elisp signals carrying stderr.
 - =nix search= JSON parsed lazily; never load full nixpkgs in memory.
-- Profile path: =~/.local/state/anvil-pkg/profile/= (Nix profile dir,
-  not the user's default =~/.nix-profile=, so anvil-pkg installs do
+- Profile path: =~/.local/state/nelix/profile/= (Nix profile dir,
+  not the user's default =~/.nix-profile=, so Nelix installs do
   not collide with the user's other Nix profiles).
 - Phase 1 has *no* manifest, *no* generation tracking, *no* DSL macro.
   Those land in Phase 2-4.
@@ -152,7 +152,7 @@ on machines without Nix).
 
 ** Q2. Profile location (anvil's own vs user's default)
 
-Tentative: =~/.local/state/anvil-pkg/profile= so anvil-pkg installs
+Tentative: =~/.local/state/nelix/profile= so Nelix installs
 isolate from a user's existing Nix profile.  PATH augmentation handled
 by the user (or a future =anvil pkg env= command).
 

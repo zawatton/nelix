@@ -48,6 +48,7 @@
 ;;   (pkg-pinned-p NAME)
 ;;   (pkg-list-pins)
 ;;   (pkg-uninstall NAME)
+;;   (pkg-upgrade-plan &optional NAME)
 ;;   (pkg-upgrade &optional NAME)
 ;;   (pkg-info NAME)
 ;;   (pkg-doctor)
@@ -57,7 +58,7 @@
 ;; provided via `defalias' for callers that prefer Emacs prefix style.
 ;;
 ;; MCP tools (registered by `anvil-pkg-enable'):
-;;   pkg-install / pkg-search / pkg-list / pkg-uninstall / pkg-upgrade / pkg-info
+;;   pkg-install / pkg-search / pkg-list / pkg-uninstall / pkg-upgrade-plan / pkg-upgrade / pkg-info
 ;;   pkg-pin / pkg-unpin / pkg-list-pins / pkg-doctor
 ;;
 ;; CLI surface (out of scope for this repo; landed in anvil.el):
@@ -68,6 +69,7 @@
 ;;   anvil pkg unpin <name>
 ;;   anvil pkg list-pins
 ;;   anvil pkg uninstall <name>
+;;   anvil pkg upgrade-plan [name]
 ;;   anvil pkg upgrade [name]
 ;;   anvil pkg info <name>
 ;;   anvil pkg doctor
@@ -90,6 +92,13 @@ Claude Code MCP session sees one unified tool list.")
 (defconst anvil-pkg--pins-namespace "pins"
   "`anvil-pkg-state' namespace for package pin state.")
 
+(defvaralias 'nelix-default-backend 'anvil-pkg-default-backend)
+(defvaralias 'nelix-nix-channel 'anvil-pkg-nix-channel)
+(defvaralias 'nelix-profile-dir 'anvil-pkg-profile-dir)
+(defvaralias 'nelix-nix-program 'anvil-pkg-nix-program)
+(defvaralias 'nelix-nix-version-ttl-seconds
+  'anvil-pkg-nix-version-ttl-seconds)
+
 (defcustom anvil-pkg-default-backend 'nix
   "Default backend used when `anvil-pkg-install' is called without :backend.
 Phase 1 only honours `nix'; `git' lands in Phase 3 (async-installer
@@ -106,12 +115,12 @@ Used as `<channel>#<name>' when invoking `nix profile install'."
 
 (defcustom anvil-pkg-profile-dir
   (expand-file-name
-   "anvil-pkg/profile"
+   "nelix/profile"
    (or (anvil-pkg-compat-getenv "XDG_STATE_HOME")
        (expand-file-name ".local/state"
                          (or (anvil-pkg-compat-getenv "HOME") "~"))))
-  "Directory for the anvil-pkg Nix profile.
-Isolated from `~/.nix-profile' so anvil-pkg installs do not collide
+  "Directory for the Nelix Nix profile.
+Isolated from `~/.nix-profile' so Nelix installs do not collide
 with the user's other Nix profiles.  PATH augmentation is the
 caller's responsibility (Phase 4 will add an `anvil pkg env'
 helper)."
@@ -215,6 +224,131 @@ overridden) because mock backends do not need nix on PATH."
   "Parse JSON-STR into nested alists/lists.  Empty string returns nil."
   (anvil-pkg-compat-json-parse json-str))
 
+(defun anvil-pkg--string-find-char (string char start)
+  "Return index of CHAR in STRING at or after START, or nil."
+  (let ((i (or start 0))
+        (n (length string))
+        found)
+    (while (and (< i n) (null found))
+      (if (eq (aref string i) char)
+          (setq found i)
+        (setq i (1+ i))))
+    found))
+
+(defun anvil-pkg--string-find-substring (string needle start)
+  "Return index of NEEDLE in STRING at or after START, or nil."
+  (let ((i (or start 0))
+        (n (length string))
+        (m (length needle))
+        found)
+    (while (and (<= (+ i m) n) (null found))
+      (if (string= (substring string i (+ i m)) needle)
+          (setq found i)
+        (setq i (1+ i))))
+    found))
+
+(defun anvil-pkg--json-skip-ws (string index)
+  "Return first non-JSON-whitespace index in STRING at or after INDEX."
+  (let ((i index)
+        (n (length string)))
+    (while (and (< i n)
+                (let ((ch (aref string i)))
+                  (or (eq ch ?\s) (eq ch ?\t)
+                      (eq ch ?\n) (eq ch ?\r))))
+      (setq i (1+ i)))
+    i))
+
+(defun anvil-pkg--json-read-simple-string (string index)
+  "Read a JSON string in STRING starting at INDEX.
+Return `(VALUE . NEXT-INDEX)'.  Handles the common escaped quote and
+backslash forms needed for Nix profile element names."
+  (let ((i (1+ index))
+        (n (length string))
+        (start (1+ index))
+        (out "")
+        (escaped nil)
+        (done nil))
+    (while (and (< i n) (not done))
+      (let ((ch (aref string i)))
+        (cond
+         ((eq ch ?\\)
+          (setq escaped t)
+          (when (> i start)
+            (setq out (concat out (substring string start i))))
+          (setq i (1+ i))
+          (when (< i n)
+            (setq out (concat out (char-to-string (aref string i))))
+            (setq i (1+ i))
+            (setq start i)))
+         ((eq ch ?\")
+          (setq done t)
+          (unless escaped
+            (setq out (substring string start i)))
+          (when (and escaped (> i start))
+            (setq out (concat out (substring string start i))))
+          (setq i (1+ i)))
+         (t
+          (setq i (1+ i))))))
+    (cons out i)))
+
+(defun anvil-pkg--json-skip-string (string index)
+  "Return index just after the JSON string in STRING starting at INDEX."
+  (let ((i (1+ index))
+        (n (length string))
+        (done nil))
+    (while (and (< i n) (not done))
+      (let ((ch (aref string i)))
+        (cond
+         ((eq ch ?\\)
+          (setq i (+ i 2)))
+         ((eq ch ?\")
+          (setq done t)
+          (setq i (1+ i)))
+         (t
+          (setq i (1+ i))))))
+    i))
+
+(defun anvil-pkg--parse-list-fast-element-names (json-str)
+  "Parse Nix profile element names from JSON-STR without a full JSON parser.
+This is a NeLisp fast path for `nix profile list --json', where the
+generic JSON parser is too expensive for large profile output."
+  (let* ((needle "\"elements\"")
+         (elements-pos (anvil-pkg--string-find-substring json-str needle 0))
+         (brace-pos (and elements-pos
+                         (anvil-pkg--string-find-char
+                          json-str ?{ (+ elements-pos (length needle)))))
+         (i (and brace-pos (1+ brace-pos)))
+         (n (length json-str))
+         (depth 1)
+         rows)
+    (while (and i (< i n) (> depth 0))
+      (let ((ch (aref json-str i)))
+        (cond
+         ((eq ch ?\")
+          (if (= depth 1)
+              (let* ((pair (anvil-pkg--json-read-simple-string json-str i))
+                     (key (car pair))
+                     (next (cdr pair))
+                     (colon (anvil-pkg--json-skip-ws json-str next)))
+                (when (and (< colon n)
+                           (eq (aref json-str colon) ?:))
+                  (push (list :name key
+                              :attr-path nil
+                              :original-url nil
+                              :store-paths nil)
+                        rows))
+                (setq i next))
+            (setq i (anvil-pkg--json-skip-string json-str i))))
+         ((eq ch ?{)
+          (setq depth (1+ depth))
+          (setq i (1+ i)))
+         ((eq ch ?})
+          (setq depth (1- depth))
+          (setq i (1+ i)))
+         (t
+          (setq i (1+ i))))))
+    (nreverse rows)))
+
 (defun anvil-pkg--parse-search (json-str)
   "Parse `nix search --json' output JSON-STR into list of plists.
 
@@ -240,20 +374,55 @@ Each plist carries :name :description :version :attrpath."
 Each plist carries :name :attr-path :original-url :store-paths.
 Accepts the modern Nix 2.18+ schema where `elements' is an object
 keyed by package name."
-  (let* ((data (anvil-pkg--json-parse json-str))
-         (elements (alist-get 'elements data)))
-    (when (and elements (consp elements))
-      (mapcar (lambda (entry)
-                (let* ((name (car entry))
-                       (info (cdr entry))
-                       (name-str (if (symbolp name)
-                                     (symbol-name name)
-                                   (format "%s" name))))
-                  (list :name name-str
-                        :attr-path (alist-get 'attrPath info)
-                        :original-url (alist-get 'originalUrl info)
-                        :store-paths (alist-get 'storePaths info))))
-              elements))))
+  (if (anvil-pkg-compat--standalone-nelisp-p)
+      (anvil-pkg--parse-list-fast-element-names json-str)
+    (let* ((data (anvil-pkg--json-parse json-str))
+           (elements (alist-get 'elements data)))
+      (when (and elements (consp elements))
+        (mapcar (lambda (entry)
+                  (let* ((name (car entry))
+                         (info (cdr entry))
+                         (name-str (if (symbolp name)
+                                       (symbol-name name)
+                                     (format "%s" name))))
+                    (list :name name-str
+                          :attr-path (alist-get 'attrPath info)
+                          :original-url (alist-get 'originalUrl info)
+                          :store-paths (alist-get 'storePaths info))))
+                elements)))))
+
+(defun anvil-pkg--parse-list-name-lines (text)
+  "Parse newline-separated profile entry names from TEXT."
+  (let ((lines (split-string (or text "") "\n" t))
+        rows)
+    (dolist (line lines)
+      (push (list :name line
+                  :attr-path nil
+                  :original-url nil
+                  :store-paths nil)
+            rows))
+    (nreverse rows)))
+
+(defun anvil-pkg--list-via-text-names ()
+  "List profile entries via text output reduced to names.
+This is the standalone NeLisp fast path: parsing the full 70KB+
+`nix profile list --json' output inside the interpreter is too slow,
+so the child process reduces it to one package name per line first."
+  (let* ((profile (expand-file-name anvil-pkg-profile-dir))
+         (script
+          "\"$1\" profile list --profile \"$2\" | sed -n 's/\\x1b\\[[0-9;]*m//g; s/^Name:[[:space:]]*//p'")
+         (res (anvil-pkg-compat-call-process
+               "sh"
+               (list "-c" script "nelix-profile-list"
+                     anvil-pkg-nix-program profile))))
+    (unless (eq 0 (plist-get res :exit))
+      (signal 'anvil-pkg-nix-failed
+              (list (format "nix profile list failed (exit %s): %s"
+                            (plist-get res :exit)
+                            (anvil-pkg-compat-string-trim
+                             (or (plist-get res :stderr) "")))
+                    :stderr (plist-get res :stderr))))
+    (anvil-pkg--parse-list-name-lines (plist-get res :stdout))))
 
 (defun anvil-pkg--find-name-row (name rows)
   "Return the first plist in ROWS whose :name equals NAME, or nil."
@@ -334,6 +503,11 @@ the first hit to `load-path'.  Returns the directory path on
 success or nil when no profile element / no site-lisp dir
 exists."
   (let* ((pkg-name (symbol-name name))
+         (ir (ignore-errors
+               (anvil-pkg--registry-get name)))
+         (bs (plist-get ir :build-system))
+         (site-name (or (plist-get bs :pname)
+                        pkg-name))
          (entries (pkg-list))
          entry
          match-dir)
@@ -345,7 +519,7 @@ exists."
       (dolist (store-path (plist-get entry :store-paths))
         (when (null match-dir)
           (let* ((per-pkg (expand-file-name
-                           (format "share/emacs/site-lisp/%s" pkg-name)
+                           (format "share/emacs/site-lisp/%s" site-name)
                            store-path))
                  (flat    (expand-file-name "share/emacs/site-lisp"
                                             store-path))
@@ -358,11 +532,11 @@ exists."
                            (entries (and (anvil-pkg-compat-file-exists-p elpa-dir)
                                          (ignore-errors
                                            (directory-files elpa-dir t
-                                                            (concat "\\`" (regexp-quote pkg-name) "-")))))
+                                                            (concat "\\`" (regexp-quote site-name) "-")))))
                            (hit (and entries (car entries))))
                       hit))
                    ;; flat layout: $out/share/emacs/site-lisp/<pname>.el
-                   ((let ((flat-el (expand-file-name (concat pkg-name ".el") flat)))
+                   ((let ((flat-el (expand-file-name (concat site-name ".el") flat)))
                       (and (anvil-pkg-compat-file-exists-p flat-el) flat))))))
             (when chosen
               (add-to-list 'load-path chosen)
@@ -370,10 +544,10 @@ exists."
     match-dir))
 
 ;;;; --- Nix version detection (L20) ------------------------------------------
-;; Nix 2.34 deprecated `nix profile install' in favour of `nix profile add'.
-;; Both subcommands take identical arguments and exit semantics.  Detect the
-;; runtime version once per Emacs session and dispatch the right subcommand
-;; so >= 2.34 stops emitting the deprecation warning.
+;; Keep the version cache for diagnostics and future compatibility decisions.
+;; The profile install path intentionally uses `nix profile install': Nix
+;; 2.34.7 in Debian exposes `install' and rejects `add', so version-only
+;; dispatch is not reliable enough for package installation.
 
 (defconst anvil-pkg--nix-version-namespace "anvil-pkg:nix-version"
   "`anvil-pkg-state' namespace for the cached `nix --version' string.")
@@ -408,7 +582,7 @@ subcommand)."
                    (error nil))))
         (when (and res (eq 0 (plist-get res :exit)))
           (let ((stdout (or (plist-get res :stdout) "")))
-            (when (string-match "\\([0-9]+\\.[0-9]+\\(?:\\.[0-9]+\\)?\\)"
+            (when (string-match "\\([0-9]+\\.[0-9]+\\(\\.[0-9]+\\)?\\)"
                                 stdout)
               (let ((ver (match-string 1 stdout)))
                 (anvil-pkg-state-put anvil-pkg--nix-version-namespace
@@ -433,14 +607,11 @@ differences are irrelevant for the 2.34 install→add rename."
 (defun anvil-pkg--nix-install-subcommand ()
   "Return the right `nix profile' install subcommand for this Nix.
 
-Emits \"add\" on Nix >= 2.34 (= the new spelling, no deprecation
-warning) and \"install\" otherwise.  Detection failure falls back
-to \"install\" — older Nix accepts the legacy spelling and 2.34+
-still understands it (with a warning) so degrading to the safer
-default never breaks the install."
-  (if (anvil-pkg--nix-version-at-least-p 2 34)
-      "add"
-    "install"))
+Always emits \"install\".  This is the subcommand present in the
+current Nix CLI help on Debian with Nix 2.34.7, while \"add\" is
+not recognised there.  Keeping one conservative spelling avoids a
+version-only branch that can select an unsupported subcommand."
+  "install")
 
 ;;;; --- public API ------------------------------------------------------------
 
@@ -541,7 +712,7 @@ swallows silently).
 
 Phase 4-F: multi-install errors surface `:names NAMES' instead of
 `:name NAME'.  The error covers the whole bulk transaction since
-Nix profile install/add is atomic."
+Nix profile install is atomic."
   (let* ((names     (anvil-pkg-compat-process-get proc 'anvil-pkg--names))
          (name      (anvil-pkg-compat-process-get proc 'anvil-pkg--name))
          (stderr    (anvil-pkg--async-stderr-string proc))
@@ -722,7 +893,7 @@ when NAMES contains only strings (no IR to render)."
       (list :flakerefs flakerefs :flake-dir flake-dir))))
 
 (defun anvil-pkg--multi-install-args (flakerefs)
-  "Build the `nix profile install/add ...' args for FLAKEREFS."
+  "Build the `nix profile install ...' args for FLAKEREFS."
   (let ((subcmd (anvil-pkg--nix-install-subcommand)))
     (append (list "profile" subcmd)
             (anvil-pkg--profile-args)
@@ -739,7 +910,7 @@ NAME is one of:
     → looks up the local registry, regenerates flake.nix under
     `anvil-pkg-profile-dir's parent, and installs from that flake.
   - a list of any mix of the above (Phase 4-F L29)
-    → a single `nix profile install/add' invocation with all
+    → a single `nix profile install' invocation with all
     flakerefs.  Atomic: success or none.  `:require' is rejected
     in this mode; on-success/on-error callbacks receive `:names
     NAMES' instead of `:name NAME'.
@@ -791,6 +962,10 @@ process object.  Signals `anvil-pkg-nix-failed' /
       (lwarn 'anvil-pkg :warning
              "pkg-install: :on-success/:on-error ignored without :async t"))
     (cond
+     ((null name)
+      (signal 'anvil-pkg-error
+              (list (format "pkg-install: NAME must be string, symbol, or non-empty list, got %S"
+                            name))))
      ;; Phase 4-F: list dispatch.
      (multi
       (let* ((prep (anvil-pkg--multi-install-prepare name plist))
@@ -890,16 +1065,19 @@ when no packages match."
 Returns a list of plists carrying :name :attr-path :original-url
 :store-paths, or nil for an empty profile."
   (anvil-pkg--ensure-nix)
-  (let* ((args (append (list "profile" "list" "--json")
-                       (anvil-pkg--profile-args)))
-         (res (anvil-pkg--call-nix args)))
-    (unless (eq 0 (plist-get res :exit))
-      (signal 'anvil-pkg-nix-failed
-              (list (format "nix profile list failed (exit %s): %s"
-                            (plist-get res :exit)
-                            (anvil-pkg-compat-string-trim (or (plist-get res :stderr) "")))
-                    :stderr (plist-get res :stderr))))
-    (anvil-pkg--parse-list (plist-get res :stdout))))
+  (if (and (anvil-pkg-compat--standalone-nelisp-p)
+           (eq anvil-pkg--call-nix-fn #'anvil-pkg--call-nix-default))
+      (anvil-pkg--list-via-text-names)
+    (let* ((args (append (list "profile" "list" "--json")
+                         (anvil-pkg--profile-args)))
+           (res (anvil-pkg--call-nix args)))
+      (unless (eq 0 (plist-get res :exit))
+        (signal 'anvil-pkg-nix-failed
+                (list (format "nix profile list failed (exit %s): %s"
+                              (plist-get res :exit)
+                              (anvil-pkg-compat-string-trim (or (plist-get res :stderr) "")))
+                      :stderr (plist-get res :stderr))))
+      (anvil-pkg--parse-list (plist-get res :stdout)))))
 
 (defun anvil-pkg--normalize-pin-name (caller name)
   "Return NAME as a non-empty string for CALLER, or signal an error."
@@ -953,6 +1131,113 @@ via `symbol-name'."
 (defun pkg-list-pins ()
   "Return the list of pinned package names as strings."
   (anvil-pkg-state-keys anvil-pkg--pins-namespace))
+
+(defun anvil-pkg--normalize-upgrade-name (caller name &optional blank-is-nil)
+  "Return NAME as a string for CALLER, or nil for all packages.
+When BLANK-IS-NIL is non-nil, blank strings also mean all
+packages.  Otherwise blank strings signal `anvil-pkg-error'."
+  (cond
+   ((null name) nil)
+   ((symbolp name) (symbol-name name))
+   ((stringp name)
+    (let ((trimmed (anvil-pkg-compat-string-trim name)))
+      (cond
+       ((and (zerop (length trimmed)) blank-is-nil) nil)
+       ((zerop (length trimmed))
+        (signal 'anvil-pkg-error
+                (list (format "%s: NAME must be non-empty string or symbol, got %S"
+                              caller name))))
+       (t trimmed))))
+   (t
+    (signal 'anvil-pkg-error
+            (list (format "%s: NAME must be string, symbol, or nil, got %S"
+                          caller name))))))
+
+(defun anvil-pkg--installed-entry-by-name (name installed)
+  "Return the row in INSTALLED whose `:name' is NAME, or nil."
+  (let (found)
+    (dolist (entry installed found)
+      (when (and (null found)
+                 (equal (plist-get entry :name) name))
+        (setq found entry)))))
+
+(defun anvil-pkg--partition-installed-by-pins (installed pins)
+  "Split INSTALLED into upgrade and pinned rows using PINS.
+Return `(:upgrade ROWS :pinned ROWS :stale-pins NAMES)'."
+  (let ((upgrade nil)
+        (pinned nil)
+        (seen-pins nil))
+    (dolist (entry installed)
+      (let ((name (plist-get entry :name)))
+        (if (member name pins)
+            (progn
+              (push entry pinned)
+              (push name seen-pins))
+          (push entry upgrade))))
+    (list :upgrade (nreverse upgrade)
+          :pinned (nreverse pinned)
+          :stale-pins
+          (let (stale)
+            (dolist (pin pins (nreverse stale))
+              (unless (member pin seen-pins)
+                (push pin stale)))))))
+
+;;;###autoload
+(defun pkg-upgrade-plan (&optional name)
+  "Return a read-only plan for `pkg-upgrade'.
+
+When NAME is nil, reports every currently installed profile
+element that would be included in a bulk upgrade and separates
+pinned entries that would be skipped.  When NAME is a string or
+symbol, reports whether that single entry is installed, pinned, or
+missing.
+
+This function does not call `nix profile upgrade', refresh
+generations, or replay Emacs package hooks.  The return value is a
+plist with at least:
+  :operation  `upgrade'
+  :name       `:all' or the target name string
+  :count      number of entries that would be upgraded
+  :upgrade    list of installed profile entry plists
+  :pinned     list of installed pinned profile entry plists
+  :blocked    nil or a reason symbol
+  :empty      non-nil when no profile entry would be upgraded."
+  (interactive)
+  (anvil-pkg--ensure-nix)
+  (let* ((target (anvil-pkg--normalize-upgrade-name
+                  "pkg-upgrade-plan" name))
+         (pins (pkg-list-pins))
+         (installed (pkg-list)))
+    (if target
+        (let* ((entry (anvil-pkg--installed-entry-by-name target installed))
+               (pinned (member target pins))
+               (blocked (cond
+                         (pinned :pinned)
+                         ((null entry) :missing)
+                         (t nil)))
+               (upgrade (if blocked nil (list entry))))
+          (list :operation 'upgrade
+                :name target
+                :count (length upgrade)
+                :upgrade upgrade
+                :pinned (if (and pinned entry) (list entry) nil)
+                :pinned-names pins
+                :missing (and (null entry) target)
+                :blocked blocked
+                :empty (null upgrade)))
+      (let* ((partition (anvil-pkg--partition-installed-by-pins
+                         installed pins))
+             (upgrade (plist-get partition :upgrade))
+             (pinned (plist-get partition :pinned)))
+        (list :operation 'upgrade
+              :name :all
+              :count (length upgrade)
+              :upgrade upgrade
+              :pinned pinned
+              :pinned-names pins
+              :stale-pins (plist-get partition :stale-pins)
+              :blocked nil
+              :empty (null upgrade))))))
 
 ;;;###autoload
 (defun pkg-uninstall (name)
@@ -1159,7 +1444,10 @@ defaults to `:error'."
 
 (defun anvil-pkg--doctor-anvil-server-check ()
   "Return the anvil-server row for `pkg-doctor'."
-  (if (featurep 'anvil-server)
+  (if (or (featurep 'anvil-server)
+          (let ((features-symbol (intern "features")))
+            (and (boundp features-symbol)
+                 (memq 'anvil-server (symbol-value features-symbol)))))
       (list :status :info
             :detail "Feature anvil-server is loaded")
     (list :status :warn
@@ -1405,7 +1693,7 @@ PKG-NAME is a symbol previously installed via `pkg-define' /
 `pkg-install'.  Synthesises a NEW generation containing every
 package currently installed EXCEPT PKG-NAME, re-rendering
 flake.nix from each remaining package's IR in
-`anvil-pkg--registry' and dispatching `nix profile add' against
+`anvil-pkg--registry' and dispatching `nix profile install' against
 the freshly-written flake.  Nix records this as a new
 generation (not as a rollback) — that is the documented L25
 contract.
@@ -1453,8 +1741,12 @@ consistent.  Phase 4-D L25."
              (flake-dir nil))
         (dolist (sym remaining)
           (puthash sym (gethash sym anvil-pkg--registry) scoped-registry))
-        (let ((anvil-pkg--registry scoped-registry))
-          (setq flake-path (funcall anvil-pkg--write-flake-fn)))
+        (let ((saved-registry anvil-pkg--registry))
+          (unwind-protect
+              (progn
+                (setq anvil-pkg--registry scoped-registry)
+                (setq flake-path (funcall anvil-pkg--write-flake-fn)))
+            (setq anvil-pkg--registry saved-registry)))
         (setq flake-dir (directory-file-name (file-name-directory flake-path)))
         (let* ((subcmd (anvil-pkg--nix-install-subcommand))
                (flakerefs (mapcar (lambda (sym)
@@ -1586,6 +1878,8 @@ notice typos rather than silently clearing the wrong namespace."
 ;;;###autoload
 (defalias 'anvil-pkg-uninstall #'pkg-uninstall)
 ;;;###autoload
+(defalias 'anvil-pkg-upgrade-plan #'pkg-upgrade-plan)
+;;;###autoload
 (defalias 'anvil-pkg-upgrade #'pkg-upgrade)
 ;;;###autoload
 (defalias 'anvil-pkg-info #'pkg-info)
@@ -1601,6 +1895,45 @@ notice typos rather than silently clearing the wrong namespace."
 (defalias 'anvil-pkg-history #'pkg-history)
 ;;;###autoload
 (defalias 'anvil-pkg-clear-cache #'pkg-clear-cache)
+
+;;;; --- Nelix public aliases --------------------------------------------------
+;; Nelix is the public project name.  The implementation still lives in the
+;; original anvil-pkg modules during the compatibility transition.
+
+;;;###autoload
+(defalias 'nelix-install #'pkg-install)
+;;;###autoload
+(defalias 'nelix-search #'pkg-search)
+;;;###autoload
+(defalias 'nelix-list #'pkg-list)
+;;;###autoload
+(defalias 'nelix-pin #'pkg-pin)
+;;;###autoload
+(defalias 'nelix-unpin #'pkg-unpin)
+;;;###autoload
+(defalias 'nelix-pinned-p #'pkg-pinned-p)
+;;;###autoload
+(defalias 'nelix-list-pins #'pkg-list-pins)
+;;;###autoload
+(defalias 'nelix-uninstall #'pkg-uninstall)
+;;;###autoload
+(defalias 'nelix-upgrade-plan #'pkg-upgrade-plan)
+;;;###autoload
+(defalias 'nelix-upgrade #'pkg-upgrade)
+;;;###autoload
+(defalias 'nelix-info #'pkg-info)
+;;;###autoload
+(defalias 'nelix-doctor #'pkg-doctor)
+;;;###autoload
+(defalias 'nelix-list-generations #'pkg-list-generations)
+;;;###autoload
+(defalias 'nelix-rollback #'pkg-rollback)
+;;;###autoload
+(defalias 'nelix-rollback-package #'pkg-rollback-package)
+;;;###autoload
+(defalias 'nelix-history #'pkg-history)
+;;;###autoload
+(defalias 'nelix-clear-cache #'pkg-clear-cache)
 
 ;;;; --- MCP tool surface ------------------------------------------------------
 
@@ -1687,6 +2020,17 @@ MCP Parameters:
     (pkg-upgrade normalized)
     (list :status "ok"
           :name (or normalized :all))))
+
+(defun anvil-pkg--tool-upgrade-plan (name)
+  "MCP wrapper around `pkg-upgrade-plan'.
+
+MCP Parameters:
+  name - package name to inspect, or nil / empty / whitespace to
+    inspect every installed package."
+  (let ((normalized (anvil-pkg--normalize-upgrade-name
+                     "pkg-upgrade-plan" name t)))
+    (append (pkg-upgrade-plan normalized)
+            (list :status "ok"))))
 
 (defun anvil-pkg--tool-info (name)
   "MCP wrapper around `pkg-info'.
@@ -1850,6 +2194,20 @@ anvil-pkg profile, refreshes the generations mirror, and replays
 emacs-package hooks so load-path stays in sync.")
 
   (anvil-server-register-tool
+   #'anvil-pkg--tool-upgrade-plan
+   :id "pkg-upgrade-plan"
+   :intent '(packages)
+   :layer 'io
+   :server-id anvil-pkg--server-id
+   :description
+   "Return the read-only upgrade plan for the anvil-pkg Nix profile.
+When name is nil or blank, reports installed packages that would
+be included in a bulk upgrade and pinned packages that would be
+skipped.  When name is provided, reports whether that package is
+installed, pinned, or missing.  Does not modify the profile."
+   :read-only t)
+
+  (anvil-server-register-tool
    #'anvil-pkg--tool-upgrade
    :id "pkg-upgrade"
    :intent '(packages)
@@ -1929,7 +2287,7 @@ call pkg-list-generations first for fresh data.  Read-only."
   "Remove every pkg-* MCP tool from the shared anvil server."
   (dolist (id '("pkg-install" "pkg-search" "pkg-list"
                 "pkg-pin" "pkg-unpin" "pkg-list-pins"
-                "pkg-uninstall" "pkg-upgrade" "pkg-info" "pkg-doctor"
+                "pkg-uninstall" "pkg-upgrade-plan" "pkg-upgrade" "pkg-info" "pkg-doctor"
                 "pkg-list-generations" "pkg-rollback" "pkg-history"))
     (anvil-server-unregister-tool id anvil-pkg--server-id)))
 
@@ -1941,7 +2299,7 @@ repeatedly — re-registers idempotently."
   (interactive)
   (require 'anvil-server)
   (anvil-pkg--register-tools)
-  (message "anvil-pkg: enabled (13 MCP tools, profile = %s)"
+  (message "nelix: enabled (14 MCP tools, profile = %s)"
            anvil-pkg-profile-dir))
 
 (defun anvil-pkg-disable ()

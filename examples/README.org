@@ -1,15 +1,19 @@
-#+title: anvil-pkg — Examples
+#+title: Nelix — Examples
 #+author: zawatton
 
 * What this is
 
 Copy-pasteable =pkg-define= recipes for every supported source +
 build-system combination.  Use as a starting point for your own
-=anvil-pkg= package definitions.
+=Nelix= package definitions.  The examples still use =pkg-define= and
+=pkg-install= because those short forms remain the stable DSL surface;
+=nelix-define= and =nelix-install= are also available for configs that
+prefer the project prefix.
 
 Each file is a self-contained Elisp library.  Load it from your
 Emacs config (or =M-x load-file=), then call =(pkg-install
-'<package>)= to actually build / install through Nix.
+'<package>)= or =(nelix-install '<package>)= to actually build /
+install through Nix.
 
 * Hashes — real vs placeholder
 

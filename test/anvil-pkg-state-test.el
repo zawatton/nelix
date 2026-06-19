@@ -7,7 +7,7 @@
 
 ;; Phase 4-D sub-task D coverage for the persistent KV layer.  Tests
 ;; bind `anvil-pkg-state-file' to a tmp path so the real
-;; ~/.local/state/anvil-pkg/state.json is never touched, and
+;; ~/.local/state/nelix/state.json is never touched, and
 ;; `cl-letf' the dispatch fluid for the mock-only round-trip cases.
 
 ;;; Code:

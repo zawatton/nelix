@@ -10,4 +10,20 @@
 *.log
 /build/
 /dist/
+/.cache/
 /.claude/
+
+# Debian package build outputs.
+/debian/.debhelper/
+/debian/debhelper-build-stamp
+/debian/elpa-nelix/
+/debian/files
+/debian/*.substvars
+/debian/*.debhelper
+
+# Local package/repository outputs.
+/nelix-apt-repo/
+/nelix-apt-repo-gnupg-test/
+/nelix-apt-public/
+/nelix-rpmbuild/
+/nelix-rpm-repo/

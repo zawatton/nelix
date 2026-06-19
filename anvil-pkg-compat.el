@@ -70,6 +70,8 @@
 (declare-function nelisp-http-fetch             "ext:nelisp-http"    t t)
 (declare-function nelisp-json-parse-string      "ext:nelisp-json"    t t)
 (declare-function nelisp-json-serialize         "ext:nelisp-json"    t t)
+(declare-function rdf                           "ext:nelisp-runtime" t t)
+(declare-function nelisp--syscall-read-file     "ext:nelisp-runtime" t t)
 (declare-function nelisp-ec-getenv              "ext:nelisp-emacs-compat" t t)
 (declare-function nelisp-ec-executable-find     "ext:nelisp-emacs-compat" t t)
 (declare-function nelisp-ec-file-exists-p       "ext:nelisp-emacs-compat-fileio" t t)
@@ -79,6 +81,8 @@
 (declare-function nelisp-ec-write-region        "ext:nelisp-emacs-compat-fileio" t t)
 (declare-function nelisp-ec-generate-new-buffer "ext:nelisp-emacs-compat" t t)
 (declare-function nelisp-ec-kill-buffer         "ext:nelisp-emacs-compat" t t)
+(declare-function nelisp-ec-buffer-p           "ext:nelisp-emacs-compat" t t)
+(declare-function nelisp-ec-buffer-killed-p    "ext:nelisp-emacs-compat" t t)
 (declare-function nelisp-ec-buffer-string       "ext:nelisp-emacs-compat" t t)
 (declare-function nelisp-ec-current-buffer      "ext:nelisp-emacs-compat" t t)
 (declare-function nelisp-ec-set-buffer          "ext:nelisp-emacs-compat" t t)
@@ -185,6 +189,16 @@ refresh the runtime decision before low-level I/O dispatch."
 (defun anvil-pkg-compat--runtime-nelisp-p ()
   "Return non-nil when the current runtime branch is NeLisp."
   (eq (anvil-pkg-compat-runtime) 'nelisp))
+
+(defun anvil-pkg-compat--standalone-nelisp-p ()
+  "Return non-nil only in the standalone NeLisp runtime.
+
+Emacs tests may mock `anvil-pkg-compat-runtime' to `nelisp' while
+still running inside Emacs.  This predicate keeps production fast
+paths that depend on NeLisp's standalone process/file primitives out
+of those mocked Emacs sessions."
+  (and (anvil-pkg-compat--runtime-nelisp-p)
+       (not (boundp 'emacs-version))))
 
 (defvar anvil-pkg-compat-nelisp-make-process-function nil
   "Optional NeLisp backend for `anvil-pkg-compat-make-process-async'.
@@ -343,10 +357,13 @@ signalling `anvil-pkg-http-not-supported'."
 
 (defun anvil-pkg-compat-buffer-live-p (buffer)
   "Return non-nil when BUFFER can still be inspected.
-NeLisp's current `nelisp-ec' surface has no public live predicate, so
-NeLisp callers treat a non-nil buffer as live and let read/kill helpers
-swallow backend errors."
+NeLisp `nelisp-ec' buffers are checked before the host Emacs predicate
+so standalone vector-backed buffers are not rejected by `buffer-live-p'."
   (cond
+   ((and (fboundp 'nelisp-ec-buffer-p)
+         (nelisp-ec-buffer-p buffer))
+    (not (and (fboundp 'nelisp-ec-buffer-killed-p)
+              (nelisp-ec-buffer-killed-p buffer))))
    ((fboundp 'buffer-live-p)
     (buffer-live-p buffer))
    (t
@@ -379,6 +396,10 @@ swallow backend errors."
 (defun anvil-pkg-compat-buffer-string (buffer)
   "Return BUFFER contents as a string, or empty string if unavailable."
   (cond
+   ((and (vectorp buffer)
+         (> (length buffer) 2)
+         (eq (aref buffer 0) 'buffer))
+    (aref buffer 2))
    ((and (anvil-pkg-compat--runtime-nelisp-p)
          (progn
            (anvil-pkg-compat--try-require-nelisp-emacs-compat)
@@ -513,6 +534,9 @@ Tries Emacs `getenv', then NeLisp Layer-2 alternatives."
 (defun anvil-pkg-compat-read-file (path)
   "Return the entire contents of PATH as a string."
   (cond
+   ((and (anvil-pkg-compat--runtime-nelisp-p)
+         (fboundp 'rdf))
+    (or (rdf path) ""))
    ((and (anvil-pkg-compat--runtime-nelisp-p)
          (progn
            (anvil-pkg-compat--try-require-nelisp-emacs-compat)
@@ -683,12 +707,33 @@ Object -> alist, array -> list, null/false -> nil."
         (anvil-pkg-compat--try-require-nelisp-json)
         (cond
          ((fboundp 'nelisp-json-parse-string)
-          (nelisp-json-parse-string trimmed
-                                    :object-type 'alist
-                                    :array-type 'list
-                                    :null-object nil
-                                    :false-object nil))
+          (anvil-pkg-compat--json-symbolize-alist-keys
+           (nelisp-json-parse-string trimmed
+                                     :object-type 'alist
+                                     :array-type 'list
+                                     :null-object nil
+                                     :false-object nil)))
          (t (error "no JSON parser backend available"))))))))
+
+(defun anvil-pkg-compat--json-symbolize-alist-keys (value)
+  "Normalize NeLisp JSON alist object keys to Emacs `json-parse-string' keys."
+  (cond
+   ((and (consp value)
+         (consp (car value))
+         (or (stringp (caar value))
+             (symbolp (caar value))))
+    (mapcar (lambda (entry)
+              (if (consp entry)
+                  (cons (if (stringp (car entry))
+                            (intern (car entry))
+                          (car entry))
+                        (anvil-pkg-compat--json-symbolize-alist-keys
+                         (cdr entry)))
+                (anvil-pkg-compat--json-symbolize-alist-keys entry)))
+            value))
+   ((consp value)
+    (mapcar #'anvil-pkg-compat--json-symbolize-alist-keys value))
+   (t value)))
 
 (defun anvil-pkg-compat-json-serialize (obj)
   "Serialize OBJ to a JSON string.
@@ -1226,16 +1271,13 @@ AUTH-HEADER (Phase 4-G), when non-nil, is injected into
   "Install error-conditions / error-message on SYM.
 Functional equivalent of `define-error', but works without it
 (directly via `put') so it functions on NeLisp standalone too."
-  (when (fboundp 'put)
-    (let ((parent-conds (and parent
-                             (fboundp 'get)
-                             (get parent 'error-conditions)))
-          (existing (and (fboundp 'get) (get sym 'error-conditions))))
-      (put sym 'error-conditions
-           (delete-dups
-            (append (list sym) parent-conds existing
-                    (unless parent-conds '(error)))))
-      (put sym 'error-message message)))
+  (let ((parent-conds (and parent (get parent 'error-conditions)))
+        (existing (get sym 'error-conditions)))
+    (put sym 'error-conditions
+         (delete-dups
+          (append (list sym) parent-conds existing
+                  (unless parent-conds '(error)))))
+    (put sym 'error-message message))
   sym)
 
 ;;;; --- async subprocess (Phase 4-C L22) ------------------------------------

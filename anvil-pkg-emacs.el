@@ -390,6 +390,12 @@ nil immediately (preserving Phase 4-D pure-render semantics).
 Tests rebind via `cl-letf' / `let' to inject deterministic stub
 recipes without touching the network or the cache.")
 
+(unless (functionp anvil-pkg-emacs--render-fetch-fn)
+  (setq anvil-pkg-emacs--render-fetch-fn
+        (lambda (pname)
+          (when anvil-pkg-emacs-melpa-upstream-fetch
+            (anvil-pkg-emacs-fetch-melpa-recipe pname)))))
+
 ;;;; --- public API ----------------------------------------------------------
 
 (defun anvil-pkg-emacs-clear-cache ()
@@ -426,8 +432,10 @@ proceeds)."
          (source-type (plist-get source :type))
          (explicit-deps (plist-get ir :depends-on))
          (name  (plist-get ir :name))
-         (pname (if (symbolp name) (symbol-name name)
-                  (format "%s" name))))
+         (bs (plist-get ir :build-system))
+         (pname (or (plist-get bs :pname)
+                    (if (symbolp name) (symbol-name name)
+                      (format "%s" name)))))
     (cond
      ;; L8 defensive guard: explicit deps win.
      (explicit-deps nil)

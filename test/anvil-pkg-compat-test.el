@@ -691,8 +691,7 @@ the test exits (no resource leak)."
       (should-not (plist-get resp :suite-ready))
       (should (plist-get resp :readiness-audit-ok))
       (should (equal '(ert-batch-runner
-                       native-async-lower-primitive
-                       native-text-http-lower-primitive)
+                       native-async-lower-primitive)
                      (plist-get resp :suite-blocked-by)))
       (should-not (plist-get resp :ert))
       (should (plist-get resp :cl-letf))
@@ -700,7 +699,7 @@ the test exits (no resource leak)."
       (should-not (plist-get resp :url-retrieve-synchronously)))))
 
 (ert-deftest anvil-pkg-nelisp-smoke-test-suite-readiness-ready-state ()
-  "Suite readiness audit flips ready when all required primitives exist."
+  "Suite readiness audit flips ready when suite-required primitives exist."
   (anvil-pkg-compat-test--load-nelisp-smoke)
   (cl-letf (((symbol-function 'anvil-pkg-nelisp-smoke--load-compat)
              (lambda (&rest _args) t))
@@ -714,7 +713,6 @@ the test exits (no resource leak)."
              (lambda (sym)
                (memq sym '(ert-run-tests-batch-and-exit
                            make-process
-                           url-retrieve-synchronously
                            cl-letf
                            nelisp-make-process
                            nelisp-http-get)))))
@@ -725,7 +723,7 @@ the test exits (no resource leak)."
       (should (plist-get resp :ert))
       (should (plist-get resp :cl-letf))
       (should (plist-get resp :native-async-lower-primitive))
-      (should (plist-get resp :native-text-http-lower-primitive)))))
+      (should-not (plist-get resp :native-text-http-lower-primitive)))))
 
 (ert-deftest anvil-pkg-nelisp-smoke-test-doc44-curl-lower-primitive ()
   "Smoke accepts curl over Doc 44 NeLisp process/sys primitives."

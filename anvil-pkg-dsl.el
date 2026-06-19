@@ -51,6 +51,10 @@
 (require 'anvil-pkg-compat)
 (require 'cl-lib)
 
+(defun anvil-pkg--booleanp (value)
+  "Return non-nil when VALUE is exactly t or nil."
+  (or (eq value t) (null value)))
+
 (declare-function anvil-pkg--ensure-nix "anvil-pkg")
 (declare-function anvil-pkg--call-nix "anvil-pkg")
 (declare-function anvil-pkg--profile-args "anvil-pkg")
@@ -63,6 +67,8 @@
 
 ;;;; --- error symbols ---------------------------------------------------------
 
+(anvil-pkg-compat-define-error-symbol 'anvil-pkg-error
+                                      "anvil-pkg error")
 (anvil-pkg-compat-define-error-symbol 'anvil-pkg-dsl-error
                                       "anvil-pkg DSL error"
                                       'anvil-pkg-error)
@@ -202,8 +208,10 @@ Accepts:
 (defun anvil-pkg--reject-non-emacs-package-args (name type args)
   "Signal when ARGS carry emacs-package-only keys on non-emacs TYPE.
 Currently catches :native-comp (Phase 4-B L13 reject) and the
-Phase 4-D melpa keywords :melpa-synth / :melpa-recipe / :melpa-files (L23)."
-  (dolist (key '(:native-comp :melpa-synth :melpa-recipe :melpa-files))
+Phase 4-D melpa keywords :melpa-synth / :melpa-recipe / :melpa-files (L23),
+and :pname / :ignore-compilation-error."
+  (dolist (key '(:native-comp :melpa-synth :melpa-recipe :melpa-files
+                 :pname :ignore-compilation-error))
     (when (anvil-pkg--plist-has-key-p args key)
       (signal 'anvil-pkg-dsl-error
               (list (format "pkg-define %s: %s is only valid on emacs-package build-system, not %S"
@@ -215,7 +223,9 @@ Phase 4-B L13/L14: :format must be \"trivial\" or \"melpa\";
 :native-comp must be t or nil when supplied.
 Phase 4-D L23: :melpa-synth must be one of `auto', `force', `never';
 :melpa-recipe must be a non-empty string when supplied;
-:melpa-files must be a list of non-empty strings when supplied."
+:melpa-files must be a list of non-empty strings when supplied.
+:pname must be a non-empty string when supplied.
+:ignore-compilation-error must be t or nil when supplied."
   (let ((fmt (plist-get args :format)))
     (when fmt
       (unless (member fmt '("trivial" "melpa"))
@@ -224,7 +234,7 @@ Phase 4-D L23: :melpa-synth must be one of `auto', `force', `never';
                               name fmt))))))
   (when (anvil-pkg--plist-has-key-p args :native-comp)
     (let ((nc (plist-get args :native-comp)))
-      (unless (booleanp nc)
+      (unless (anvil-pkg--booleanp nc)
         (signal 'anvil-pkg-dsl-error
                 (list (format "pkg-define %s: emacs-package :native-comp must be t or nil, got %S"
                               name nc))))))
@@ -249,7 +259,19 @@ Phase 4-D L23: :melpa-synth must be one of `auto', `force', `never';
                              files))
         (signal 'anvil-pkg-dsl-error
                 (list (format "pkg-define %s: emacs-package :melpa-files must be a list of non-empty strings, got %S"
-                              name files)))))))
+                              name files))))))
+  (when (anvil-pkg--plist-has-key-p args :pname)
+    (let ((pname (plist-get args :pname)))
+      (unless (and (stringp pname) (> (length pname) 0))
+        (signal 'anvil-pkg-dsl-error
+                (list (format "pkg-define %s: emacs-package :pname must be a non-empty string, got %S"
+                              name pname))))))
+  (when (anvil-pkg--plist-has-key-p args :ignore-compilation-error)
+    (let ((ignore (plist-get args :ignore-compilation-error)))
+      (unless (anvil-pkg--booleanp ignore)
+        (signal 'anvil-pkg-dsl-error
+                (list (format "pkg-define %s: emacs-package :ignore-compilation-error must be t or nil, got %S"
+                              name ignore)))))))
 
 (defun anvil-pkg--validate-ir (name ir)
   "Validate cross-field constraints for package NAME and parsed IR."
@@ -369,37 +391,59 @@ python3Packages.buildPythonPackage, buildGoModule, buildNpmPackage,
 haskellPackages.mkDerivation)."
   (let* ((bs (plist-get ir :build-system))
          (type (plist-get bs :type)))
-    (pcase type
-      ('stdenv (anvil-pkg--render-stdenv ir))
-      ('rust   (anvil-pkg--render-rust ir))
-      ('python (anvil-pkg--render-python ir))
-      ('go     (anvil-pkg--render-go ir))
-      ('node   (anvil-pkg--render-node ir))
-      ('haskell (anvil-pkg--render-haskell ir))
-      ('emacs-package (anvil-pkg--render-emacs-package ir))
-      (_ (signal 'anvil-pkg-dsl-error
-                 (list (format "render: unsupported build-system :type %S"
-                               type)))))))
+    (cond
+     ((eq type 'stdenv) (anvil-pkg--render-stdenv ir))
+     ((eq type 'rust) (anvil-pkg--render-rust ir))
+     ((eq type 'python) (anvil-pkg--render-python ir))
+     ((eq type 'go) (anvil-pkg--render-go ir))
+     ((eq type 'node) (anvil-pkg--render-node ir))
+     ((eq type 'haskell) (anvil-pkg--render-haskell ir))
+     ((eq type 'emacs-package) (anvil-pkg--render-emacs-package ir))
+     (t (signal 'anvil-pkg-dsl-error
+                (list (format "render: unsupported build-system :type %S"
+                              type)))))))
 
 (defun anvil-pkg--render-derivation (fn-name fields)
   "Compose `FN-NAME { FIELDS }' into a single Nix expression string.
 FIELDS is a list of pre-rendered, already-indented strings."
   (concat fn-name " {\n"
-          (mapconcat #'identity fields "\n")
+          (anvil-pkg--join-strings fields "\n")
           "\n}"))
+
+(defun anvil-pkg--join-strings (strings separator)
+  "Join STRINGS with SEPARATOR without relying on symbol-function `identity'."
+  (mapconcat (lambda (s) s) strings separator))
+
+(defun anvil-pkg--quote-string (string)
+  "Return STRING as a Nix/Elisp double-quoted literal."
+  (concat "\"" string "\""))
+
+(defun anvil-pkg--render-elisp-literal (value)
+  "Return VALUE rendered as a small Elisp literal for generated recipes."
+  (cond
+   ((stringp value) (anvil-pkg--quote-string value))
+   ((symbolp value) (symbol-name value))
+   ((consp value)
+    (concat "("
+            (mapconcat #'anvil-pkg--render-elisp-literal value " ")
+            ")"))
+   (t (format "%S" value))))
 
 (defun anvil-pkg--render-pre-bs-fields (ir)
   "Render the common derivation fields that appear BEFORE
 build-system specific fields: pname, version, src, buildInputs,
 nativeBuildInputs.  Returns a list of strings."
   (let* ((name (plist-get ir :name))
+         (bs (plist-get ir :build-system))
+         (pname (or (plist-get bs :pname)
+                    (symbol-name name)))
          (version (plist-get ir :version))
          (source (plist-get ir :source))
          (inputs (plist-get ir :inputs))
          (native-inputs (plist-get ir :native-inputs))
          (parts '()))
-    (push (format "  pname = %S;" (symbol-name name)) parts)
-    (push (format "  version = %S;" version) parts)
+    (push (format "  pname = %s;" (anvil-pkg--quote-string pname)) parts)
+    (push (format "  version = %s;" (anvil-pkg--quote-string version)) parts)
     (push (format "  src = %s;" (anvil-pkg--render-source source)) parts)
     (when inputs
       (push (format "  buildInputs = with pkgs; [ %s ];"
@@ -415,12 +459,17 @@ nativeBuildInputs.  Returns a list of strings."
   "Render the common derivation fields that appear AFTER
 build-system specific fields: buildPhase, installPhase, meta.
 Returns a list of strings."
-  (let* ((install-phase (plist-get ir :install-phase))
+  (let* ((bs (plist-get ir :build-system))
+         (install-phase (plist-get ir :install-phase))
          (build-phase (plist-get ir :build-phase))
          (description (plist-get ir :description))
          (homepage (plist-get ir :homepage))
          (license (plist-get ir :license))
          (parts '()))
+    (when (anvil-pkg--plist-has-key-p bs :ignore-compilation-error)
+      (push (format "  ignoreCompilationError = %s;"
+                    (if (plist-get bs :ignore-compilation-error) "true" "false"))
+            parts))
     (when build-phase
       (push (format "  buildPhase = ''\n%s\n  '';"
                     (anvil-pkg--indent-each-line build-phase 4))
@@ -432,15 +481,19 @@ Returns a list of strings."
     (when (or description homepage license)
       (let ((meta-parts '()))
         (when description
-          (push (format "    description = %S;" description) meta-parts))
+          (push (format "    description = %s;"
+                        (anvil-pkg--quote-string description))
+                meta-parts))
         (when homepage
-          (push (format "    homepage = %S;" homepage) meta-parts))
+          (push (format "    homepage = %s;"
+                        (anvil-pkg--quote-string homepage))
+                meta-parts))
         (when license
           (push (format "    license = %s;"
                         (anvil-pkg--render-license license))
                 meta-parts))
         (push (concat "  meta = {\n"
-                      (mapconcat #'identity (nreverse meta-parts) "\n")
+                      (anvil-pkg--join-strings (nreverse meta-parts) "\n")
                       "\n  };")
               parts)))
     (nreverse parts)))
@@ -464,7 +517,7 @@ deprecated `cargoSha256' and unstable rejects it outright."
     (anvil-pkg--render-derivation
      "pkgs.rustPlatform.buildRustPackage"
      (append (anvil-pkg--render-pre-bs-fields ir)
-             (list (format "  cargoHash = %S;" cargo-sha256))
+             (list (format "  cargoHash = %s;" (anvil-pkg--quote-string cargo-sha256)))
              (anvil-pkg--render-post-bs-fields ir)))))
 
 (defun anvil-pkg--render-python (ir)
@@ -476,7 +529,7 @@ Optional :format key (\"setuptools\" default, \"pyproject\" or \"wheel\")."
      "pkgs.python3Packages.buildPythonPackage"
      (append (anvil-pkg--render-pre-bs-fields ir)
              (when format-str
-               (list (format "  format = %S;" format-str)))
+               (list (format "  format = %s;" (anvil-pkg--quote-string format-str))))
              (anvil-pkg--render-post-bs-fields ir)))))
 
 (defun anvil-pkg--render-go (ir)
@@ -488,7 +541,7 @@ Optional :vendor-sha256 (defaults to `vendorHash = null')."
      "pkgs.buildGoModule"
      (append (anvil-pkg--render-pre-bs-fields ir)
              (list (if vendor-sha256
-                       (format "  vendorHash = %S;" vendor-sha256)
+                       (format "  vendorHash = %s;" (anvil-pkg--quote-string vendor-sha256))
                      "  vendorHash = null;"))
              (anvil-pkg--render-post-bs-fields ir)))))
 
@@ -500,7 +553,7 @@ Requires :npm-deps-hash in the build-system args."
     (anvil-pkg--render-derivation
      "pkgs.buildNpmPackage"
      (append (anvil-pkg--render-pre-bs-fields ir)
-             (list (format "  npmDepsHash = %S;" npm-deps-hash))
+             (list (format "  npmDepsHash = %s;" (anvil-pkg--quote-string npm-deps-hash)))
              (anvil-pkg--render-post-bs-fields ir)))))
 
 (defun anvil-pkg--render-haskell (ir)
@@ -523,12 +576,12 @@ auto-synthesis of a postUnpack block writing recipes/<pname>.
   (let* ((bs (plist-get ir :build-system))
          (format-str (or (plist-get bs :format) "trivial"))
          (native-comp (plist-get bs :native-comp))
-         (builder-suffix (pcase format-str
-                           ("trivial" "trivialBuild")
-                           ("melpa"   "melpaBuild")
-                           (_ (signal 'anvil-pkg-dsl-error
-                                      (list (format "render: unsupported emacs-package :format %S"
-                                                    format-str))))))
+         (builder-suffix (cond
+                          ((equal format-str "trivial") "trivialBuild")
+                          ((equal format-str "melpa") "melpaBuild")
+                          (t (signal 'anvil-pkg-dsl-error
+                                     (list (format "render: unsupported emacs-package :format %S"
+                                                   format-str))))))
          (epkgs-set (if native-comp
                         "(pkgs.emacsPackagesFor pkgs.emacs)"
                       "pkgs.emacsPackages"))
@@ -589,7 +642,8 @@ Phase 4-D L23 logic, evaluated only for :format \"melpa\":
                                        (`anvil-pkg--validate-ir')."
   (let* ((bs (plist-get ir :build-system))
          (name (plist-get ir :name))
-         (pname (symbol-name name))
+         (pname (or (plist-get bs :pname)
+                    (symbol-name name)))
          (explicit (plist-get bs :melpa-recipe))
          (synth (or (plist-get bs :melpa-synth) 'auto))
          (files (or (plist-get bs :melpa-files)
@@ -632,9 +686,10 @@ Returns STRING (the recipe body) or nil.  Wraps the fluid in a
 `condition-case' so a defective stub during render does not abort
 the flake render — failure → nil → synth fallback.  Phase 4-E L27."
   (condition-case err
-      (and (boundp 'anvil-pkg-emacs--render-fetch-fn)
-           (functionp anvil-pkg-emacs--render-fetch-fn)
-           (funcall anvil-pkg-emacs--render-fetch-fn pname))
+      (let ((fetch-fn (and (boundp 'anvil-pkg-emacs--render-fetch-fn)
+                           anvil-pkg-emacs--render-fetch-fn)))
+        (and fetch-fn
+             (funcall fetch-fn pname)))
     (error
      (lwarn 'anvil-pkg :warning
             "anvil-pkg: melpa upstream fetch fluid raised %S for %s; falling back to synth"
@@ -647,20 +702,22 @@ the flake render — failure → nil → synth fallback.  Phase 4-E L27."
 Shape: `(<pname> :fetcher git :url \"<url>\" :files (\"<f1>\" \"<f2>\"))'.
 PNAME is the Elisp symbol name as a string.  FILES is a list of
 glob strings."
-  (format "(%s :fetcher git :url %S :files (%s))"
+  (format "(%s :fetcher git :url %s :files (%s))"
           pname
-          url
-          (mapconcat (lambda (f) (format "%S" f)) files " ")))
+          (anvil-pkg--quote-string url)
+          (mapconcat #'anvil-pkg--render-elisp-literal files " ")))
 
 (defun anvil-pkg--render-post-unpack-block (pname recipe)
   "Render a postUnpack Nix field that emits PNAME's RECIPE.
 
 The block writes the verbatim RECIPE string into
-$sourceRoot/recipes/PNAME via a heredoc so any Elisp double-quotes
-in RECIPE survive the shell layer."
+$NIX_BUILD_TOP/recipes/PNAME via a heredoc so any Elisp double-quotes
+in RECIPE survive the shell layer.  `melpaBuild' reads recipes from
+$NIX_BUILD_TOP/recipes during buildPhase; writing under $sourceRoot
+would leave the builder's default recipe in effect."
   (concat "  postUnpack = ''\n"
-          "    mkdir -p $sourceRoot/recipes\n"
-          "    cat > $sourceRoot/recipes/" pname " <<'ANVIL_PKG_RECIPE_EOF'\n"
+          "    mkdir -p \"$NIX_BUILD_TOP/recipes\"\n"
+          "    cat > \"$NIX_BUILD_TOP/recipes/" pname "\" <<'ANVIL_PKG_RECIPE_EOF'\n"
           "    " recipe "\n"
           "    ANVIL_PKG_RECIPE_EOF\n"
           "  '';"))
@@ -671,20 +728,20 @@ in RECIPE survive the shell layer."
 Phase 3 fetchers: url-fetch, github-fetch, git-fetch."
   (pcase (plist-get src :type)
     ('url-fetch
-     (format "pkgs.fetchurl {\n    url = %S;\n    sha256 = %S;\n  }"
-             (plist-get src :url)
-             (plist-get src :sha256)))
+     (format "pkgs.fetchurl {\n    url = %s;\n    sha256 = %s;\n  }"
+             (anvil-pkg--quote-string (plist-get src :url))
+             (anvil-pkg--quote-string (plist-get src :sha256))))
     ('github-fetch
-     (format "pkgs.fetchFromGitHub {\n    owner = %S;\n    repo = %S;\n    rev = %S;\n    sha256 = %S;\n  }"
-             (plist-get src :owner)
-             (plist-get src :repo)
-             (plist-get src :rev)
-             (plist-get src :sha256)))
+     (format "pkgs.fetchFromGitHub {\n    owner = %s;\n    repo = %s;\n    rev = %s;\n    sha256 = %s;\n  }"
+             (anvil-pkg--quote-string (plist-get src :owner))
+             (anvil-pkg--quote-string (plist-get src :repo))
+             (anvil-pkg--quote-string (plist-get src :rev))
+             (anvil-pkg--quote-string (plist-get src :sha256))))
     ('git-fetch
-     (format "pkgs.fetchgit {\n    url = %S;\n    rev = %S;\n    sha256 = %S;\n  }"
-             (plist-get src :url)
-             (plist-get src :rev)
-             (plist-get src :sha256)))
+     (format "pkgs.fetchgit {\n    url = %s;\n    rev = %s;\n    sha256 = %s;\n  }"
+             (anvil-pkg--quote-string (plist-get src :url))
+             (anvil-pkg--quote-string (plist-get src :rev))
+             (anvil-pkg--quote-string (plist-get src :sha256))))
     (_ (signal 'anvil-pkg-dsl-error
                (list (format "render: unsupported source type %S"
                              (plist-get src :type)))))))
@@ -702,7 +759,7 @@ Unknown symbols fall back to a quoted string literal.")
 (defun anvil-pkg--render-license (sym)
   "Render a license symbol into a Nix expression."
   (or (alist-get sym anvil-pkg--license-map)
-      (format "%S" (symbol-name sym))))
+      (anvil-pkg--quote-string (symbol-name sym))))
 
 (defun anvil-pkg--indent-each-line (s n)
   "Prepend N spaces to every line of S."
