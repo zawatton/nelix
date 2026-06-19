@@ -259,7 +259,7 @@ run_nelisp_aot_readonly() {
     return 1
   fi
   compare_runtime_json plan "$nelisp_tmp/plan-emacs.json" "$nelisp_tmp/plan.json" \
-    install remove protected || return 1
+    install remove keep protected commands || return 1
 
   if ! run_nelix_timed apply-dry-run "$nelisp_tmp/apply-dry-run.json" "$nelisp_tmp/apply-dry-run.err" \
     --runtime nelisp --json apply "$manifest" --dry-run; then
@@ -281,7 +281,7 @@ run_nelisp_aot_readonly() {
   compare_runtime_json apply-dry-run \
     "$nelisp_tmp/apply-dry-run-emacs.json" \
     "$nelisp_tmp/apply-dry-run.json" \
-    install remove protected || return 1
+    install remove keep protected commands || return 1
 
   if ! run_nelix_timed upgrade-plan "$nelisp_tmp/upgrade-plan.json" "$nelisp_tmp/upgrade-plan.err" \
     --runtime nelisp --json upgrade-plan "$manifest"; then
