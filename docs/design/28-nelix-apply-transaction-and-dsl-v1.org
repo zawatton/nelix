@@ -594,6 +594,39 @@ Current compatibility rule:
 - future schema versions are rejected by =lock-check= and =apply --locked=
   until support is added.
 
+Schema v2 is stable at the command boundary, not at the internal Elisp
+implementation boundary:
+
+- =MANIFEST.nelix-lock= is the canonical file written by Nelix.  It is an
+  S-expression because both Emacs and NeLisp can load it without introducing a
+  second parser into the mutation path.
+- =nelix --json lock MANIFEST= is the canonical interchange format for
+  non-Elisp tools.  External tools should read this JSON output and validate it
+  against =docs/schema/nelix-lock-v2.schema.json= instead of loading the
+  S-expression file.
+- =:schema-version= and =:version= are both required in current v2 locks.
+  =:schema-version= describes the record layout.  =:version= remains as the
+  user-facing lock format version so older pre-schema code can be detected
+  explicitly during migration.
+- schema v2 is additive inside known objects: readers must ignore unknown keys
+  that do not change required-field semantics.  Removing or changing the
+  meaning of required keys requires a future schema version.
+- lock rows must not include secrets, tokens, local private checkout paths, or
+  credential material.  They may include public source identity, store path
+  identity, hashes, signatures, backend identity, system identity, and resolved
+  package metadata needed for locked replay.
+- read-only lock commands are fingerprint-stable.  =lock validate=, =lock
+  diff=, and =lock migrate --dry-run= must not rewrite
+  =MANIFEST.nelix-lock= or legacy lock inputs.
+- mutating lock commands are explicit.  =nelix lock= writes the current v2
+  lock, and =nelix lock migrate= writes a migrated current lock when migration
+  is required.  =validate=, =plan=, =audit=, =upgrade-plan=, and =apply
+  --locked= must not refresh the lock as a side effect.
+- =apply --locked= validates schema compatibility, manifest/import digest
+  drift, and package row replayability before transaction begin.  Incompatible
+  schema, legacy v1 locks, future schema locks, and package target drift must
+  fail before any install/remove command is issued.
+
 The regression suite commits fixture lockfiles under =test/fixtures= and
 round-trips real =nelix --json lock= output through the standard JSON parser.
 The installed Debian CLI gate also creates a legacy v1 lock, verifies that
