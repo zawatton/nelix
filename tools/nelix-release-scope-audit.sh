@@ -765,6 +765,10 @@ require_native_store_gate_docs() {
   require_contains packaging/verify-nelix-native-cli-gate.sh \
     'dependency activation output mismatch'
   require_contains packaging/verify-nelix-native-cli-gate.sh \
+    'rollback_after_dependency native rollback --profile default --generation 1'
+  require_contains packaging/verify-nelix-native-cli-gate.sh \
+    'dependency rollback left dependency profile tree file behind'
+  require_contains packaging/verify-nelix-native-cli-gate.sh \
     'locked apply used drifted dependency recipe'
   require_contains packaging/verify-nelix-native-cli-gate.sh \
     'native lock omitted recipe dependencies'

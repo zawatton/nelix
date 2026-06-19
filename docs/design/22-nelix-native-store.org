@@ -43,7 +43,7 @@ Native store MVP evidence is currently tracked as follows:
 | hash verify | =nelix-fetch-verify-file= / =nelix-fetch-verify-local-source= tests plus the CLI bad-hash install rejection gate |
 | unpack | =nelix-builder.el= archive builders and the CLI =native install fixture-archive= gate |
 | profile activation | =nelix-profile-activate-runtime= tests, explicit POSIX =symlink= mode coverage, and CLI checks for active shims, =path.sh=, and the =active/profile= file tree |
-| rollback | =nelix-profile-rollback= tests plus the CLI =native rollback --generation= gate |
+| rollback | =nelix-profile-rollback= tests plus the CLI =native rollback --generation= gate, including rollback from an activated dependency profile back to generation 1 with stale shims and =active/profile= files removed |
 | lockfile recording | =nelix lock= records native =:recipe-source=, =:recipe-install=, =:recipe-dependencies=, and source hashes; the CLI gate replays =apply --locked= after registry drift |
 
 The packaged gate prints
@@ -1213,6 +1213,10 @@ The next concrete deliverables should be:
     The native lock path is also gated: the lock JSON and S-expression lockfile
     must retain dependency closure rows, =:recipe-source=, =:recipe-install=,
     =:recipe-dependencies=, and the source hashes needed for locked replay.
+    Dependency profile rollback is gated after activation: returning the
+    default profile from the dependency/app generation to generation 1 must
+    remove stale dependency/app shims and =active/profile= files while keeping
+    the original fixture tool executable through the regenerated profile tree.
     The verifier emits explicit MVP checkpoint lines for recipe registry,
     fetch, hash verification, unpack, profile activation, rollback, and
     lockfile recording; Debian package content checks ensure those checkpoint

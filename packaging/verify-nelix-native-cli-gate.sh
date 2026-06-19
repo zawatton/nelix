@@ -650,6 +650,43 @@ test "$app_output" = "fixture-app-ok app" || {
   exit 1
 }
 
+run_json rollback_after_dependency native rollback --profile default --generation 1
+expect_json rollback_after_dependency '"operation":"native-rollback"'
+expect_json rollback_after_dependency '"generation":1'
+expect_json rollback_after_dependency '"command":"fixture-tool"'
+
+post_dependency_rollback_shim="$profile_root/default/active/bin/fixture-tool"
+post_dependency_rollback_profile_link="$profile_root/default/active/profile/fixture-tool"
+test -x "$post_dependency_rollback_shim" || {
+  echo "nelix native CLI gate: dependency rollback activation shim missing: $post_dependency_rollback_shim" >&2
+  exit 1
+}
+test -x "$post_dependency_rollback_profile_link" || {
+  echo "nelix native CLI gate: dependency rollback profile tree file missing: $post_dependency_rollback_profile_link" >&2
+  exit 1
+}
+test ! -e "$profile_root/default/active/bin/fixture-dep" || {
+  echo "nelix native CLI gate: dependency rollback left dependency shim behind" >&2
+  exit 1
+}
+test ! -e "$profile_root/default/active/bin/fixture-app" || {
+  echo "nelix native CLI gate: dependency rollback left app shim behind" >&2
+  exit 1
+}
+test ! -e "$profile_root/default/active/profile/fixture-dep" || {
+  echo "nelix native CLI gate: dependency rollback left dependency profile tree file behind" >&2
+  exit 1
+}
+test ! -e "$profile_root/default/active/profile/fixture-app" || {
+  echo "nelix native CLI gate: dependency rollback left app profile tree file behind" >&2
+  exit 1
+}
+post_dependency_rollback_output="$("$post_dependency_rollback_profile_link" dependency-rollback)"
+test "$post_dependency_rollback_output" = "fixture-tool-ok dependency-rollback" || {
+  echo "nelix native CLI gate: dependency rollback profile tree output mismatch: $post_dependency_rollback_output" >&2
+  exit 1
+}
+
 cat >"$registry/fixture-dep.el" <<EOF
 (require 'nelix-registry)
 (nelix-package
