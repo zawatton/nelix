@@ -134,6 +134,10 @@
   '("name" "target" "backend" "system" "source")
   "Required package row keys in the public Nelix lock schema v2.")
 
+(defconst nelix-lock-schema-nix-package-required-json-keys
+  '("attr-path")
+  "Required Nix package row keys in the public Nelix lock schema v2.")
+
 (defconst nelix-lock-schema-commands
   '("lock" "lock validate" "lock diff" "lock migrate")
   "Public CLI commands that own lockfile schema v2 lifecycle.")
@@ -250,6 +254,7 @@ When nil, records are written under the user's state directory at
         :json-schema "docs/schema/nelix-lock-v2.schema.json"
         :required nelix-lock-schema-required-json-keys
         :package-required nelix-lock-schema-package-required-json-keys
+        :nix-package-required nelix-lock-schema-nix-package-required-json-keys
         :stable t))
 
 (defun nelix-schema--keyword-names (keys)
@@ -3443,6 +3448,16 @@ This is the constructor used inside generated lock files."
                 (setq error
                       (format
                        "lock package row %d is missing schema-required key :%s"
+                       index
+                       missing)))
+               ((and (eq 'nix (plist-get row :backend))
+                     (setq missing
+                           (nelix-lock--shape-missing-key
+                            row
+                            nelix-lock-schema-nix-package-required-json-keys)))
+                (setq error
+                      (format
+                       "lock package row %d is missing nix schema-required key :%s"
                        index
                        missing)))))
             (setq rows (cdr rows)))

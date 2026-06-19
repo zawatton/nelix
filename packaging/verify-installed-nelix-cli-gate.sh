@@ -202,7 +202,10 @@ validate_lock_json_schema_smoke() {
                 (dolist (package packages)
                   (dolist (key package-required)
                     (unless (assoc key package)
-                      (error "lock JSON package is missing schema-required key: %s" key))))
+                      (error "lock JSON package is missing schema-required key: %s" key)))
+                  (when (equal "nix" (alist-get "backend" package nil nil (function string=)))
+                    (unless (assoc "attr-path" package)
+                      (error "lock JSON Nix package is missing schema-required key: attr-path"))))
                 (princ "nelix installed CLI lock schema smoke ok\n")))' \
     -- "$schema_file" "$lock_json"
 }
@@ -234,7 +237,9 @@ validate_schema_summary_contract() {
                        (schema-package-required (jget "required" package-schema))
                        (summary-required (jget "required" summary))
                        (summary-package-required
-                        (jget "package-required" summary)))
+                        (jget "package-required" summary))
+                       (summary-nix-package-required
+                        (jget "nix-package-required" summary)))
                   (unless (equal (jget "const" (jget "schema" schema-properties))
                                  (jget "schema" summary))
                     (error "schema summary name differs from JSON schema"))
@@ -253,8 +258,12 @@ validate_schema_summary_contract() {
                   (unless (equal (sorted schema-package-required)
                                  (sorted summary-package-required))
                     (error "schema summary package-required keys differ from JSON schema"))
+                  (unless (equal (jget "const" (jget "nix-package-required" summary-contract))
+                                 summary-nix-package-required)
+                    (error "schema summary nix-package-required differs from JSON schema"))
                   (dolist (key (quote ("source-of-truth" "json-output" "commands"
-                                       "compatibility" "migration" "validation" "diff")))
+                                       "compatibility" "migration" "validation"
+                                       "diff" "nix-package-required")))
                     (unless (equal (jget "const" (jget key summary-contract))
                                    (jget key summary))
                       (error "schema summary %s differs from JSON schema" key)))
@@ -568,6 +577,8 @@ expect_json schema_lock '"future-version-rejected"'
 expect_json schema_lock '"validation":"nelix lock validate MANIFEST"'
 expect_json schema_lock '"diff":"nelix lock diff MANIFEST"'
 expect_json schema_lock '"package-required":\['
+expect_json schema_lock '"nix-package-required":\['
+expect_json schema_lock '"attr-path"'
 validate_schema_summary_contract schema_lock
 
 run_json schema_manifest schema manifest-dsl-v1
@@ -824,6 +835,25 @@ reject_log 'profile install'
 reject_log 'profile remove'
 reject_log 'profile rollback'
 assert_transaction_record_count bad-lock-apply-locked "$bad_lock_record_count_before"
+
+bad_attr_lock_manifest="$tmp/bad-attr-lock-manifest.el"
+cat >"$bad_attr_lock_manifest" <<'EOF'
+(require 'nelix-manifest)
+(nelix-manifest
+ :name "installed-cli-bad-attr-lock"
+ :linux '("magit"))
+EOF
+run_json bad_attr_lock lock "$bad_attr_lock_manifest"
+perl -0pi -e 's/[[:space:]]+:attr-path "[^"]*"//' "$bad_attr_lock_manifest.nelix-lock"
+run_json bad_attr_lock_validate lock validate "$bad_attr_lock_manifest"
+expect_json bad_attr_lock_validate '"ok":null'
+expect_json bad_attr_lock_validate '"shape-ok":null'
+expect_json bad_attr_lock_validate \
+  'lock package row 1 is missing nix schema-required key :attr-path'
+run_json bad_attr_lock_check lock-check "$bad_attr_lock_manifest"
+expect_json bad_attr_lock_check '"ok":null'
+expect_json bad_attr_lock_check \
+  'lock package row 1 is missing nix schema-required key :attr-path'
 
 dry_run_record_count_before="$(transaction_record_count)"
 run_json plan plan "$manifest" --dry-run

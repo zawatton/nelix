@@ -121,8 +121,15 @@
                      (plist-get summary :required)))
       (should (equal (alist-get "required" package-schema nil nil #'string=)
                      (plist-get summary :package-required)))
+      (should (equal (alist-get "const"
+                                (alist-get "nix-package-required"
+                                           summary-contract
+                                           nil nil #'string=)
+                                nil nil #'string=)
+                     (plist-get summary :nix-package-required)))
       (dolist (key '("source-of-truth" "json-output" "commands"
-                     "compatibility" "migration" "validation" "diff"))
+                     "compatibility" "migration" "validation" "diff"
+                     "nix-package-required"))
         (should (equal (alist-get "const"
                                   (alist-get key summary-contract
                                              nil nil #'string=)
@@ -1498,6 +1505,49 @@
                 (should-not (plist-get schema :shape-ok))
                 (should (string-match-p
                          "lock package row 1 is missing schema-required key :source"
+                         (plist-get schema :shape-error)))))))
+      (delete-directory dir t))))
+
+(ert-deftest nelix-manifest-test-lock-validate-rejects-v2-nix-missing-attr-path ()
+  "Current schema v2 Nix package rows must retain replay attr-path keys."
+  (let ((dir (make-temp-file "nelix-manifest-lock-v2-bad-nix-row-" t)))
+    (unwind-protect
+        (progn
+          (nelix-manifest-test--write
+           dir "manifest.el"
+           "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep))\n")
+          (cl-letf (((symbol-function 'nelix-list)
+                     (lambda ()
+                       (list (list :name "ripgrep"
+                                   :attr-path "legacyPackages.x86_64-linux.ripgrep"))))
+                    ((symbol-function 'anvil-pkg-compat-executable-find)
+                     (lambda (program)
+                       (and (equal program "nix") "/usr/bin/nix")))
+                    ((symbol-function 'anvil-pkg--detect-nix-version)
+                     (lambda () "2.34.7")))
+            (let* ((manifest-file (expand-file-name "manifest.el" dir))
+                   (lock (nelix-lock-write manifest-file))
+                   (bad-row (copy-sequence
+                             (car (plist-get lock :packages)))))
+              (setq bad-row
+                    (list :name (plist-get bad-row :name)
+                          :target (plist-get bad-row :target)
+                          :backend (plist-get bad-row :backend)
+                          :system (plist-get bad-row :system)
+                          :source (plist-get bad-row :source)))
+              (setq lock (plist-put lock :packages (list bad-row)))
+              (nelix-manifest-test--write-lock
+               (nelix-manifest-lock-file-name manifest-file)
+               lock)
+              (let* ((validate (nelix-lock-validate manifest-file))
+                     (schema (plist-get validate :schema-check))
+                     (check (nelix-lock-check manifest-file)))
+                (should-not (plist-get validate :ok))
+                (should-not (plist-get check :ok))
+                (should-not (plist-get schema :ok))
+                (should-not (plist-get schema :shape-ok))
+                (should (string-match-p
+                         "lock package row 1 is missing nix schema-required key :attr-path"
                          (plist-get schema :shape-error)))))))
       (delete-directory dir t))))
 
