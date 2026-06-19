@@ -704,4 +704,5 @@ expect_json gc '"operation":"native-gc"'
 expect_json gc '"dry-run":true'
 expect_json gc '"removed":null'
 
+echo "nelix native store MVP ok: recipe-registry fetch hash-verify unpack profile-activation rollback lockfile-recording"
 echo "nelix native CLI gate ok"

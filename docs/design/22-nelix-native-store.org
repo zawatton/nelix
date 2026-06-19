@@ -34,6 +34,23 @@ available.  Native installs preserve existing profile entries across
 generations and resolve registry =:dependencies= before installing the
 requested package, with dependency-cycle detection.
 
+Native store MVP evidence is currently tracked as follows:
+
+| MVP requirement | Evidence |
+|-----------------+----------|
+| recipe registry | =nelix-registry.el=, =test/nelix-store-test.el= registry tests, and =packaging/verify-nelix-native-cli-gate.sh= =registry list= / =registry index= checks |
+| fetch | =nelix-fetch.el= and ERT coverage for =url=, =elpa=, =github-release=, =git=, and =local= sources |
+| hash verify | =nelix-fetch-verify-file= / =nelix-fetch-verify-local-source= tests plus the CLI bad-hash install rejection gate |
+| unpack | =nelix-builder.el= archive builders and the CLI =native install fixture-archive= gate |
+| profile activation | =nelix-profile-activate-runtime= tests plus CLI checks for active shims, =path.sh=, and the =active/profile= file tree |
+| rollback | =nelix-profile-rollback= tests plus the CLI =native rollback --generation= gate |
+| lockfile recording | =nelix lock= records native =:recipe-source=, =:recipe-install=, =:recipe-dependencies=, and source hashes; the CLI gate replays =apply --locked= after registry drift |
+
+The packaged gate prints
+=nelix native store MVP ok: recipe-registry fetch hash-verify unpack profile-activation rollback lockfile-recording=
+only after these CLI checks pass, and =verify-deb-contents= verifies that the
+packaged verifier still contains that MVP anchor.
+
 The intent is not to clone Nix byte-for-byte.  The intent is to
 recreate the useful Nix mechanisms in Nelisp/Elisp:
 
