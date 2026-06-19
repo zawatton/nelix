@@ -245,7 +245,11 @@ wrapper, so it works when the =nelisp= command is available only from the
 adjacent checkout rather than from =PATH=.  It first checks that the installed
 =elpa-nelix= package is at least the current =DEB_VERSION=, so running it
 before reinstalling the freshly built =.deb= fails early with a version
-diagnostic.
+diagnostic.  The lighter installed and extracted Debian verifiers also accept
+=NELIX_USER_MANIFEST_NELISP=required= and run the packaged command through the
+read-only NeLisp AOT cache path for =list=, =audit=, =plan --dry-run=,
+=apply --dry-run=, =upgrade-plan=, and =lock-check=, restoring any pre-existing
+manifest lock/cache files afterward.
 
 =verify-user-environment= deliberately does not load =~/.emacs.d/init.el= or
 =~/.emacs.d/early-init.el=, so it stays safe inside =deb-release-gate= and

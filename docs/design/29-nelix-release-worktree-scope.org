@@ -439,10 +439,14 @@ to dry-run.  It stages files only when =--stage= is passed explicitly.
 - Current real manifest AOT plan: =NELIX_USER_MANIFEST_NELISP=required make
   verify-user-manifest-dsl= verifies =nelix --runtime nelisp --json validate=
   plus the read-only AOT cache fast lane for =audit=, =plan=,
-  =apply --dry-run=, and =upgrade-plan=.  The real manifest currently reports =install=0=,
-  =missing=0=, =extra=0=, =remove=0=, =keep=204=, and =:nelisp-aot-cache= for
-  the read-only NeLisp-runtime path.  The init migration verifier enforces the
-  same profile-diff caps before loading the real init path.
+  =apply --dry-run=, =upgrade-plan=, and =lock-check=.  The real manifest
+  currently reports =install=0=, =missing=0=, =extra=0=, =remove=0=,
+  =keep=204=, and =:nelisp-aot-cache= for the read-only NeLisp-runtime path.
+  The installed and extracted Debian verifiers accept the same
+  =NELIX_USER_MANIFEST_NELISP=required= value and exercise the packaged command
+  through those read-only NeLisp AOT cache commands while restoring existing
+  manifest lock/cache files.  The init migration verifier enforces the same
+  profile-diff caps before loading the real init path.
 - Staging audit: =make release-scope-audit= passes.  The pathspecs in
   [[*Exact staging plan][Exact staging plan]] are checked with =git add -n= and select only
   source/doc/test/packaging files, not generated Debian outputs.  The same
@@ -541,8 +545,8 @@ to dry-run.  It stages files only when =--stage= is passed explicitly.
 - Install =../elpa-nelix_0.1.0-4_all.deb= and run =make deb-full-gate= on the
   target Debian host.  The full gate now includes the installed-command real
   manifest runtime check, so =~/.emacs.d/nelix-package.el= is verified through
-  =/usr/bin/nelix --runtime nelisp= for list/audit/plan/apply dry-runs without
-  loading init/early-init.
+  =/usr/bin/nelix --runtime nelisp= for list/audit/plan/apply dry-runs,
+  upgrade-plan, and lock-check without loading init/early-init.
 - Expand native store from functional skeleton to practical registry coverage:
   expand beyond the initial packaged system-command shims into real
   fetch/build recipes, platform-specific cases, and Windows/macOS activation

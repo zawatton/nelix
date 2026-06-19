@@ -91,6 +91,98 @@ if [ -n "${NELIX_USER_MANIFEST:-}" ]; then
     exit 1
   fi
 
+  run_extracted_nelix() {
+    NELIX_LISPDIR="$elpa_src_dir" "$nelix_bin" "$@"
+  }
+
+  expect_json_fragment() {
+    label="$1"
+    file="$2"
+    fragment="$3"
+    if ! grep -Fq "$fragment" "$file"; then
+      echo "nelix extracted Debian $label output is missing: $fragment" >&2
+      sed -n '1,5p' "$file" >&2
+      return 1
+    fi
+  }
+
+  run_nelisp_manifest_gate() (
+    gate_tmp="$(mktemp -d)"
+    lock_file="$NELIX_USER_MANIFEST.nelix-lock"
+    cache_file="$NELIX_USER_MANIFEST.nelix-aot-targets"
+    lock_backup="$gate_tmp/manifest.nelix-lock.backup"
+    cache_backup="$gate_tmp/manifest.nelix-aot-targets.backup"
+    had_lock=0
+    had_cache=0
+
+    cleanup_gate() {
+      if [ "$had_lock" -eq 1 ]; then
+        cp -p "$lock_backup" "$lock_file"
+      else
+        rm -f "$lock_file"
+      fi
+      if [ "$had_cache" -eq 1 ]; then
+        cp -p "$cache_backup" "$cache_file"
+      else
+        rm -f "$cache_file"
+      fi
+      rm -rf "$gate_tmp"
+    }
+    trap cleanup_gate EXIT HUP INT TERM
+
+    if [ -f "$lock_file" ]; then
+      cp -p "$lock_file" "$lock_backup"
+      had_lock=1
+    fi
+    if [ -f "$cache_file" ]; then
+      cp -p "$cache_file" "$cache_backup"
+      had_cache=1
+    fi
+
+    run_extracted_nelix --json lock "$NELIX_USER_MANIFEST" >"$gate_tmp/lock.json"
+    run_extracted_nelix --runtime nelisp --json validate "$NELIX_USER_MANIFEST" \
+      >"$gate_tmp/validate.json"
+    run_extracted_nelix --runtime nelisp aot-cache "$NELIX_USER_MANIFEST" \
+      >"$gate_tmp/aot-cache.out"
+    expect_json_fragment aot-cache "$gate_tmp/aot-cache.out" ':status ok'
+
+    run_extracted_nelix --runtime nelisp --json list >"$gate_tmp/list.json"
+    expect_json_fragment list "$gate_tmp/list.json" '['
+
+    run_extracted_nelix --runtime nelisp --json audit "$NELIX_USER_MANIFEST" \
+      >"$gate_tmp/audit.json"
+    expect_json_fragment audit "$gate_tmp/audit.json" '"fallback":":nelisp-aot-cache"'
+
+    run_extracted_nelix --runtime nelisp --json plan "$NELIX_USER_MANIFEST" --dry-run \
+      >"$gate_tmp/plan.json"
+    expect_json_fragment plan "$gate_tmp/plan.json" '"status":"planned"'
+    expect_json_fragment plan "$gate_tmp/plan.json" '"fallback":":nelisp-aot-cache"'
+
+    run_extracted_nelix --runtime nelisp --json apply "$NELIX_USER_MANIFEST" --dry-run \
+      >"$gate_tmp/apply-dry-run.json"
+    expect_json_fragment apply-dry-run "$gate_tmp/apply-dry-run.json" '"status":"dry-run"'
+    expect_json_fragment apply-dry-run "$gate_tmp/apply-dry-run.json" '"fallback":":nelisp-aot-cache"'
+
+    run_extracted_nelix --runtime nelisp --json upgrade-plan "$NELIX_USER_MANIFEST" \
+      >"$gate_tmp/upgrade-plan.json"
+    expect_json_fragment upgrade-plan "$gate_tmp/upgrade-plan.json" '"operation":"upgrade"'
+    expect_json_fragment upgrade-plan "$gate_tmp/upgrade-plan.json" '"fallback":":nelisp-aot-cache"'
+
+    run_extracted_nelix --runtime nelisp --json lock-check "$NELIX_USER_MANIFEST" \
+      >"$gate_tmp/lock-check.json"
+    expect_json_fragment lock-check "$gate_tmp/lock-check.json" '"ok":true'
+    expect_json_fragment lock-check "$gate_tmp/lock-check.json" '"checked-by":":nelisp-aot-cache"'
+
+    case "${NELIX_USER_MANIFEST_LOCKED:-0}" in
+      1|true|yes|required)
+        run_extracted_nelix --runtime nelisp --json apply "$NELIX_USER_MANIFEST" --locked --dry-run \
+          >"$gate_tmp/locked-apply-dry-run.json"
+        expect_json_fragment locked-apply-dry-run "$gate_tmp/locked-apply-dry-run.json" '"locked":true'
+        expect_json_fragment locked-apply-dry-run "$gate_tmp/locked-apply-dry-run.json" '"checked-by":":nelisp-aot-cache"'
+        ;;
+    esac
+  )
+
   (
     lock_tmp="$(mktemp -d)"
     lock_file="$NELIX_USER_MANIFEST.nelix-lock"
@@ -131,8 +223,15 @@ if [ -n "${NELIX_USER_MANIFEST:-}" ]; then
     esac
   )
 
-  if [ "${NELIX_USER_MANIFEST_NELISP:-0}" = 1 ]; then
-    NELIX_LISPDIR="$elpa_src_dir" "$nelix_bin" \
-      --runtime nelisp --json validate "$NELIX_USER_MANIFEST" >/dev/null
-  fi
+  case "${NELIX_USER_MANIFEST_NELISP:-0}" in
+    1|true|yes|required)
+      run_nelisp_manifest_gate
+      ;;
+    0|false|no|skip)
+      ;;
+    *)
+      echo "invalid NELIX_USER_MANIFEST_NELISP value: ${NELIX_USER_MANIFEST_NELISP}" >&2
+      exit 64
+      ;;
+  esac
 fi
