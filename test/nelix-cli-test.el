@@ -406,10 +406,14 @@
                             :test #'equal))
          (lock (cl-find "lock-v2" schemas
                         :key (lambda (row) (alist-get 'name row))
-                        :test #'equal)))
+                        :test #'equal))
+         (transaction (cl-find "transaction-v1" schemas
+                               :key (lambda (row) (alist-get 'name row))
+                               :test #'equal)))
     (should (equal "ok" (alist-get 'status parsed)))
     (should manifest)
     (should lock)
+    (should transaction)
     (should (= 1 (alist-get 'schema-version manifest)))
     (should (member "nelix-environment"
                     (list (alist-get 'schema manifest))))
@@ -462,7 +466,31 @@
                      (alist-get 'required lock))))
     (should (member "source"
                     (nelix-cli-test--json-array-list
-                     (alist-get 'package-required lock))))))
+                     (alist-get 'package-required lock))))
+    (should (equal "nelix-apply-transaction"
+                   (alist-get 'schema transaction)))
+    (should (= 1 (alist-get 'schema-version transaction)))
+    (should (member "rollback-plan"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'required transaction))))
+    (should (member "executed"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'required transaction))))
+    (should (member "commands"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'plan-required transaction))))
+    (should (member "before-generation"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'transaction-required transaction))))
+    (should (member "available"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'rollback-plan-required transaction))))
+    (should (member "argv"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'rollback-plan-available-required transaction))))
+    (should (member "action"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'executed-required transaction))))))
 
 (ert-deftest nelix-cli-test-schema-selects-single-contract ()
   "nelix schema NAME returns the requested schema contract only."
@@ -473,6 +501,15 @@
          (parsed (json-parse-string json :object-type 'alist)))
     (should (equal "ok" (alist-get 'status parsed)))
     (should (equal "manifest-dsl-v1" (alist-get 'name parsed)))
+    (should (= 1 (alist-get 'schema-version parsed))))
+  (let* ((json (nelix-cli-format-result
+                (nelix-cli-dispatch
+                 '(:command "schema" :args ("transaction-v1") :json t))
+                t))
+         (parsed (json-parse-string json :object-type 'alist)))
+    (should (equal "ok" (alist-get 'status parsed)))
+    (should (equal "transaction-v1" (alist-get 'name parsed)))
+    (should (equal "nelix-apply-transaction" (alist-get 'schema parsed)))
     (should (= 1 (alist-get 'schema-version parsed)))))
 
 (ert-deftest nelix-cli-test-schema-lock-contract-matches-json-schema-file ()

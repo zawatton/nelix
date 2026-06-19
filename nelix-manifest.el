@@ -114,6 +114,10 @@
     :record-file :record-started-at :record-status)
   "Required transaction metadata keys in a Nelix apply transaction record.")
 
+(defconst nelix-transaction-rollback-plan-available-required-keys
+  '(:operation :generation :argv)
+  "Required rollback-plan keys when transaction rollback is available.")
+
 (defcustom nelix-transaction-log-root nil
   "Directory used for Nelix apply transaction records.
 
@@ -158,18 +162,49 @@ When nil, records are written under the user's state directory at
         :package-required nelix-lock-schema-package-required-json-keys
         :stable t))
 
+(defun nelix-schema--keyword-names (keys)
+  "Return stable schema names for keyword KEYS."
+  (mapcar (lambda (key)
+            (let ((name (symbol-name key)))
+              (if (string-prefix-p ":" name)
+                  (substring name 1)
+                name)))
+          keys))
+
+(defun nelix-schema--transaction-v1 ()
+  "Return the public apply transaction record schema v1 summary."
+  (list :name "transaction-v1"
+        :schema nelix-transaction-schema-name
+        :schema-version nelix-transaction-schema-version
+        :format "sexp"
+        :required (nelix-schema--keyword-names
+                   nelix-transaction-record-required-keys)
+        :plan-required (nelix-schema--keyword-names
+                        nelix-transaction-plan-required-keys)
+        :transaction-required
+        (nelix-schema--keyword-names
+         nelix-transaction-metadata-required-keys)
+        :rollback-plan-required '("available")
+        :rollback-plan-available-required
+        (nelix-schema--keyword-names
+         nelix-transaction-rollback-plan-available-required-keys)
+        :executed-required '("action" "name")
+        :stable t))
+
 ;;;###autoload
 (defun nelix-schema (&optional name)
   "Return public Nelix schema contract information for NAME.
 
-NAME may be nil, \"all\", \"manifest-dsl-v1\", or \"lock-v2\"."
+NAME may be nil, \"all\", \"manifest-dsl-v1\", \"lock-v2\", or
+\"transaction-v1\"."
   (let ((schemas (list (nelix-schema--manifest-dsl-v1)
-                       (nelix-schema--lock-v2))))
+                       (nelix-schema--lock-v2)
+                       (nelix-schema--transaction-v1))))
     (cond
      ((or (null name) (equal name "all"))
       (list :status 'ok
             :schemas schemas))
-     ((member name '("manifest-dsl-v1" "lock-v2"))
+     ((member name '("manifest-dsl-v1" "lock-v2" "transaction-v1"))
       (append (list :status 'ok)
               (car (cl-remove-if-not
                     (lambda (schema)
@@ -1380,7 +1415,7 @@ move transaction records outside the configured log root."
     (when (plist-get rollback-plan :available)
       (nelix-transaction--require-keys
        "record rollback-plan" rollback-plan
-       '(:operation :generation :argv)))
+       nelix-transaction-rollback-plan-available-required-keys))
     (dolist (row (plist-get record :executed))
       (unless (and (listp row)
                    (plist-member row :action)

@@ -256,6 +256,10 @@ Rules:
   form-to-manifest-key mapping, the stable backend name list, the deferred v2
   candidate forms, the forbidden private-data forms, and the v1 policies for
   removal review and private data.
+- =nelix --json schema transaction-v1= must report schema
+  =nelix-apply-transaction=, schema version =1=, and the required top-level,
+  plan, transaction metadata, rollback-plan, rollback argv, and executed-step
+  keys used by apply records.
 
 Scope decisions for the user-requested Nix/Guix-style surface:
 
@@ -337,12 +341,13 @@ The CLI also exposes a compact machine-readable schema contract:
 nelix --json schema
 nelix --json schema manifest-dsl-v1
 nelix --json schema lock-v2
+nelix --json schema transaction-v1
 #+end_src
 
 This command is read-only and generated from the runtime constants used by
-=nelix-environment= and lockfile writing.  Package gates check it so downstream
-automation can rely on the DSL/lock version boundary without parsing Elisp
-source files.
+=nelix-environment=, lockfile writing, and transaction record validation.
+Package gates check it so downstream automation can rely on the DSL, lock, and
+transaction version boundaries without parsing Elisp source files.
 
 Do not replace the S-expression lockfile until NeLisp and Emacs both have a
 stable JSON parser/writer path for this data.

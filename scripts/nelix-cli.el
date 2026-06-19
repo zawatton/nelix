@@ -61,7 +61,7 @@ Commands:
   list
   rollback [GENERATION]
   doctor
-  schema [manifest-dsl-v1|lock-v2|all]
+  schema [manifest-dsl-v1|lock-v2|transaction-v1|all]
   help
 "
   "CLI usage text.")

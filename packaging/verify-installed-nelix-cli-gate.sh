@@ -311,7 +311,7 @@ latest_transaction_record() {
   echo "nelix installed CLI gate: help omits native rollback command" >&2
   exit 1
 }
-"$nelix_bin" --help | grep -Fq 'schema [manifest-dsl-v1|lock-v2|all]' || {
+"$nelix_bin" --help | grep -Fq 'schema [manifest-dsl-v1|lock-v2|transaction-v1|all]' || {
   echo "nelix installed CLI gate: help omits schema command" >&2
   exit 1
 }
@@ -347,6 +347,9 @@ expect_json schema_all '"schema-version":1'
 expect_json schema_all '"name":"lock-v2"'
 expect_json schema_all '"schema":"nelix-lock"'
 expect_json schema_all '"schema-version":2'
+expect_json schema_all '"name":"transaction-v1"'
+expect_json schema_all '"schema":"nelix-apply-transaction"'
+expect_json schema_all '"schema-version":1'
 expect_json schema_all '"required":\['
 
 run_json schema_lock schema lock-v2
@@ -375,6 +378,24 @@ expect_json schema_manifest '"private-repo"'
 expect_json schema_manifest '"secret"'
 expect_json schema_manifest '"remove-policy":"cli-confirmation"'
 expect_json schema_manifest '"private-data":"forbidden"'
+
+run_json schema_transaction schema transaction-v1
+expect_json schema_transaction '"name":"transaction-v1"'
+expect_json schema_transaction '"schema":"nelix-apply-transaction"'
+expect_json schema_transaction '"schema-version":1'
+expect_json schema_transaction '"required":\['
+expect_json schema_transaction '"rollback-plan"'
+expect_json schema_transaction '"executed"'
+expect_json schema_transaction '"plan-required":\['
+expect_json schema_transaction '"commands"'
+expect_json schema_transaction '"transaction-required":\['
+expect_json schema_transaction '"before-generation"'
+expect_json schema_transaction '"rollback-plan-required":\['
+expect_json schema_transaction '"available"'
+expect_json schema_transaction '"rollback-plan-available-required":\['
+expect_json schema_transaction '"argv"'
+expect_json schema_transaction '"executed-required":\['
+expect_json schema_transaction '"action"'
 
 run_json packaged_registry registry list --system x86_64-linux
 expect_json packaged_registry '"operation":"registry-list"'
