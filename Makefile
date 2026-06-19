@@ -255,8 +255,10 @@ verify-deb-contents:
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/bin/nelix | grep -q 'NELIX_NELISP_AOT=0 to force the slower direct NeLisp path'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/bin/nelix | grep -q 'nelix_nelisp_validate_fast_lane'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/bin/nelix | grep -q 'command=apply-dry-run'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/bin/nelix | grep -q 'AOT lock-check failed'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -q './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/nelix-cli.el'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/nelix-cli.el | grep -Fq 'registry index ROOT OUTPUT'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/nelix-cli.el | grep -Fq 'lock-check MANIFEST'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/nelix-cli.el | grep -Fq 'registry list [--system SYSTEM]'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/nelix-cli.el | grep -Fq 'native remove NAME [--profile PROFILE] [--system SYSTEM]'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/nelix-cli.el | grep -Fq 'native rollback [--profile PROFILE] [--generation GENERATION]'
@@ -289,6 +291,7 @@ verify-deb-contents:
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-native-cli-gate.sh | grep -Fq 'apply "$$native_lock_manifest" --dry-run --locked'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'registry list [--system SYSTEM]'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'packaged_registry'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'lock_check lock-check'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'schema_manifest schema manifest-dsl-v1'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'native rollback [--profile PROFILE] [--generation GENERATION]'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'locked_apply apply "$$manifest" --locked --allow-remove-count 1'
@@ -951,6 +954,11 @@ smoke-nelix-aot-cache-fast-lane:
 	  printf '%s\n' "$$locked_apply_dry_run_json" | grep -q '"lock-enforced":true' || { echo "error: AOT cache fast-lane locked apply dry-run did not enforce lock"; rm -rf "$$tmp"; exit 1; }; \
 	  printf '%s\n' "$$locked_apply_dry_run_json" | grep -q '"checked-by":":nelisp-aot-cache"' || { echo "error: AOT cache fast-lane locked apply dry-run did not use AOT lock check"; rm -rf "$$tmp"; exit 1; }; \
 	  printf '%s\n' "$$locked_apply_dry_run_json" | grep -q '"fallback":":nelisp-aot-cache"' || { echo "error: AOT cache fast-lane locked apply dry-run did not use cache"; rm -rf "$$tmp"; exit 1; }; \
+	  lock_check_json=$$(env $$common_env bin/nelix --json lock-check "$$manifest"); \
+	  printf '%s\n' "$$lock_check_json"; \
+	  printf '%s\n' "$$lock_check_json" | grep -q '"ok":true' || { echo "error: AOT cache fast-lane lock-check did not report ok"; rm -rf "$$tmp"; exit 1; }; \
+	  printf '%s\n' "$$lock_check_json" | grep -q '"schema-version":2' || { echo "error: AOT cache fast-lane lock-check missing schema version"; rm -rf "$$tmp"; exit 1; }; \
+	  printf '%s\n' "$$lock_check_json" | grep -q '"checked-by":":nelisp-aot-cache"' || { echo "error: AOT cache fast-lane lock-check did not use cache"; rm -rf "$$tmp"; exit 1; }; \
 	  plan_json=$$(env $$common_env bin/nelix --json upgrade-plan "$$manifest"); \
 	  printf '%s\n' "$$plan_json"; \
 	  printf '%s\n' "$$plan_json" | grep -q '"upgrade":\["magit"\]' || { echo "error: AOT cache fast-lane JSON upgrade-plan missing magit"; rm -rf "$$tmp"; exit 1; }; \

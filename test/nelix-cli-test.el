@@ -242,6 +242,34 @@
                        :lock "m.el.nelix-lock"
                        :profile-root "/tmp/nelix-profile"))))))
 
+(ert-deftest nelix-cli-test-dispatch-lock-check-is-read-only-api ()
+  "lock-check exposes the public lock checker without profile mutation metadata."
+  (let (called)
+    (cl-letf (((symbol-function 'anvil-pkg-compat--standalone-nelisp-p)
+               (lambda () nil))
+              ((symbol-function 'nelix-lock-check)
+               (lambda (manifest)
+                 (setq called manifest)
+                 (list :ok t :manifest manifest))))
+      (should (equal (nelix-cli-dispatch
+                      '(:command "lock-check" :args ("m.el")))
+                     '(:ok t :manifest "m.el")))
+      (should (equal called "m.el")))))
+
+(ert-deftest nelix-cli-test-dispatch-lock-check-uses-nelisp-fast-reader ()
+  "Standalone NeLisp lock-check uses the non-eval lock reader."
+  (let (called)
+    (cl-letf (((symbol-function 'anvil-pkg-compat--standalone-nelisp-p)
+               (lambda () t))
+              ((symbol-function 'nelix-lock-check--nelisp)
+               (lambda (manifest)
+                 (setq called manifest)
+                 (list :ok t :checked-by 'nelisp))))
+      (should (equal (nelix-cli-dispatch
+                      '(:command "lock-check" :args ("m.el")))
+                     '(:ok t :checked-by nelisp)))
+      (should (equal called "m.el")))))
+
 (ert-deftest nelix-cli-test-lock-json-includes-versioned-schema ()
   "JSON lock output exposes stable schema metadata for other runtimes."
   (let ((anvil-pkg-profile-dir "/tmp/nelix-profile"))

@@ -229,6 +229,14 @@ nelix_aot_locked_error() {
   exit 2
 }
 
+nelix_aot_lock_check_error() {
+  manifest=$1
+  echo "nelix: AOT lock-check failed for $manifest" >&2
+  echo "nelix: run 'nelix lock $manifest' before retrying lock-check" >&2
+  echo "nelix: set NELIX_NELISP_AOT=0 to force the slower direct NeLisp path" >&2
+  exit 2
+}
+
 nelix_aot_cache_command_p() {
   if [ "$#" -eq 2 ] && [ "$1" = "aot-cache" ]; then
     return 0
@@ -458,6 +466,33 @@ nelix_run_aot_id_cache_shell_lane() {
       nelix_aot_locked_error "$manifest"
     command=apply-dry-run
     locked=1
+  fi
+
+  if [ "$command" = "lock-check" ]; then
+    nelix_aot_locked_dry_run_check "$manifest" "$cache" ||
+      nelix_aot_lock_check_error "$manifest"
+    cache_profile=$(awk -F '	' '$1 == "profile" { print $2; exit }' "$cache")
+    cache_system=$(awk -F '	' '$1 == "system" { print $2; exit }' "$cache")
+    lock=${manifest}.nelix-lock
+    if [ "$json" -eq 1 ]; then
+      printf '{"ok":true'
+      printf ',"manifest":%s' "$(nelix_quote_elisp_string "$manifest")"
+      printf ',"lock":%s' "$(nelix_quote_elisp_string "$lock")"
+      printf ',"schema-check":{"ok":true,"schema":"nelix-lock","schema-version":2,"current-schema":"nelix-lock","current-schema-version":2,"version":2}'
+      printf ',"checked-by":":nelisp-aot-cache"'
+      printf ',"profile":%s' "$(nelix_quote_elisp_string "$cache_profile")"
+      printf ',"system":%s' "$(nelix_quote_elisp_string "$cache_system")"
+      printf ',"backend":"nix","backend-selection":{"backend":"nix","system":%s,"fallback":":nelisp-aot-cache"}' "$(nelix_quote_elisp_string "$cache_system")"
+      printf ',"aot-cache":%s}\n' "$(nelix_quote_elisp_string "$cache")"
+    else
+      printf 'ok\ttrue\n'
+      printf 'manifest\t%s\nlock\t%s\n' "$manifest" "$lock"
+      printf 'schema\tnelix-lock\nschema-version\t2\nversion\t2\n'
+      printf 'checked-by\t:nelisp-aot-cache\n'
+      printf 'profile\t%s\nsystem\t%s\n' "$cache_profile" "$cache_system"
+      printf 'backend\tnix\nfallback\t:nelisp-aot-cache\naot-cache\t%s\n' "$cache"
+    fi
+    return 0
   fi
 
   "$nix_program" profile list --profile "$profile" \
@@ -756,7 +791,7 @@ nelix_try_nelisp_aot_cache_fast_lane() {
         aot_fun=nelix-aot-audit-lines
       fi
       ;;
-    plan|apply-dry-run|apply-dry-run-locked)
+    plan|apply-dry-run|apply-dry-run-locked|lock-check)
       aot_fun=
       ;;
     upgrade-plan)

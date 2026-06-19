@@ -28,6 +28,7 @@
 Commands:
   validate MANIFEST
   lock MANIFEST
+  lock-check MANIFEST
   plan MANIFEST
   apply MANIFEST [--dry-run] [--locked] [--allow-remove]
                  [--allow-remove-count N] [--no-rollback]
@@ -230,6 +231,17 @@ Commands:
             (list (format "nelix schema: unexpected argument %S"
                           (cadr args)))))
   (nelix-schema (car args)))
+
+(defun nelix-cli--dispatch-lock-check (args)
+  "Dispatch `nelix lock-check' with ARGS."
+  (let ((manifest (nelix-cli--arg-or-error "lock-check" args)))
+    (when (cdr args)
+      (signal 'anvil-pkg-error
+              (list (format "nelix lock-check: unexpected argument %S"
+                            (cadr args)))))
+    (if (anvil-pkg-compat--standalone-nelisp-p)
+        (nelix-lock-check--nelisp manifest)
+      (nelix-lock-check manifest))))
 
 (defun nelix-cli--dispatch-outdated (args)
   "Dispatch `nelix outdated' with ARGS."
@@ -686,6 +698,8 @@ ALLOWED may contain `profile', `system', `generation', and `dry-run'."
              (nelix-cli--arg-or-error command args)))
            ((equal command "lock")
             (nelix-lock-write (nelix-cli--arg-or-error command args)))
+           ((equal command "lock-check")
+            (nelix-cli--dispatch-lock-check args))
            ((equal command "upgrade-plan")
             (nelix-cli--dispatch-upgrade-plan args json))
            ((equal command "outdated")
