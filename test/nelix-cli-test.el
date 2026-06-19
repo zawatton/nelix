@@ -47,6 +47,12 @@
       (when (equal (nelix-cli-test--alist-key-string (car cell)) key)
         (setq found t)))))
 
+(defun nelix-cli-test--json-array-list (value)
+  "Return VALUE as a list when it is a JSON array."
+  (if (vectorp value)
+      (append value nil)
+    value))
+
 (ert-deftest nelix-cli-test-parse-strips-emacs-separator-and-json ()
   (should (equal (nelix-cli-parse-args
                   '("--" "--json" "audit" "manifest.el"))
@@ -256,6 +262,52 @@
         (should (string-match-p
                  "\"profile-root\":\"/tmp/nelix-profile\""
                  json))))))
+
+(ert-deftest nelix-cli-test-schema-json-exposes-dsl-and-lock-contracts ()
+  "The CLI exposes stable schema metadata for manifest DSL and locks."
+  (let* ((json (nelix-cli-format-result
+                (nelix-cli-dispatch
+                 '(:command "schema" :args nil :json t))
+                t))
+         (parsed (json-parse-string json :object-type 'alist))
+         (schemas (alist-get 'schemas parsed))
+         (manifest (cl-find "manifest-dsl-v1" schemas
+                            :key (lambda (row) (alist-get 'name row))
+                            :test #'equal))
+         (lock (cl-find "lock-v2" schemas
+                        :key (lambda (row) (alist-get 'name row))
+                        :test #'equal)))
+    (should (equal "ok" (alist-get 'status parsed)))
+    (should manifest)
+    (should lock)
+    (should (= 1 (alist-get 'schema-version manifest)))
+    (should (member "nelix-environment"
+                    (list (alist-get 'schema manifest))))
+    (should (member "emacs-packages"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'forms manifest))))
+    (should (member "bootstrap-apt"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'manifest-keys manifest))))
+    (should (equal "nelix-lock" (alist-get 'schema lock)))
+    (should (= 2 (alist-get 'schema-version lock)))
+    (should (member "manifest-files"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'required lock))))
+    (should (member "source"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'package-required lock))))))
+
+(ert-deftest nelix-cli-test-schema-selects-single-contract ()
+  "nelix schema NAME returns the requested schema contract only."
+  (let* ((json (nelix-cli-format-result
+                (nelix-cli-dispatch
+                 '(:command "schema" :args ("manifest-dsl-v1") :json t))
+                t))
+         (parsed (json-parse-string json :object-type 'alist)))
+    (should (equal "ok" (alist-get 'status parsed)))
+    (should (equal "manifest-dsl-v1" (alist-get 'name parsed)))
+    (should (= 1 (alist-get 'schema-version parsed)))))
 
 (ert-deftest nelix-cli-test-lock-json-round-trips-schema ()
   "Lock JSON can be parsed back by standard JSON consumers."

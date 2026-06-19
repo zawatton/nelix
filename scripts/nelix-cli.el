@@ -55,6 +55,7 @@ Commands:
   list
   rollback [GENERATION]
   doctor
+  schema [manifest-dsl-v1|lock-v2|all]
   help
 "
   "CLI usage text.")
@@ -221,6 +222,14 @@ Commands:
                    (and allow-remove (list :allow-remove t))
                    (and allow-remove-count
                         (list :allow-remove-count allow-remove-count))))))
+
+(defun nelix-cli--dispatch-schema (args)
+  "Dispatch `nelix schema' with ARGS."
+  (when (cdr args)
+    (signal 'anvil-pkg-error
+            (list (format "nelix schema: unexpected argument %S"
+                          (cadr args)))))
+  (nelix-schema (car args)))
 
 (defun nelix-cli--dispatch-outdated (args)
   "Dispatch `nelix outdated' with ARGS."
@@ -706,6 +715,8 @@ ALLOWED may contain `profile', `system', `generation', and `dry-run'."
                     :result (nelix-rollback generation))))
            ((equal command "doctor")
             (nelix-doctor))
+           ((equal command "schema")
+            (nelix-cli--dispatch-schema args))
            (t
             (signal 'anvil-pkg-error
                     (list (format "nelix: unknown command %S" command)))))))

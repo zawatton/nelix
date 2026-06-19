@@ -134,6 +134,24 @@ reject_log() {
   echo "nelix installed CLI gate: help omits native rollback command" >&2
   exit 1
 }
+/usr/bin/nelix --help | grep -Fq 'schema [manifest-dsl-v1|lock-v2|all]' || {
+  echo "nelix installed CLI gate: help omits schema command" >&2
+  exit 1
+}
+
+run_json schema_all schema
+expect_json schema_all '"name":"manifest-dsl-v1"'
+expect_json schema_all '"schema":"nelix-environment"'
+expect_json schema_all '"schema-version":1'
+expect_json schema_all '"name":"lock-v2"'
+expect_json schema_all '"schema":"nelix-lock"'
+expect_json schema_all '"schema-version":2'
+expect_json schema_all '"required":\['
+
+run_json schema_manifest schema manifest-dsl-v1
+expect_json schema_manifest '"name":"manifest-dsl-v1"'
+expect_json schema_manifest '"forms":\['
+expect_json schema_manifest '"emacs-packages"'
 
 run_json packaged_registry registry list --system x86_64-linux
 expect_json packaged_registry '"operation":"registry-list"'

@@ -156,7 +156,9 @@ Rules:
 - OS backend policy subforms are converted to the existing alist shape;
 - unknown subforms are hard errors;
 - the DSL must expand to =nelix-manifest= so existing lock/plan/apply code stays
-  the single implementation path.
+  the single implementation path;
+- =nelix --json schema manifest-dsl-v1= must report schema
+  =nelix-environment=, schema version =1=, and the stable DSL form list.
 
 Implementation status: =nelix-environment= is implemented as a macro expanding
 to =nelix-manifest=.  Existing plist manifests remain valid.
@@ -197,6 +199,19 @@ Current compatibility rule:
 
 The regression suite commits fixture lockfiles under =test/fixtures= and
 round-trips real =nelix --json lock= output through the standard JSON parser.
+
+The CLI also exposes a compact machine-readable schema contract:
+
+#+begin_src sh
+nelix --json schema
+nelix --json schema manifest-dsl-v1
+nelix --json schema lock-v2
+#+end_src
+
+This command is read-only and generated from the runtime constants used by
+=nelix-environment= and lockfile writing.  Package gates check it so downstream
+automation can rely on the DSL/lock version boundary without parsing Elisp
+source files.
 
 Do not replace the S-expression lockfile until NeLisp and Emacs both have a
 stable JSON parser/writer path for this data.

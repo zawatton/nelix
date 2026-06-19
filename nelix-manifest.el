@@ -49,6 +49,64 @@
     linux-packages debian-tools bootstrap-apt-packages pins)
   "Stable subform names accepted by `nelix-environment' DSL v1.")
 
+(defconst nelix-environment-dsl-manifest-keys
+  '("name" "profile" "nix-channel" "imports" "backend-policy"
+    "emacs" "linux" "debian-tools" "bootstrap-apt" "pins")
+  "Stable manifest keys produced by `nelix-environment' DSL v1.")
+
+(defconst nelix-lock-schema-required-json-keys
+  '("schema" "schema-version" "version" "format" "lock"
+    "manifest-digest" "manifest-files" "profile" "backend" "system"
+    "nix-channel" "nix-version" "generated-at" "packages")
+  "Required JSON keys in the public Nelix lock schema v2.")
+
+(defconst nelix-lock-schema-package-required-json-keys
+  '("name" "target" "backend" "system" "source")
+  "Required package row keys in the public Nelix lock schema v2.")
+
+(defun nelix-schema--manifest-dsl-v1 ()
+  "Return the public manifest DSL v1 schema summary."
+  (list :name "manifest-dsl-v1"
+        :schema "nelix-environment"
+        :schema-version nelix-environment-dsl-version
+        :entrypoint "nelix-environment"
+        :forms (mapcar #'symbol-name nelix-environment-dsl-forms)
+        :manifest-keys nelix-environment-dsl-manifest-keys
+        :stable t))
+
+(defun nelix-schema--lock-v2 ()
+  "Return the public lockfile schema v2 summary."
+  (list :name "lock-v2"
+        :schema nelix-lock-schema-name
+        :schema-version nelix-lock-schema-version
+        :version nelix-lock-schema-version
+        :format "sexp"
+        :json-schema "docs/schema/nelix-lock-v2.schema.json"
+        :required nelix-lock-schema-required-json-keys
+        :package-required nelix-lock-schema-package-required-json-keys
+        :stable t))
+
+;;;###autoload
+(defun nelix-schema (&optional name)
+  "Return public Nelix schema contract information for NAME.
+
+NAME may be nil, \"all\", \"manifest-dsl-v1\", or \"lock-v2\"."
+  (let ((schemas (list (nelix-schema--manifest-dsl-v1)
+                       (nelix-schema--lock-v2))))
+    (cond
+     ((or (null name) (equal name "all"))
+      (list :status 'ok
+            :schemas schemas))
+     ((member name '("manifest-dsl-v1" "lock-v2"))
+      (append (list :status 'ok)
+              (car (cl-remove-if-not
+                    (lambda (schema)
+                      (equal (plist-get schema :name) name))
+                    schemas))))
+     (t
+      (signal 'anvil-pkg-error
+              (list (format "nelix schema: unknown schema %S" name)))))))
+
 (defun nelix-manifest--plist-keys (plist)
   "Return keyword keys from PLIST, rejecting malformed plists."
   (let ((rest plist)
