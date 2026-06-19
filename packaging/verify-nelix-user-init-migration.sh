@@ -271,12 +271,41 @@ check_json_array_limit() {
   fi
 }
 
-json_tmp="$(mktemp -d)"
-cleanup_json() {
-  rm -rf "$json_tmp"
-}
-trap cleanup_json EXIT HUP INT TERM
+runtime_tmp="$(mktemp -d)"
+json_tmp="$runtime_tmp/json"
+mkdir -p "$json_tmp"
+lock_file="$manifest.nelix-lock"
+cache_file="$manifest.nelix-aot-targets"
+lock_backup="$runtime_tmp/manifest.nelix-lock.backup"
+cache_backup="$runtime_tmp/manifest.nelix-aot-targets.backup"
+had_lock=0
+had_cache=0
 
+cleanup_runtime() {
+  if [ "$had_lock" -eq 1 ]; then
+    cp -p "$lock_backup" "$lock_file"
+  else
+    rm -f "$lock_file"
+  fi
+  if [ "$had_cache" -eq 1 ]; then
+    cp -p "$cache_backup" "$cache_file"
+  else
+    rm -f "$cache_file"
+  fi
+  rm -rf "$runtime_tmp"
+}
+trap cleanup_runtime EXIT HUP INT TERM
+
+if [ -f "$lock_file" ]; then
+  cp -p "$lock_file" "$lock_backup"
+  had_lock=1
+fi
+if [ -f "$cache_file" ]; then
+  cp -p "$cache_file" "$cache_backup"
+  had_cache=1
+fi
+
+run_nelix_json --json lock "$manifest"
 run_nelix_timed aot-cache "$json_tmp/aot-cache.out" \
   --runtime nelisp aot-cache "$manifest"
 if ! grep -Fq ':status ok' "$json_tmp/aot-cache.out"; then
@@ -285,7 +314,7 @@ if ! grep -Fq ':status ok' "$json_tmp/aot-cache.out"; then
   exit 1
 fi
 target_count="$(
-  grep -c '^target-id[[:space:]]' "$manifest.nelix-aot-targets" 2>/dev/null ||
+  grep -c '^target-id[[:space:]]' "$cache_file" 2>/dev/null ||
     printf '0\n'
 )"
 printf 'nelix init migration target-count: %s min=%s\n' \
@@ -325,33 +354,10 @@ report_json_counts upgrade-plan "$json_tmp/upgrade-plan.json" \
 run_nelix_timed lock-check "$json_tmp/lock-check.json" \
   --runtime nelisp --json lock-check "$manifest"
 
-(
-  lock_tmp="$(mktemp -d)"
-  lock_file="$manifest.nelix-lock"
-  lock_backup="$lock_tmp/manifest.nelix-lock.backup"
-  had_lock=0
+run_nelix_timed locked-apply-dry-run "$json_tmp/locked-apply-dry-run.json" \
+  --runtime nelisp --json apply "$manifest" --locked --dry-run
 
-  cleanup_lock() {
-    if [ "$had_lock" -eq 1 ]; then
-      cp -p "$lock_backup" "$lock_file"
-    else
-      rm -f "$lock_file"
-    fi
-    rm -rf "$lock_tmp"
-  }
-  trap cleanup_lock EXIT HUP INT TERM
-
-  if [ -f "$lock_file" ]; then
-    cp -p "$lock_file" "$lock_backup"
-    had_lock=1
-  fi
-
-  run_nelix_json --json lock "$manifest"
-  run_nelix_timed locked-apply-dry-run "$lock_tmp/locked-apply-dry-run.json" \
-    --runtime nelisp --json apply "$manifest" --locked --dry-run
-)
-
-rm -rf "$json_tmp"
+cleanup_runtime
 trap - EXIT HUP INT TERM
 
 elisp="$(mktemp)"
