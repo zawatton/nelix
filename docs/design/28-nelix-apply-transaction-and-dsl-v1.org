@@ -397,6 +397,12 @@ Rules:
   =:group=, =:feature=, =:platform=, and =:when=.  In v1, =:backend= is
   validated, =:pin t= contributes the package name to =:pins=, and the other
   options are stable metadata for lock/native-store evolution;
+- package row option value contracts are now part of DSL v1:
+  =:backend= is a stable backend symbol, =:pin= is =t= or =nil=,
+  =:version= / =:profile= / =:group= / =:feature= are strings or symbols,
+  =:platform= is a string, symbol, or list, and =:when= is a symbol or list.
+  Every package row always provides =:kind= and =:name= in the normalized
+  manifest;
 - =version-pin= rows are stored under =:version-pins= and contribute the
   package name to =:pins=.  Version resolution is not yet enforced by the Nix
   backend; lock/native-store resolution must consume the metadata before it
@@ -416,13 +422,15 @@ Rules:
 - =nelix --json schema manifest-dsl-v1= must report schema
   =nelix-environment=, schema version =1=, the stable DSL form list, the
   form-to-manifest-key mapping, the stable backend name list, the accepted
-  package row forms/options, the deferred v2 candidate forms, the forbidden
-  private-data forms, and the v1 policies for removal review and private data.
+  package row forms/options, package option value contracts, required package
+  row keys, the deferred v2 candidate forms, the forbidden private-data forms,
+  and the v1 policies for removal review and private data.
 - =docs/schema/nelix-manifest-dsl-v1.schema.json= records the machine-readable
   summary contract for =nelix --json schema manifest-dsl-v1=.  Source-tree ERT
   and the installed CLI gate compare this file with the CLI output so changes
-  to forms, manifest keys, backends, package row options, remove policy values,
-  deferred forms, or forbidden private-data forms must be intentional.
+  to forms, manifest keys, backends, package row options, package option value
+  contracts, required package row keys, remove policy values, deferred forms,
+  or forbidden private-data forms must be intentional.
 - =nelix --json schema transaction-v1= must report schema
   =nelix-apply-transaction=, schema version =1=, and the required top-level,
   plan, transaction metadata, rollback-plan, rollback argv, and executed-step

@@ -7,7 +7,7 @@ SCRIPT_SRC = scripts/anvil-pkg-render.el scripts/anvil-pkg-nelisp-smoke.el scrip
 BIN_SRC = bin/nelix
 DOC_SRC = README.org examples/README.org docs/smoke-test.org packaging/README.org
 REGISTRY_SRC = $(sort $(wildcard registry/packages/*/*.el))
-EXPECTED_ERT_TESTS ?= 419
+EXPECTED_ERT_TESTS ?= 459
 EXPECTED_NELISP_ERT_TESTS ?= 130
 NELISP_CACHE_DIR ?= .cache/nelisp
 NELISP_SUITE_IMAGE ?= $(NELISP_CACHE_DIR)/anvil-pkg-suite.nlri
@@ -411,6 +411,8 @@ verify-deb-contents:
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq '"dnf"'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq '"form":"linux-packages"'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq '"backend-policy":"backend-symbols-or-os-rows"'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq '"package-option-types":\['
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq '"package-row-required":\['
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq '"remove-policy":"manifest-declares-cli-still-confirms"'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq '"platform"'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq '"version-pin"'

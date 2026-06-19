@@ -60,6 +60,28 @@
   '("package" "linux-package" "version-pin")
   "DSL v1 subforms that may appear more than once.")
 
+(defconst nelix-fast--environment-deferred-form-names
+  '("group" "feature" "platform" "platform-when")
+  "DSL v1 subforms reserved for later versions.")
+
+(defconst nelix-fast--environment-forbidden-form-names
+  '("secret" "secrets" "private-repo" "private-repos" "credential"
+    "credentials" "token" "access-token" "auth-header")
+  "Private-data DSL v1 subforms rejected by the fast validator.")
+
+(defconst nelix-fast--environment-package-option-keys
+  '(:backend :pin :version :profile :group :feature :platform :when)
+  "Stable DSL v1 package option keys accepted by the fast validator.")
+
+(defun nelix-fast--every (predicate values)
+  "Return non-nil when PREDICATE is true for every item in VALUES."
+  (let ((ok t))
+    (while (and ok values)
+      (unless (funcall predicate (car values))
+        (setq ok nil))
+      (setq values (cdr values)))
+    ok))
+
 (defun nelix-fast-aot-enabled-p ()
   "Return non-nil when the opt-in Nelix AOT engine is enabled."
   (let ((value (or nelix-fast-aot-force
@@ -591,6 +613,118 @@ prescient-1 from collapsing to the same target."
                             caller name))))
     (nelix-fast--dsl-string-list caller (list name))))
 
+(defun nelix-fast--supported-backend-p (backend)
+  "Return non-nil when BACKEND is a stable DSL v1 backend symbol."
+  (and (symbolp backend)
+       (memq backend nelix-environment-dsl-backends)))
+
+(defun nelix-fast--forbidden-package-option-p (key)
+  "Return non-nil when package option KEY embeds private data."
+  (and (keywordp key)
+       (member (substring (symbol-name key) 1)
+               nelix-fast--environment-forbidden-form-names)))
+
+(defun nelix-fast--validate-backend-policy (args)
+  "Validate DSL v1 backend-policy ARGS without evaluating values."
+  (unless args
+    (signal 'anvil-pkg-error
+            (list "nelix-fast validate: backend-policy requires at least one backend or OS row")))
+  (cond
+   ((nelix-fast--every #'symbolp args)
+    (dolist (backend args)
+      (unless (nelix-fast--supported-backend-p backend)
+        (signal 'anvil-pkg-error
+                (list (format "nelix-fast validate: unsupported backend %S"
+                              backend))))))
+   ((nelix-fast--every (lambda (row)
+                         (and (consp row) (symbolp (car row))))
+                       args)
+    (dolist (row args)
+      (unless (cdr row)
+        (signal 'anvil-pkg-error
+                (list (format "nelix-fast validate: backend-policy row %S has no backends"
+                              row))))
+      (dolist (backend (cdr row))
+        (unless (nelix-fast--supported-backend-p backend)
+          (signal 'anvil-pkg-error
+                  (list (format "nelix-fast validate: unsupported backend %S"
+                                backend)))))))
+   (t
+    (signal 'anvil-pkg-error
+            (list "nelix-fast validate: backend-policy must use backend symbols or OS rows")))))
+
+(defun nelix-fast--validate-package-row-options (caller options)
+  "Validate package row OPTIONS for CALLER."
+  (let ((rest options))
+    (while rest
+      (unless (and (consp rest) (consp (cdr rest)) (keywordp (car rest)))
+        (signal 'anvil-pkg-error
+                (list (format "%s options must be keyword pairs, got %S"
+                              caller options))))
+      (let ((key (car rest))
+            (value (cadr rest)))
+        (when (nelix-fast--forbidden-package-option-p key)
+          (signal 'anvil-pkg-error
+                  (list (format "%s private data option %S is forbidden"
+                                caller key))))
+        (unless (memq key nelix-fast--environment-package-option-keys)
+          (signal 'anvil-pkg-error
+                  (list (format "%s unknown option %S" caller key))))
+        (when (eq key :backend)
+          (unless (nelix-fast--supported-backend-p value)
+            (signal 'anvil-pkg-error
+                    (list (format "%s unsupported backend %S"
+                                  caller value)))))
+        (when (eq key :pin)
+          (unless (memq value '(nil t))
+            (signal 'anvil-pkg-error
+                    (list (format "%s :pin must be t or nil, got %S"
+                                  caller value)))))
+        (when (memq key '(:version :profile :group :feature))
+          (unless (or (symbolp value) (stringp value))
+            (signal 'anvil-pkg-error
+                    (list (format "%s %S must be a string or symbol, got %S"
+                                  caller key value)))))
+        (when (eq key :platform)
+          (unless (or (symbolp value) (stringp value) (listp value))
+            (signal 'anvil-pkg-error
+                    (list (format "%s :platform must be a string, symbol, or list, got %S"
+                                  caller value)))))
+        (when (eq key :when)
+          (unless (or (symbolp value) (listp value))
+            (signal 'anvil-pkg-error
+                    (list (format "%s :when must be a symbol or list, got %S"
+                                  caller value)))))
+        (setq rest (cddr rest))))))
+
+(defun nelix-fast--validate-package-row (caller args)
+  "Validate package row ARGS for CALLER."
+  (nelix-fast--package-row-name caller args)
+  (nelix-fast--validate-package-row-options caller (cdr args)))
+
+(defun nelix-fast--validate-version-pin-row (args)
+  "Validate DSL v1 version-pin ARGS."
+  (unless (= 2 (length args))
+    (signal 'anvil-pkg-error
+            (list (format "nelix-fast validate: version-pin expected NAME VERSION, got %S"
+                          args))))
+  (dolist (value args)
+    (unless (or (symbolp value) (stringp value))
+      (signal 'anvil-pkg-error
+              (list (format "nelix-fast validate: version-pin values must be strings or symbols, got %S"
+                            value))))))
+
+(defun nelix-fast--validate-remove-policy (args)
+  "Validate DSL v1 remove-policy ARGS."
+  (unless (= 1 (length args))
+    (signal 'anvil-pkg-error
+            (list (format "nelix-fast validate: remove-policy expects one value, got %S"
+                          args))))
+  (unless (memq (car args) nelix-environment-dsl-remove-policy-values)
+    (signal 'anvil-pkg-error
+            (list (format "nelix-fast validate: unsupported remove-policy %S"
+                          (car args))))))
+
 (defun nelix-fast--package-row-pinned-p (args)
   "Return non-nil when package row ARGS contain :pin t."
   (let ((rest (cdr args))
@@ -633,6 +767,14 @@ prescient-1 from collapsing to the same target."
                 (list (format "nelix-fast validate: malformed DSL form %S"
                               form))))
       (let ((name (symbol-name (car form))))
+        (when (member name nelix-fast--environment-forbidden-form-names)
+          (signal 'anvil-pkg-error
+                  (list (format "nelix-fast validate: private data form %S is forbidden"
+                                (car form)))))
+        (when (member name nelix-fast--environment-deferred-form-names)
+          (signal 'anvil-pkg-error
+                  (list (format "nelix-fast validate: form %S is reserved for a later DSL version"
+                                (car form)))))
         (unless (member name nelix-fast--environment-form-names)
           (signal 'anvil-pkg-error
                   (list (format "nelix-fast validate: unknown DSL form %S"
@@ -643,6 +785,19 @@ prescient-1 from collapsing to the same target."
           (signal 'anvil-pkg-error
                   (list (format "nelix-fast validate: duplicate DSL form %S"
                                 (car form)))))
+        (cond
+         ((string= name "backend-policy")
+          (nelix-fast--validate-backend-policy (cdr form)))
+         ((string= name "package")
+          (nelix-fast--validate-package-row
+           "nelix-fast validate: package" (cdr form)))
+         ((string= name "linux-package")
+          (nelix-fast--validate-package-row
+           "nelix-fast validate: linux-package" (cdr form)))
+         ((string= name "version-pin")
+          (nelix-fast--validate-version-pin-row (cdr form)))
+         ((string= name "remove-policy")
+          (nelix-fast--validate-remove-policy (cdr form))))
         (push name seen)))))
 
 (defun nelix-fast--environment-imports (environment-form)

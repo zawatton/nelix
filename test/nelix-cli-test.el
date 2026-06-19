@@ -335,6 +335,29 @@
                                :json t))
                         :type 'anvil-pkg-error)))
               (should (string-match-p "duplicate DSL form name"
+                            (cadr err))))))
+      (delete-directory dir t))))
+
+(ert-deftest nelix-cli-test-validate-json-rejects-invalid-dsl-package-options ()
+  "The NeLisp fast validator enforces DSL v1 package option types."
+  (let ((dir (make-temp-file "nelix-cli-fast-validate-options-" t)))
+    (unwind-protect
+        (let ((manifest (expand-file-name "nelix-package.el" dir)))
+          (with-temp-file manifest
+            (insert "(require 'nelix)\n")
+            (insert "(nelix-environment\n")
+            (insert " (name \"fixture\")\n")
+            (insert " (package magit :pin yes :version 1)\n")
+            (insert " (linux-packages \"ripgrep\"))\n"))
+          (cl-letf (((symbol-function 'anvil-pkg-compat--standalone-nelisp-p)
+                     (lambda () t)))
+            (let ((err (should-error
+                        (nelix-cli-dispatch
+                         (list :command "validate"
+                               :args (list manifest)
+                               :json t))
+                        :type 'anvil-pkg-error)))
+              (should (string-match-p ":pin must be t or nil"
                                       (cadr err))))))
       (delete-directory dir t))))
 
@@ -593,6 +616,23 @@
     (should (member ":platform"
                     (nelix-cli-test--json-array-list
                      (alist-get 'package-options manifest))))
+    (should (cl-find ":version"
+                     (alist-get 'package-option-types manifest)
+                     :key (lambda (row) (alist-get 'option row))
+                     :test #'equal))
+    (should (equal "string-or-symbol"
+                   (alist-get
+                    'type
+                    (cl-find ":version"
+                             (alist-get 'package-option-types manifest)
+                             :key (lambda (row) (alist-get 'option row))
+                             :test #'equal))))
+    (should (member "kind"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'package-row-required manifest))))
+    (should (member "name"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'package-row-required manifest))))
     (should (equal "metadata-plus-target-list"
                    (alist-get 'package-row-semantics manifest)))
     (should (equal "metadata-plus-pin-name"
@@ -773,14 +813,31 @@
     (dolist (key required)
       (should (nelix-cli-test--alist-has-json-key-p parsed key)))
     (dolist (key '("forms" "manifest-keys" "backends" "package-forms"
-                   "package-options" "remove-policy-values"
+                   "package-options" "package-row-required"
+                   "remove-policy-values"
                    "deferred-forms" "forbidden-forms"))
       (let* ((property (alist-get (intern key) properties))
              (items (alist-get 'items property))
              (expected (alist-get 'enum items)))
         (should (equal expected
                        (nelix-cli-test--json-array-list
-                        (alist-get (intern key) parsed))))))))
+                        (alist-get (intern key) parsed))))))
+    (let* ((defs (alist-get '$defs schema-file))
+           (row-schema (alist-get 'package-option-type-row defs))
+           (properties* (alist-get 'properties row-schema))
+           (option-enum (alist-get
+                         'enum
+                         (alist-get 'option properties*)))
+           (type-enum (alist-get
+                       'enum
+                       (alist-get 'type properties*))))
+      (dolist (row (alist-get 'package-option-types parsed))
+        (should (member (alist-get 'option row) option-enum))
+        (should (member (alist-get 'type row) type-enum)))
+      (should (equal option-enum
+                     (mapcar (lambda (row) (alist-get 'option row))
+                             (alist-get 'package-option-types parsed))))))
+    )
 
 (ert-deftest nelix-cli-test-schema-transaction-contract-matches-json-schema-file ()
   "The CLI transaction schema contract matches the documented JSON schema."

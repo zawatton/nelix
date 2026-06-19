@@ -178,8 +178,11 @@
            (emacs-packages base-emacs)
            (linux-packages base-linux)
            (package magit :backend elpa :group editor :feature git)
-           (package vertico :backend elpa :pin t)
-           (linux-package ripgrep :backend nix :pin t :platform gnu/linux)
+           (package vertico :backend elpa :pin t
+                    :version "1.0" :profile desktop)
+           (linux-package ripgrep :backend nix :pin t
+                          :platform (gnu/linux darwin)
+                          :when (featurep 'fixture))
            (version-pin fd "10.2.0")
            (remove-policy confirm))))
     (should (equal '(consult magit vertico)
@@ -191,10 +194,12 @@
     (should (equal 'confirm (plist-get manifest :remove-policy)))
     (should (equal '((:kind package :name magit :backend elpa
                             :group editor :feature git)
-                     (:kind package :name vertico :backend elpa :pin t))
+                     (:kind package :name vertico :backend elpa :pin t
+                            :version "1.0" :profile desktop))
                    (plist-get manifest :package-rows)))
     (should (equal '((:kind linux-package :name ripgrep :backend nix
-                            :pin t :platform gnu/linux))
+                            :pin t :platform (gnu/linux darwin)
+                            :when (featurep 'fixture)))
                    (plist-get manifest :linux-package-rows)))
     (should (equal '((:name fd :version "10.2.0"))
                    (plist-get manifest :version-pins)))))
@@ -294,6 +299,29 @@
               :type 'anvil-pkg-error)))
     (should (string-match-p "unsupported backend imaginary-backend"
                             (cadr err)))))
+
+(ert-deftest nelix-manifest-test-environment-dsl-v1-validates-package-option-types ()
+  "Package row metadata options have a stable DSL v1 type contract."
+  (let ((bad-pin (should-error
+                  (eval '(nelix-environment
+                          (name "bad-pin")
+                          (package magit :pin yes)))
+                  :type 'anvil-pkg-error)))
+    (should (string-match-p ":pin must be t or nil" (cadr bad-pin))))
+  (let ((bad-version (should-error
+                      (eval '(nelix-environment
+                              (name "bad-version")
+                              (package magit :version 1)))
+                      :type 'anvil-pkg-error)))
+    (should (string-match-p ":version must be a string or symbol"
+                            (cadr bad-version))))
+  (let ((bad-when (should-error
+                   (eval '(nelix-environment
+                           (name "bad-when")
+                           (package magit :when 1)))
+                   :type 'anvil-pkg-error)))
+    (should (string-match-p ":when must be a symbol or list"
+                            (cadr bad-when)))))
 
 (ert-deftest nelix-manifest-test-environment-dsl-v1-loads-imported-package-vars ()
   "Manifest-file DSL imports are loaded before package variable forms."

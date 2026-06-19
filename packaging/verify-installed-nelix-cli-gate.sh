@@ -296,6 +296,7 @@ validate_manifest_dsl_schema_summary_contract() {
                       (error "manifest DSL schema summary is missing required key: %s" key)))
                   (dolist (key (quote ("forms" "manifest-keys" "backends"
                                        "package-forms" "package-options"
+                                       "package-row-required"
                                        "remove-policy-values" "deferred-forms"
                                        "forbidden-forms")))
                     (let* ((property (jget key schema-properties))
@@ -535,6 +536,12 @@ expect_json schema_manifest '"package-forms":\['
 expect_json schema_manifest '"package-options":\['
 expect_json schema_manifest '":backend"'
 expect_json schema_manifest '":platform"'
+expect_json schema_manifest '"package-option-types":\['
+expect_json schema_manifest '"option":":version"'
+expect_json schema_manifest '"type":"string-or-symbol"'
+expect_json schema_manifest '"package-row-required":\['
+expect_json schema_manifest '"kind"'
+expect_json schema_manifest '"name"'
 expect_json schema_manifest '"package-row-semantics":"metadata-plus-target-list"'
 expect_json schema_manifest '"version-pin":"metadata-plus-pin-name"'
 expect_json schema_manifest '"remove-policy-values":\['

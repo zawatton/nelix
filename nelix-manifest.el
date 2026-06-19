@@ -96,6 +96,21 @@
   '(:backend :pin :version :profile :group :feature :platform :when)
   "Stable keyword options accepted by DSL v1 package rows.")
 
+(defconst nelix-environment-dsl-package-option-types
+  '((:backend . "backend-symbol")
+    (:pin . "boolean")
+    (:version . "string-or-symbol")
+    (:profile . "string-or-symbol")
+    (:group . "string-or-symbol")
+    (:feature . "string-or-symbol")
+    (:platform . "string-or-symbol-or-list")
+    (:when . "symbol-or-list"))
+  "Stable value contracts for DSL v1 package row options.")
+
+(defconst nelix-environment-dsl-package-row-required
+  '("kind" "name")
+  "Stable package row keys guaranteed by DSL v1 package declarations.")
+
 (defconst nelix-environment-dsl-remove-policy-values
   '(confirm keep prune)
   "Stable remove-policy values accepted by DSL v1.")
@@ -199,6 +214,12 @@ When nil, records are written under the user's state directory at
         :package-forms '("package" "linux-package")
         :package-options (mapcar #'symbol-name
                                  nelix-environment-dsl-package-option-keys)
+        :package-option-types
+        (mapcar (lambda (pair)
+                  (list :option (symbol-name (car pair))
+                        :type (cdr pair)))
+                nelix-environment-dsl-package-option-types)
+        :package-row-required nelix-environment-dsl-package-row-required
         :package-row-semantics "metadata-plus-target-list"
         :version-pin "metadata-plus-pin-name"
         :remove-policy-values (mapcar #'symbol-name
@@ -469,6 +490,21 @@ NAME may be nil, \"all\", \"manifest-dsl-v1\", \"lock-v2\", or
           (unless (memq value '(nil t))
             (signal 'anvil-pkg-error
                     (list (format "%s: :pin must be t or nil, got %S"
+                                  caller value)))))
+        (when (memq key '(:version :profile :group :feature))
+          (unless (or (symbolp value) (stringp value))
+            (signal 'anvil-pkg-error
+                    (list (format "%s: %S must be a string or symbol, got %S"
+                                  caller key value)))))
+        (when (eq key :platform)
+          (unless (or (symbolp value) (stringp value) (listp value))
+            (signal 'anvil-pkg-error
+                    (list (format "%s: :platform must be a string, symbol, or list, got %S"
+                                  caller value)))))
+        (when (eq key :when)
+          (unless (or (symbolp value) (listp value))
+            (signal 'anvil-pkg-error
+                    (list (format "%s: :when must be a symbol or list, got %S"
                                   caller value)))))
         (setq rest (cddr rest))))))
 

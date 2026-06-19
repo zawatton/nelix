@@ -16,6 +16,8 @@
     "backend-policy",
     "package-forms",
     "package-options",
+    "package-option-types",
+    "package-row-required",
     "package-row-semantics",
     "version-pin",
     "remove-policy-values",
@@ -134,6 +136,21 @@
         ]
       }
     },
+    "package-option-types": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/package-option-type-row"
+      }
+    },
+    "package-row-required": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "kind",
+          "name"
+        ]
+      }
+    },
     "package-row-semantics": {
       "const": "metadata-plus-target-list"
     },
@@ -207,6 +224,37 @@
         },
         "manifest-key": {
           "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "package-option-type-row": {
+      "type": "object",
+      "required": [
+        "option",
+        "type"
+      ],
+      "properties": {
+        "option": {
+          "enum": [
+            ":backend",
+            ":pin",
+            ":version",
+            ":profile",
+            ":group",
+            ":feature",
+            ":platform",
+            ":when"
+          ]
+        },
+        "type": {
+          "enum": [
+            "backend-symbol",
+            "boolean",
+            "string-or-symbol",
+            "string-or-symbol-or-list",
+            "symbol-or-list"
+          ]
         }
       },
       "additionalProperties": false
