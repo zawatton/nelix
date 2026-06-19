@@ -239,7 +239,9 @@ validate_schema_summary_contract() {
                        (summary-package-required
                         (jget "package-required" summary))
                        (summary-nix-package-required
-                        (jget "nix-package-required" summary)))
+                        (jget "nix-package-required" summary))
+                       (summary-native-package-required
+                        (jget "native-package-required" summary)))
                   (unless (equal (jget "const" (jget "schema" schema-properties))
                                  (jget "schema" summary))
                     (error "schema summary name differs from JSON schema"))
@@ -261,9 +263,13 @@ validate_schema_summary_contract() {
                   (unless (equal (jget "const" (jget "nix-package-required" summary-contract))
                                  summary-nix-package-required)
                     (error "schema summary nix-package-required differs from JSON schema"))
+                  (unless (equal (jget "const" (jget "native-package-required" summary-contract))
+                                 summary-native-package-required)
+                    (error "schema summary native-package-required differs from JSON schema"))
                   (dolist (key (quote ("source-of-truth" "json-output" "commands"
                                        "compatibility" "migration" "validation"
-                                       "diff" "nix-package-required")))
+                                       "diff" "nix-package-required"
+                                       "native-package-required")))
                     (unless (equal (jget "const" (jget key summary-contract))
                                    (jget key summary))
                       (error "schema summary %s differs from JSON schema" key)))
@@ -579,6 +585,8 @@ expect_json schema_lock '"diff":"nelix lock diff MANIFEST"'
 expect_json schema_lock '"package-required":\['
 expect_json schema_lock '"nix-package-required":\['
 expect_json schema_lock '"attr-path"'
+expect_json schema_lock '"native-package-required":\['
+expect_json schema_lock '"recipe-install"'
 validate_schema_summary_contract schema_lock
 
 run_json schema_manifest schema manifest-dsl-v1

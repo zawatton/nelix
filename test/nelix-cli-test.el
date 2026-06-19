@@ -685,6 +685,9 @@
     (should (member "attr-path"
                     (nelix-cli-test--json-array-list
                      (alist-get 'nix-package-required lock))))
+    (should (member "recipe-install"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'native-package-required lock))))
     (should (equal "nelix-apply-transaction"
                    (alist-get 'schema transaction)))
     (should (= 1 (alist-get 'schema-version transaction)))
@@ -785,7 +788,8 @@
                     (nelix-cli-test--json-array-list
                      (alist-get 'compatibility parsed))))
     (dolist (key '(source-of-truth json-output commands compatibility
-                   migration validation diff nix-package-required))
+                   migration validation diff nix-package-required
+                   native-package-required))
       (should (equal (alist-get 'const (alist-get key summary-contract))
                      (nelix-cli-test--json-array-list
                       (alist-get key parsed)))))

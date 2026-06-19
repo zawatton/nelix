@@ -350,6 +350,24 @@ grep -q "$sha256_dep" "$native_lock_manifest.nelix-lock" || {
 }
 mvp_checkpoint lockfile-recording
 
+bad_native_lock_manifest="$tmp/bad-native-lock-manifest.el"
+cat >"$bad_native_lock_manifest" <<'EOF'
+(require 'nelix-manifest)
+(nelix-manifest
+ :name "native-bad-lockgate"
+ :profile "bad-lockgate"
+ :linux '("fixture-app")
+ :backend-policy '(nelix-native))
+EOF
+run_json bad_native_lock lock "$bad_native_lock_manifest"
+perl -0pi -e 's/:recipe-install/:recipe-install-omitted/' \
+  "$bad_native_lock_manifest.nelix-lock"
+run_json bad_native_lock_validate lock validate "$bad_native_lock_manifest"
+expect_json bad_native_lock_validate '"ok":null'
+expect_json bad_native_lock_validate '"shape-ok":null'
+expect_json bad_native_lock_validate \
+  'lock package row 1 is missing native schema-required key :recipe-install'
+
 run_json registry_list registry list --system x86_64-linux
 expect_json registry_list '"operation":"registry-list"'
 expect_json registry_list '"count":5'

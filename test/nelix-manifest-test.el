@@ -127,9 +127,15 @@
                                            nil nil #'string=)
                                 nil nil #'string=)
                      (plist-get summary :nix-package-required)))
+      (should (equal (alist-get "const"
+                                (alist-get "native-package-required"
+                                           summary-contract
+                                           nil nil #'string=)
+                                nil nil #'string=)
+                     (plist-get summary :native-package-required)))
       (dolist (key '("source-of-truth" "json-output" "commands"
                      "compatibility" "migration" "validation" "diff"
-                     "nix-package-required"))
+                     "nix-package-required" "native-package-required"))
         (should (equal (alist-get "const"
                                   (alist-get key summary-contract
                                              nil nil #'string=)
@@ -1582,6 +1588,51 @@
                         (plist-get (plist-get app :recipe-install)
                                    :type)))
             (should-not (plist-get dep :recipe-dependencies))))
+      (delete-directory dir t))))
+
+(ert-deftest nelix-manifest-test-lock-validate-rejects-v2-native-missing-recipe-install ()
+  "Current schema v2 native package rows must retain replay recipe keys."
+  (let ((dir (make-temp-file "nelix-manifest-lock-v2-bad-native-row-" t)))
+    (unwind-protect
+        (let* ((manifest-file
+                (nelix-manifest-test--write
+                 dir "manifest.el"
+                 "(require 'nelix-manifest)\n(nelix-manifest :name \"default\")\n"))
+               (lock-file (expand-file-name "manifest.el.nelix-lock" dir)))
+          (copy-file (nelix-manifest-test--fixture
+                      "nelix-lock-v2-native-deps.el")
+                     lock-file t)
+          (let* ((lock (nelix-lock-read manifest-file))
+                 (bad-row (copy-sequence
+                           (car (plist-get lock :packages)))))
+            (setq bad-row
+                  (list :name (plist-get bad-row :name)
+                        :target (plist-get bad-row :target)
+                        :resolved-target (plist-get bad-row :resolved-target)
+                        :installed-name (plist-get bad-row :installed-name)
+                        :pinned (plist-get bad-row :pinned)
+                        :backend (plist-get bad-row :backend)
+                        :system (plist-get bad-row :system)
+                        :source (plist-get bad-row :source)
+                        :recipe-version (plist-get bad-row :recipe-version)
+                        :recipe-source (plist-get bad-row :recipe-source)
+                        :recipe-dependencies
+                        (plist-get bad-row :recipe-dependencies)
+                        :recipe-class (plist-get bad-row :recipe-class)))
+            (setq lock (plist-put lock :packages (list bad-row)))
+            (nelix-manifest-test--write-lock
+             (nelix-manifest-lock-file-name manifest-file)
+             lock)
+            (let* ((validate (nelix-lock-validate manifest-file))
+                   (schema (plist-get validate :schema-check))
+                   (check (nelix-lock-check manifest-file)))
+              (should-not (plist-get validate :ok))
+              (should-not (plist-get check :ok))
+              (should-not (plist-get schema :ok))
+              (should-not (plist-get schema :shape-ok))
+              (should (string-match-p
+                       "lock package row 1 is missing native schema-required key :recipe-install"
+                       (plist-get schema :shape-error))))))
       (delete-directory dir t))))
 
 (ert-deftest nelix-manifest-test-lock-schema-check-accepts-legacy-v1 ()

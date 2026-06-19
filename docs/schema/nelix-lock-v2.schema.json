@@ -111,6 +111,15 @@
       "const": [
         "attr-path"
       ]
+    },
+    "native-package-required": {
+      "const": [
+        "recipe-version",
+        "recipe-source",
+        "recipe-install",
+        "recipe-dependencies",
+        "recipe-class"
+      ]
     }
   },
   "additionalProperties": true,
@@ -163,6 +172,27 @@
           "then": {
             "required": [
               "attr-path"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "backend": {
+                "const": "nelix-native"
+              }
+            },
+            "required": [
+              "backend"
+            ]
+          },
+          "then": {
+            "required": [
+              "recipe-version",
+              "recipe-source",
+              "recipe-install",
+              "recipe-dependencies",
+              "recipe-class"
             ]
           }
         }
