@@ -1587,6 +1587,23 @@ commands continue to use the full plist/report encoder."
       (nelix-fast--json-string value)
     "null"))
 
+(defun nelix-fast--concat-balanced (parts)
+  "Return concatenated PARTS without one very large `apply' call."
+  (let ((items parts)
+        next)
+    (while (cdr items)
+      (setq next nil)
+      (while items
+        (let ((left (car items))
+              (right (cadr items)))
+          (push (if right
+                    (concat left right)
+                  left)
+                next))
+        (setq items (cddr items)))
+      (setq items (nreverse next)))
+    (or (car items) "")))
+
 (defun nelix-fast--json-string-list (values)
   "Return VALUES encoded as a JSON string array."
   (let ((parts (list "["))
@@ -1598,7 +1615,7 @@ commands continue to use the full plist/report encoder."
       (setq first nil)
       (setq values (cdr values)))
     (push "]" parts)
-    (apply #'concat (nreverse parts))))
+    (nelix-fast--concat-balanced (nreverse parts))))
 
 (defun nelix-fast--json-skipped-object (pairs)
   "Return PAIRS encoded as a JSON object with string values."
