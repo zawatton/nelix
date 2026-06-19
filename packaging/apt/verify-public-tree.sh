@@ -16,7 +16,7 @@ verify_deb_payload() {
       echo "public APT payload is missing /usr/bin/nelix: $deb" >&2
       exit 1
     }
-  for recipe in curl git jq ripgrep; do
+  for recipe in curl fd git jq ripgrep tree; do
     dpkg-deb --fsys-tarfile "$deb" | tar -tf - |
       grep -Fxq "./usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/registry/packages/system/$recipe.el" || {
         echo "public APT payload is missing packaged registry recipe: $recipe" >&2

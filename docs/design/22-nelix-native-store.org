@@ -20,7 +20,7 @@ The initial deliverables are implemented:
 - =test/nelix-store-test.el=
 - local registry fixtures for =ripgrep= and =magit=
 - packaged registry recipes for existing system commands =ripgrep=, =git=,
-  =curl=, and =jq=
+  =curl=, =fd=, =jq=, and =tree=
 - =nelix-native-audit=, which works without Nix installed
 - hash-verified local/file/HTTP/ELPA/Git fetch source path
 - native =unpack= builder that extracts verified archives into the
@@ -1040,8 +1040,8 @@ index policy, and optional signed package recipe row policy in
 
 - Local registry format.
 - Packaged registry root under the installed Nelix Lisp directory.
-- Packaged =script-shim= recipes for existing =ripgrep=, =git=, =curl=, and
-  =jq=
+- Packaged =script-shim= recipes for existing =ripgrep=, =git=, =curl=,
+  =fd=, =jq=, and =tree=
   system commands.  These recipes use =:require-target t= so the native
   profile is not populated with a wrapper to a missing command.
 - =NELIX_REGISTRY_INCLUDE_PACKAGED=0= disables packaged recipes for isolated
@@ -1170,7 +1170,7 @@ The next concrete deliverables should be:
 9. Native manifest =plan= and =apply --dry-run= — implemented as read-only
    review paths that do not require Nix and do not invoke native install.
 10. Packaged native registry seed — implemented with built-in system-command
-    recipes for =ripgrep=, =git=, =curl=, and =jq= plus installed CLI
+    recipes for =ripgrep=, =git=, =curl=, =fd=, =jq=, and =tree= plus installed CLI
     coverage.
     The native CLI gate installs the packaged =ripgrep= recipe against a fake
     =rg= command, activates the profile, and executes the generated shim.

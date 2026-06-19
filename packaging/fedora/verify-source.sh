@@ -23,7 +23,9 @@ for path in \
   "$prefix/registry/packages/system/ripgrep.el" \
   "$prefix/registry/packages/system/git.el" \
   "$prefix/registry/packages/system/curl.el" \
+  "$prefix/registry/packages/system/fd.el" \
   "$prefix/registry/packages/system/jq.el" \
+  "$prefix/registry/packages/system/tree.el" \
   "$prefix/packaging/fedora/publish-static.sh" \
   "$prefix/packaging/fedora/verify-public-tree.sh" \
   "$prefix/packaging/verify-publication-urls.sh" \

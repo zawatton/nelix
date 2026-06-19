@@ -54,7 +54,7 @@ For the Emacs package:
 
 - hard dependency: Emacs 29 or newer
 - recommended dependency: Nix 2.18 or newer with flakes enabled
-- useful runtime tools: =git=, =curl=, =jq=, =ca-certificates=
+- useful runtime tools: =git=, =curl=, =fd=, =jq=, =tree=, =ca-certificates=
 - optional integration: =nelisp=
 
 Avoid depending on a distro-packaged =nix= when that makes the package
@@ -227,8 +227,9 @@ make autopkgtest-debian
 The autopkgtest is not marked =superficial=.  It checks the installed Elisp
 load path, packaged CLI presence, CLI =--json version= output, and the
 installed CLI gate.  That gate covers the packaged registry root through
-=nelix registry list --system x86_64-linux=, then installs and activates the
-packaged =ripgrep= native recipe against a fake =rg= command.  It also covers
+=nelix registry list --system x86_64-linux= for the built-in system command
+recipes, then installs and activates the packaged =ripgrep= native recipe
+against a fake =rg= command.  It also covers
 =validate=, =lock=, =plan=, and =apply --dry-run= with a fake Nix executable,
 and verifies the native store CLI plus the =nelix --runtime nelisp= AOT cache
 shell lane with isolated fake registry/profile/Nix/NeLisp fixtures.  The AOT

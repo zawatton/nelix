@@ -72,9 +72,11 @@ path_in_release_scope() {
     nelix-store.el|\
     nelix-substitute.el|\
     registry/packages/system/curl.el|\
+    registry/packages/system/fd.el|\
     registry/packages/system/git.el|\
     registry/packages/system/jq.el|\
     registry/packages/system/ripgrep.el|\
+    registry/packages/system/tree.el|\
     scripts/nelix-aot-manifest-engine.el|\
     scripts/nelix-aot-native-cli-proof.el|\
     scripts/nelix-aot-native-subset.el|\
@@ -271,7 +273,11 @@ require_autopkgtest_gate_strength() {
   require_contains Makefile \
     "grep -Fxq './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/registry/packages/system/ripgrep.el'"
   require_contains Makefile \
+    "grep -Fxq './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/registry/packages/system/fd.el'"
+  require_contains Makefile \
     "grep -Fxq './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/registry/packages/system/jq.el'"
+  require_contains Makefile \
+    "grep -Fxq './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/registry/packages/system/tree.el'"
   require_contains Makefile \
     "grep -Fq 'packaged_registry'"
   require_contains Makefile \
@@ -610,7 +616,11 @@ require_native_store_gate_docs() {
     ':require-target t'
   require_contains registry/packages/system/curl.el \
     ':require-target t'
+  require_contains registry/packages/system/fd.el \
+    ':require-target t'
   require_contains registry/packages/system/jq.el \
+    ':require-target t'
+  require_contains registry/packages/system/tree.el \
     ':require-target t'
   require_contains test/nelix-store-test.el \
     'nelix-store-test-native-install-lock-package-replays-script-shim'
@@ -659,7 +669,7 @@ require_native_store_gate_docs() {
   require_contains docs/design/22-nelix-native-store.org \
     'Packaged registry root under the installed Nelix Lisp directory.'
   require_contains docs/design/22-nelix-native-store.org \
-    '=curl=, and =jq='
+    '=curl=, =fd=,'
   require_contains docs/design/22-nelix-native-store.org \
     'installs the packaged =ripgrep= recipe'
   require_contains docs/design/22-nelix-native-store.org \
@@ -685,7 +695,7 @@ require_native_store_gate_docs() {
   require_contains docs/design/29-nelix-release-worktree-scope.org \
     'Native packaged registry:'
   require_contains docs/design/29-nelix-release-worktree-scope.org \
-    '=curl=, and =jq='
+    '=curl=, =fd=,'
   require_contains docs/design/29-nelix-release-worktree-scope.org \
     'packaged =ripgrep= install/activation'
   require_contains docs/design/29-nelix-release-worktree-scope.org \
@@ -701,7 +711,9 @@ require_native_store_gate_docs() {
   require_contains packaging/README.org \
     'packaged registry root through'
   require_contains packaging/README.org \
-    '=git=, =curl=, =jq=, =ca-certificates='
+    'built-in system command'
+  require_contains packaging/README.org \
+    '=git=, =curl=, =fd=, =jq=, =tree=, =ca-certificates='
   require_contains packaging/README.org \
     'installs and activates the'
 }
@@ -754,7 +766,11 @@ require_aot_plan_gate_docs() {
   require_contains packaging/fedora/verify-source.sh \
     'registry/packages/system/ripgrep.el'
   require_contains packaging/fedora/verify-source.sh \
+    'registry/packages/system/fd.el'
+  require_contains packaging/fedora/verify-source.sh \
     'registry/packages/system/jq.el'
+  require_contains packaging/fedora/verify-source.sh \
+    'registry/packages/system/tree.el'
   require_contains packaging/fedora/verify-source.sh \
     'NELIX_LISPDIR="$PWD" bin/nelix --json version'
   require_contains packaging/fedora/nelix.spec \

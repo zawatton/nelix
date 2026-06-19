@@ -82,8 +82,9 @@ Reason: this is the main functional payload: manifest load/validate/lock,
 plan/apply/sync, rollback safety, DSL v1, native store scaffolding,
 hash-verified and optionally signed static remote registry sync, and JSON
 contracts.  The native registry now also ships packaged system-command recipes
-for =ripgrep=, =git=, =curl=, and =jq=, and has installed CLI coverage through
-=nelix registry update=, =nelix registry search=, and =nelix registry show=.
+for =ripgrep=, =git=, =curl=, =fd=, =jq=, and =tree=, and has installed CLI
+coverage through =nelix registry update=, =nelix registry search=, and
+=nelix registry show=.
 
 ** Commit C. Design docs
 
@@ -449,8 +450,8 @@ to dry-run.  It stages files only when =--stage= is passed explicitly.
   hash-verified and can require trusted signatures through the substitute
   signature verifier path.
 - Native packaged registry: the installed Nelix Lisp tree includes initial
-  system-command =script-shim= recipes for =ripgrep=, =git=, =curl=, and
-  =jq=.
+  system-command =script-shim= recipes for =ripgrep=, =git=, =curl=, =fd=,
+  =jq=, and =tree=.
   Packaged recipes load before user registries and can be disabled with
   =NELIX_REGISTRY_INCLUDE_PACKAGED=0= for isolated/private registries.  The
   native CLI gate installs the packaged =ripgrep= recipe with a fake =rg=

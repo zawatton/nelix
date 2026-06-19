@@ -12,7 +12,7 @@ find_rpm() {
 
 verify_emacs_rpm_payload() {
   rpm_file=$1
-  for recipe in curl git jq ripgrep; do
+  for recipe in curl fd git jq ripgrep tree; do
     rpm -qpl "$rpm_file" |
       grep -Fxq "/usr/share/emacs/site-lisp/nelix/registry/packages/system/$recipe.el" || {
         echo "public Fedora emacs-nelix RPM is missing packaged registry recipe: $recipe" >&2
