@@ -156,7 +156,10 @@
             (insert " (backend-policy (gnu/linux nix nelix-native))\n")
             (insert " (emacs-packages fixture-emacs-packages)\n")
             (insert " (linux-packages fixture-linux-packages)\n")
-            (insert " (bootstrap-apt-packages fixture-bootstrap))\n"))
+            (insert " (bootstrap-apt-packages fixture-bootstrap)\n")
+            (insert " (package vertico :backend elpa :pin t)\n")
+            (insert " (linux-package fd :backend nix :pin t)\n")
+            (insert " (version-pin git \"2.0\"))\n"))
           (cl-letf (((symbol-function 'anvil-pkg-compat--standalone-nelisp-p)
                      (lambda () t))
                     ((symbol-function 'nelix-validate)
@@ -174,14 +177,17 @@
               (should (equal "fixture" (alist-get 'name parsed)))
               (should (equal "nelisp-fast-validate"
                              (alist-get 'backend parsed)))
-              (should (= 2 (alist-get
+              (should (= 3 (alist-get
                             'emacs
                             (alist-get 'counts parsed))))
-              (should (= 3 (alist-get
+              (should (= 4 (alist-get
                             'linux
                             (alist-get 'counts parsed))))
               (should (= 2 (alist-get
                             'bootstrap-apt
+                            (alist-get 'counts parsed))))
+              (should (= 3 (alist-get
+                            'pins
                             (alist-get 'counts parsed)))))))
       (delete-directory dir t))))
 
@@ -420,7 +426,19 @@
     (should (member "emacs-packages"
                     (nelix-cli-test--json-array-list
                      (alist-get 'forms manifest))))
+    (should (member "package"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'forms manifest))))
+    (should (member "linux-package"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'forms manifest))))
+    (should (member "version-pin"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'forms manifest))))
     (should (member "bootstrap-apt"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'manifest-keys manifest))))
+    (should (member "package-rows"
                     (nelix-cli-test--json-array-list
                      (alist-get 'manifest-keys manifest))))
     (should (cl-find "linux-packages"
@@ -442,13 +460,26 @@
                      (alist-get 'backends manifest))))
     (should (equal "backend-symbols-or-os-rows"
                    (alist-get 'backend-policy manifest)))
-    (should (member "remove-policy"
+    (should (member "package"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'package-forms manifest))))
+    (should (member ":backend"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'package-options manifest))))
+    (should (member ":platform"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'package-options manifest))))
+    (should (equal "metadata-plus-target-list"
+                   (alist-get 'package-row-semantics manifest)))
+    (should (equal "metadata-plus-pin-name"
+                   (alist-get 'version-pin manifest)))
+    (should (member "confirm"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'remove-policy-values manifest))))
+    (should (member "group"
                     (nelix-cli-test--json-array-list
                      (alist-get 'deferred-forms manifest))))
     (should (member "platform"
-                    (nelix-cli-test--json-array-list
-                     (alist-get 'deferred-forms manifest))))
-    (should (member "version-pin"
                     (nelix-cli-test--json-array-list
                      (alist-get 'deferred-forms manifest))))
     (should (member "private-repo"
@@ -457,8 +488,12 @@
     (should (member "secret"
                     (nelix-cli-test--json-array-list
                      (alist-get 'forbidden-forms manifest))))
-    (should (equal "cli-confirmation"
+    (should (equal "manifest-declares-cli-still-confirms"
                    (alist-get 'remove-policy manifest)))
+    (should (equal "package-options-group-feature"
+                   (alist-get 'classification manifest)))
+    (should (equal "package-option-platform-metadata"
+                   (alist-get 'platform-conditions manifest)))
     (should (equal "forbidden"
                    (alist-get 'private-data manifest)))
     (should (equal "nelix-lock" (alist-get 'schema lock)))

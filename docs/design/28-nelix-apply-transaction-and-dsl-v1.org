@@ -307,10 +307,14 @@ The v1 DSL target syntax is:
  (backend-policy
   (gnu/linux nix nelix-native apt dnf)
   (darwin nix nelix-native)
-  (windows-nt nix))
+ (windows-nt nix))
  (emacs-packages nelix-package-emacs-packages)
  (linux-packages nelix-linux-base-nix-packages)
- (bootstrap-apt-packages nelix-linux-bootstrap-apt-packages))
+ (bootstrap-apt-packages nelix-linux-bootstrap-apt-packages)
+ (package magit :backend elpa :group editor :feature git)
+ (linux-package ripgrep :backend nix :pin t :platform gnu/linux)
+ (version-pin fd "10.2.0")
+ (remove-policy confirm))
 #+end_src
 
 Rules:
@@ -318,12 +322,27 @@ Rules:
 - =nelix-dsl.el= is the public require boundary for DSL v1; it must provide
   =nelix-environment= and report =nelix-dsl-version= as =1=;
 - subform names are stable once v1 ships;
-- each subform is single-assignment; duplicates are hard errors in both the
-  normal Emacs loader and the standalone NeLisp fast validator;
+- each subform is single-assignment except repeated =package=,
+  =linux-package=, and =version-pin= rows; invalid duplicates are hard errors
+  in both the normal Emacs loader and the standalone NeLisp fast validator;
 - plist =nelix-manifest= remains supported indefinitely for generated files and
   backward compatibility;
 - package list subforms accept either a variable symbol or literal package
   symbols/strings;
+- =package= and =linux-package= are first-class v1 environment rows.  They
+  record metadata and also contribute their name to the normalized =:emacs= or
+  =:linux= target list so existing plan/apply remains the only mutation path;
+- package row options are =:backend=, =:pin=, =:version=, =:profile=,
+  =:group=, =:feature=, =:platform=, and =:when=.  In v1, =:backend= is
+  validated, =:pin t= contributes the package name to =:pins=, and the other
+  options are stable metadata for lock/native-store evolution;
+- =version-pin= rows are stored under =:version-pins= and contribute the
+  package name to =:pins=.  Version resolution is not yet enforced by the Nix
+  backend; lock/native-store resolution must consume the metadata before it
+  becomes a hard version guarantee;
+- =remove-policy= accepts =confirm=, =keep=, or =prune=.  It is recorded in the
+  normalized manifest, but real mutation still requires CLI remove
+  confirmation against the current plan;
 - OS backend policy subforms are converted to the existing alist shape;
 - supported backend symbols in DSL v1 are =nelix-native=, =nix=, =apt=,
   =dnf=, =git=, =elpa=, =homebrew=, =scoop=, and =winget=.  =nix= and
@@ -335,9 +354,9 @@ Rules:
   the single implementation path;
 - =nelix --json schema manifest-dsl-v1= must report schema
   =nelix-environment=, schema version =1=, the stable DSL form list, the
-  form-to-manifest-key mapping, the stable backend name list, the deferred v2
-  candidate forms, the forbidden private-data forms, and the v1 policies for
-  removal review and private data.
+  form-to-manifest-key mapping, the stable backend name list, the accepted
+  package row forms/options, the deferred v2 candidate forms, the forbidden
+  private-data forms, and the v1 policies for removal review and private data.
 - =nelix --json schema transaction-v1= must report schema
   =nelix-apply-transaction=, schema version =1=, and the required top-level,
   plan, transaction metadata, rollback-plan, rollback argv, and executed-step
@@ -345,35 +364,37 @@ Rules:
 
 Scope decisions for the user-requested Nix/Guix-style surface:
 
-- package declarations for the native store live in the registry recipe DSL
-  =nelix-package=, not inside =nelix-environment= v1.  Environment manifests
-  reference package names; registry recipes define version, source, install,
-  dependencies, and per-system support.
-- Linux package declarations are represented by =(linux-packages ...)= for
-  desired profile content, =(bootstrap-apt-packages ...)= for Debian bootstrap
-  tools, and =(debian-tools ...)= for Debian packaging helper checks.
+- package declarations in =nelix-environment= are desired-state rows, not full
+  build recipes.  Native-store package recipes still live in the registry DSL
+  =nelix-package=; registry recipes define version, source, install,
+  dependencies, and per-system support.  Environment rows select and annotate
+  those packages.
+- Linux package declarations are represented by =(linux-package NAME ...)=
+  rows and =(linux-packages ...)= lists for desired profile content,
+  =(bootstrap-apt-packages ...)= for Debian bootstrap tools, and
+  =(debian-tools ...)= for Debian packaging helper checks.
 - backend selection is controlled by =(backend-policy ...)= and the registry
   recipe's per-system availability.  =:nix= / =:native= user wording maps to
   =nix= / =nelix-native= in the actual DSL.  DSL v1 accepts either a flat
   backend list such as =(backend-policy nix nelix-native)= or OS rows such as
   =(backend-policy (gnu/linux nix nelix-native dnf))=, and rejects unknown
   backend symbols at macro expansion time.
-- pinning is =(pins ...)= for literal environment-level package-name holds.
-  Version pinning belongs to registry recipes and lockfile rows; Nix
-  attr/version pin syntax is deferred until it can be represented in lock schema
-  without ambiguity.
-- remove policy is intentionally not stored in the manifest in v1.  Real
-  mutation requires CLI confirmation via =--allow-remove= or
+- pinning is =(pins ...)=, =:pin t= on package rows, and =(version-pin NAME
+  VERSION)= for environment-level package-name holds.  Current profile
+  mutation still pins by package name; version metadata is recorded for lock
+  and native-store resolution.
+- remove policy is stored in the manifest as =confirm=, =keep=, or =prune=,
+  but real mutation still requires CLI confirmation via =--allow-remove= or
   =--allow-remove-count N= so review happens against the current plan.
 - profile selection is =(profile "...")=.
-- feature/group support in v1 is done with regular imported Elisp variables:
-  =(imports "...")= plus =(emacs-packages my-emacs-group)= and
-  =(linux-packages my-linux-group)=.  First-class =(group ...)= and
-  =(feature ...)= subforms are v2 candidates and are rejected as reserved in
-  v1.
+- feature/group classification in v1 is available as package row metadata
+  =:group= and =:feature=.  Imported Elisp variables remain the way to define
+  reusable package groups.  First-class =(group ...)= and =(feature ...)=
+  subforms are v2 candidates and are rejected as reserved in v1.
 - platform conditions in v1 are split between =(backend-policy ...)= for
-  environment-level OS policy and registry recipe =:systems= for package-level
-  availability.  First-class =(platform ...)= forms are reserved for v2.
+  environment-level OS policy, package row =:platform= metadata, and registry
+  recipe =:systems= for package-level availability.  First-class =(platform
+  ...)= forms are reserved for v2.
 - secrets and private repositories must not be embedded in manifest or lockfile
   rows.  Use environment/configured credentials and registry roots/remotes with
   hash/signature policy.  Lockfiles may record public source identity and
@@ -383,8 +404,9 @@ Scope decisions for the user-requested Nix/Guix-style surface:
 Implementation status: =nelix-environment= is implemented as a macro expanding
 to =nelix-manifest=.  Existing plist manifests remain valid.  The Debian
 installed CLI gate loads a real =nelix-dsl= manifest using imports, package
-variables, OS-row backend policy, bootstrap package declarations, and pins,
-then runs =validate= and =plan --dry-run= through the public command line.
+variables, OS-row backend policy, bootstrap package declarations, package row
+declarations, version pins, remove policy, and pins, then runs =validate= and
+=plan --dry-run= through the public command line.
 
 * 6. Lockfile Schema Direction
 

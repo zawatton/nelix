@@ -41,7 +41,8 @@
 
 (defconst nelix-manifest-known-keys
   '(:name :profile :nix-channel :emacs :linux :debian-tools
-    :bootstrap-apt :pins :imports :backend-policy)
+    :bootstrap-apt :pins :imports :backend-policy :package-rows
+    :linux-package-rows :version-pins :remove-policy)
   "Keyword set accepted by `nelix-manifest'.")
 
 (defconst nelix-lock-schema-version 2
@@ -55,12 +56,15 @@
 
 (defconst nelix-environment-dsl-forms
   '(name profile nix-channel imports backend-policy emacs-packages
-    linux-packages debian-tools bootstrap-apt-packages pins)
+    linux-packages debian-tools bootstrap-apt-packages pins package
+    linux-package version-pin remove-policy)
   "Stable subform names accepted by `nelix-environment' DSL v1.")
 
 (defconst nelix-environment-dsl-manifest-keys
   '("name" "profile" "nix-channel" "imports" "backend-policy"
-    "emacs" "linux" "debian-tools" "bootstrap-apt" "pins")
+    "emacs" "linux" "debian-tools" "bootstrap-apt" "pins"
+    "package-rows" "linux-package-rows" "version-pins"
+    "remove-policy")
   "Stable manifest keys produced by `nelix-environment' DSL v1.")
 
 (defconst nelix-environment-dsl-form-map
@@ -73,16 +77,31 @@
     ("linux-packages" . "linux")
     ("debian-tools" . "debian-tools")
     ("bootstrap-apt-packages" . "bootstrap-apt")
-    ("pins" . "pins"))
+    ("pins" . "pins")
+    ("package" . "package-rows")
+    ("linux-package" . "linux-package-rows")
+    ("version-pin" . "version-pins")
+    ("remove-policy" . "remove-policy"))
   "Stable mapping from Nelix environment DSL v1 forms to manifest keys.")
 
 (defconst nelix-environment-dsl-backends
   '(nelix-native nix apt dnf git elpa homebrew scoop winget)
   "Stable backend names accepted in `nelix-environment' backend-policy forms.")
 
+(defconst nelix-environment-dsl-repeated-forms
+  '(package linux-package version-pin)
+  "DSL v1 forms that may appear more than once in `nelix-environment'.")
+
+(defconst nelix-environment-dsl-package-option-keys
+  '(:backend :pin :version :profile :group :feature :platform :when)
+  "Stable keyword options accepted by DSL v1 package rows.")
+
+(defconst nelix-environment-dsl-remove-policy-values
+  '(confirm keep prune)
+  "Stable remove-policy values accepted by DSL v1.")
+
 (defconst nelix-environment-dsl-deferred-forms
-  '("package" "linux-package" "remove-policy" "group" "feature"
-    "platform" "platform-when" "version-pin")
+  '("group" "feature" "platform" "platform-when")
   "Nix/Guix-style forms intentionally deferred beyond environment DSL v1.")
 
 (defconst nelix-environment-dsl-forbidden-forms
@@ -176,10 +195,19 @@ When nil, records are written under the user's state directory at
                           nelix-environment-dsl-form-map)
         :backends (mapcar #'symbol-name nelix-environment-dsl-backends)
         :backend-policy "backend-symbols-or-os-rows"
+        :package-forms '("package" "linux-package")
+        :package-options (mapcar #'symbol-name
+                                 nelix-environment-dsl-package-option-keys)
+        :package-row-semantics "metadata-plus-target-list"
+        :version-pin "metadata-plus-pin-name"
+        :remove-policy-values (mapcar #'symbol-name
+                                      nelix-environment-dsl-remove-policy-values)
         :deferred-forms nelix-environment-dsl-deferred-forms
         :forbidden-forms (mapcar #'symbol-name
                                  nelix-environment-dsl-forbidden-forms)
-        :remove-policy "cli-confirmation"
+        :remove-policy "manifest-declares-cli-still-confirms"
+        :classification "package-options-group-feature"
+        :platform-conditions "package-option-platform-metadata"
         :private-data "forbidden"
         :stable t))
 
@@ -316,6 +344,60 @@ NAME may be nil, \"all\", \"manifest-dsl-v1\", \"lock-v2\", or
   "Validate VALUE as an import path list."
   (nelix-manifest--normalize-string-list "nelix-manifest :imports" value))
 
+(defun nelix-manifest--normalize-remove-policy (value)
+  "Validate VALUE as a remove-policy symbol."
+  (cond
+   ((null value) 'confirm)
+   ((memq value nelix-environment-dsl-remove-policy-values) value)
+   (t
+    (signal 'anvil-pkg-error
+            (list (format "nelix-manifest :remove-policy: unsupported value %S"
+                          value))))))
+
+(defun nelix-manifest--normalize-package-rows (caller rows)
+  "Validate ROWS as DSL package metadata rows for CALLER."
+  (cond
+   ((null rows) nil)
+   ((listp rows)
+    (mapcar
+     (lambda (row)
+       (unless (and (listp row)
+                    (memq (plist-get row :kind)
+                          '(package linux-package))
+                    (or (symbolp (plist-get row :name))
+                        (stringp (plist-get row :name))))
+         (signal 'anvil-pkg-error
+                 (list (format "%s: malformed package row %S"
+                               caller row))))
+       row)
+     rows))
+   (t
+    (signal 'anvil-pkg-error
+            (list (format "%s: value must be a list, got %S"
+                          caller rows))))))
+
+(defun nelix-manifest--normalize-version-pins (value)
+  "Validate VALUE as DSL version pin metadata rows."
+  (cond
+   ((null value) nil)
+   ((listp value)
+    (mapcar
+     (lambda (row)
+       (unless (and (listp row)
+                    (or (symbolp (plist-get row :name))
+                        (stringp (plist-get row :name)))
+                    (or (symbolp (plist-get row :version))
+                        (stringp (plist-get row :version))))
+         (signal 'anvil-pkg-error
+                 (list (format "nelix-manifest :version-pins: malformed row %S"
+                               row))))
+       row)
+     value))
+   (t
+    (signal 'anvil-pkg-error
+            (list (format "nelix-manifest :version-pins: value must be a list, got %S"
+                          value))))))
+
 (defun nelix-environment--single-value (caller args)
   "Return the only value in ARGS for CALLER, or signal a DSL error."
   (unless (= 1 (length args))
@@ -338,6 +420,100 @@ NAME may be nil, \"all\", \"manifest-dsl-v1\", \"lock-v2\", or
   "Return a manifest backend-policy value expression for ARGS."
   (nelix-environment--validate-backend-policy args)
   (list 'quote args))
+
+(defun nelix-environment--literal-list-expr (values)
+  "Return an expression that evaluates to literal VALUES."
+  (list 'quote values))
+
+(defun nelix-environment--append-list-expr (left right)
+  "Return an expression appending list expressions LEFT and RIGHT."
+  (cond
+   ((null left) right)
+   ((null right) left)
+   (t (list 'append left right))))
+
+(defun nelix-environment--forbidden-option-p (key)
+  "Return non-nil when package option KEY embeds private data."
+  (and (keywordp key)
+       (let ((name (substring (symbol-name key) 1)))
+         (member name (mapcar #'symbol-name
+                              nelix-environment-dsl-forbidden-forms)))))
+
+(defun nelix-environment--validate-package-options (caller options)
+  "Validate package row OPTIONS for CALLER."
+  (let ((rest options))
+    (while rest
+      (unless (and (consp rest) (consp (cdr rest)) (keywordp (car rest)))
+        (signal 'anvil-pkg-error
+                (list (format "%s: options must be keyword pairs, got %S"
+                              caller options))))
+      (let ((key (car rest))
+            (value (cadr rest)))
+        (when (nelix-environment--forbidden-option-p key)
+          (signal 'anvil-pkg-error
+                  (list (format "%s: private data option %S is forbidden"
+                                caller key))))
+        (unless (memq key nelix-environment-dsl-package-option-keys)
+          (signal 'anvil-pkg-error
+                  (list (format "%s: unknown option %S" caller key))))
+        (when (eq key :backend)
+          (unless (symbolp value)
+            (signal 'anvil-pkg-error
+                    (list (format "%s: :backend must be a symbol, got %S"
+                                  caller value))))
+          (nelix-environment--validate-backend-symbol value))
+        (when (eq key :pin)
+          (unless (memq value '(nil t))
+            (signal 'anvil-pkg-error
+                    (list (format "%s: :pin must be t or nil, got %S"
+                                  caller value)))))
+        (setq rest (cddr rest))))))
+
+(defun nelix-environment--package-row (kind args)
+  "Return a validated package row plist for KIND and ARGS."
+  (unless args
+    (signal 'anvil-pkg-error
+            (list (format "nelix-environment %s: package name is required"
+                          kind))))
+  (let ((name (car args))
+        (options (cdr args)))
+    (unless (or (symbolp name) (stringp name))
+      (signal 'anvil-pkg-error
+              (list (format "nelix-environment %s: name must be string or symbol, got %S"
+                            kind name))))
+    (nelix-environment--validate-package-options
+     (format "nelix-environment %s %S" kind name)
+     options)
+    (append (list :kind kind :name name) options)))
+
+(defun nelix-environment--version-pin-row (args)
+  "Return a validated version-pin row plist from ARGS."
+  (unless (= 2 (length args))
+    (signal 'anvil-pkg-error
+            (list (format "nelix-environment version-pin: expected NAME VERSION, got %S"
+                          args))))
+  (let ((name (car args))
+        (version (cadr args)))
+    (unless (or (symbolp name) (stringp name))
+      (signal 'anvil-pkg-error
+              (list (format "nelix-environment version-pin: name must be string or symbol, got %S"
+                            name))))
+    (unless (or (symbolp version) (stringp version))
+      (signal 'anvil-pkg-error
+              (list (format "nelix-environment version-pin: version must be string or symbol, got %S"
+                            version))))
+    (list :name name :version version)))
+
+(defun nelix-environment--remove-policy-value (args)
+  "Return the validated remove-policy value from ARGS."
+  (let ((policy (nelix-environment--single-value
+                 "nelix-environment remove-policy"
+                 args)))
+    (unless (memq policy nelix-environment-dsl-remove-policy-values)
+      (signal 'anvil-pkg-error
+              (list (format "nelix-environment remove-policy: unsupported value %S"
+                            policy))))
+    (list 'quote policy)))
 
 (defun nelix-environment--preload-imports (imports)
   "Load DSL IMPORTS relative to `default-directory' before package variables."
@@ -410,6 +586,10 @@ NAME may be nil, \"all\", \"manifest-dsl-v1\", \"lock-v2\", or
               (list (format "nelix-environment: form %S is reserved for a later DSL version"
                             head))))
     (pcase head
+      ((or 'package 'linux-package 'version-pin 'remove-policy)
+       (signal 'anvil-pkg-error
+               (list (format "nelix-environment: form %S is handled by the DSL aggregator"
+                             head))))
       ('name
        (list :name (nelix-environment--single-value "nelix-environment name"
                                                     args)))
@@ -454,21 +634,112 @@ forms such as:
     (imports \"custom-lisp/nelix-linux.el\")
     (backend-policy (gnu/linux nix nelix-native))
     (emacs-packages nelix-package-emacs-packages)
-    (linux-packages nelix-linux-base-nix-packages))
+    (linux-packages nelix-linux-base-nix-packages)
+    (package magit :backend elpa :group editor :feature git)
+    (linux-package ripgrep :backend nix :pin t)
+    (version-pin fd \"10.2.0\"))
 
-Package forms with a single argument evaluate that argument, which
-supports generated package variables.  Package forms with multiple
-arguments are treated as a literal package list."
-  (let (plist seen)
+Package list forms with a single argument evaluate that argument, which
+supports generated package variables.  Package list forms with multiple
+arguments are treated as a literal package list.  `package' and
+`linux-package' rows are repeated metadata rows that also contribute to
+the normalized Emacs and Linux target lists."
+  (let (plist seen emacs-expr linux-expr pins-expr
+              package-rows linux-package-rows version-pin-rows)
     (dolist (form forms)
-      (let ((pair (nelix-environment--form-to-plist-pair form))
-            (head (car form)))
-        (when (memq head seen)
+      (unless (and (consp form) (symbolp (car form)))
+        (signal 'anvil-pkg-error
+                (list (format "nelix-environment: malformed form %S" form))))
+      (let ((head (car form))
+            (args (cdr form)))
+        (when (and (memq head seen)
+                   (not (memq head nelix-environment-dsl-repeated-forms)))
           (signal 'anvil-pkg-error
                   (list (format "nelix-environment: duplicate form %S"
                                 head))))
         (push head seen)
-        (setq plist (append plist pair))))
+        (pcase head
+          ('package
+           (let ((row (nelix-environment--package-row 'package args)))
+             (push row package-rows)
+             (setq emacs-expr
+                   (nelix-environment--append-list-expr
+                    emacs-expr
+                    (nelix-environment--literal-list-expr
+                     (list (plist-get row :name)))))
+             (when (plist-get row :pin)
+               (setq pins-expr
+                     (nelix-environment--append-list-expr
+                      pins-expr
+                      (nelix-environment--literal-list-expr
+                       (list (plist-get row :name))))))))
+          ('linux-package
+           (let ((row (nelix-environment--package-row 'linux-package args)))
+             (push row linux-package-rows)
+             (setq linux-expr
+                   (nelix-environment--append-list-expr
+                    linux-expr
+                    (nelix-environment--literal-list-expr
+                     (list (plist-get row :name)))))
+             (when (plist-get row :pin)
+               (setq pins-expr
+                     (nelix-environment--append-list-expr
+                      pins-expr
+                      (nelix-environment--literal-list-expr
+                       (list (plist-get row :name))))))))
+          ('version-pin
+           (let ((row (nelix-environment--version-pin-row args)))
+             (push row version-pin-rows)
+             (setq pins-expr
+                   (nelix-environment--append-list-expr
+                    pins-expr
+                    (nelix-environment--literal-list-expr
+                     (list (plist-get row :name)))))))
+          ('emacs-packages
+           (setq emacs-expr
+                 (nelix-environment--append-list-expr
+                  emacs-expr
+                  (nelix-environment--list-value args))))
+          ('linux-packages
+           (setq linux-expr
+                 (nelix-environment--append-list-expr
+                  linux-expr
+                  (nelix-environment--list-value args))))
+          ('pins
+           (setq pins-expr
+                 (nelix-environment--append-list-expr
+                  pins-expr
+                  (list 'quote args))))
+          ('remove-policy
+           (setq plist
+                 (append plist
+                         (list :remove-policy
+                               (nelix-environment--remove-policy-value
+                                args)))))
+          (_
+           (let ((pair (nelix-environment--form-to-plist-pair form)))
+             (setq plist (append plist pair)))))))
+    (when emacs-expr
+      (setq plist (append plist (list :emacs emacs-expr))))
+    (when linux-expr
+      (setq plist (append plist (list :linux linux-expr))))
+    (when pins-expr
+      (setq plist (append plist (list :pins pins-expr))))
+    (when package-rows
+      (setq plist
+            (append plist
+                    (list :package-rows
+                          (list 'quote (nreverse package-rows))))))
+    (when linux-package-rows
+      (setq plist
+            (append plist
+                    (list :linux-package-rows
+                          (list 'quote (nreverse linux-package-rows))))))
+    (when version-pin-rows
+      (setq plist
+            (append plist
+                    (list :version-pins
+                          (list 'quote (nreverse version-pin-rows))))))
     (let ((imports-expr (plist-get plist :imports)))
       `(if nelix-manifest--environment-preload-imports
            (let ((nelix-manifest--preloaded-imports
@@ -518,6 +789,16 @@ file."
                   "nelix-manifest :pins" (plist-get plist :pins)))
            (imports (nelix-manifest--normalize-imports
                      (plist-get plist :imports)))
+           (package-rows (nelix-manifest--normalize-package-rows
+                          "nelix-manifest :package-rows"
+                          (plist-get plist :package-rows)))
+           (linux-package-rows (nelix-manifest--normalize-package-rows
+                                "nelix-manifest :linux-package-rows"
+                                (plist-get plist :linux-package-rows)))
+           (version-pins (nelix-manifest--normalize-version-pins
+                          (plist-get plist :version-pins)))
+           (remove-policy (nelix-manifest--normalize-remove-policy
+                           (plist-get plist :remove-policy)))
            (preloaded-imports nelix-manifest--preloaded-imports)
            (backend-policy (plist-get plist :backend-policy)))
       (when (and backend-policy (not (listp backend-policy)))
@@ -536,7 +817,11 @@ file."
                   :bootstrap-apt bootstrap-apt
                   :pins pins
                   :imports (or preloaded-imports imports)
-                  :backend-policy backend-policy)))))
+                  :backend-policy backend-policy
+                  :package-rows package-rows
+                  :linux-package-rows linux-package-rows
+                  :version-pins version-pins
+                  :remove-policy remove-policy)))))
 
 (defun nelix-manifest--expand-path (path base-dir)
   "Expand PATH relative to BASE-DIR."

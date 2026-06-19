@@ -163,6 +163,39 @@
                      (nelix-manifest-backend-policy
                       manifest 'gnu/linux))))))
 
+(ert-deftest nelix-manifest-test-environment-dsl-v1-package-rows ()
+  "Package rows are stable DSL v1 declarations plus target-list entries."
+  (let* ((base-emacs '(consult))
+         (base-linux '("fd"))
+         (manifest
+          (nelix-environment
+           (name "rows")
+           (profile "desktop")
+           (backend-policy nix nelix-native)
+           (emacs-packages base-emacs)
+           (linux-packages base-linux)
+           (package magit :backend elpa :group editor :feature git)
+           (package vertico :backend elpa :pin t)
+           (linux-package ripgrep :backend nix :pin t :platform gnu/linux)
+           (version-pin fd "10.2.0")
+           (remove-policy confirm))))
+    (should (equal '(consult magit vertico)
+                   (plist-get manifest :emacs)))
+    (should (equal '("fd" "ripgrep")
+                   (plist-get manifest :linux)))
+    (should (equal '("vertico" "ripgrep" "fd")
+                   (plist-get manifest :pins)))
+    (should (equal 'confirm (plist-get manifest :remove-policy)))
+    (should (equal '((:kind package :name magit :backend elpa
+                            :group editor :feature git)
+                     (:kind package :name vertico :backend elpa :pin t))
+                   (plist-get manifest :package-rows)))
+    (should (equal '((:kind linux-package :name ripgrep :backend nix
+                            :pin t :platform gnu/linux))
+                   (plist-get manifest :linux-package-rows)))
+    (should (equal '((:name fd :version "10.2.0"))
+                   (plist-get manifest :version-pins)))))
+
 (ert-deftest nelix-manifest-test-dsl-entrypoint-provides-environment-v1 ()
   "`nelix-dsl' is the public require boundary for the DSL v1 contract."
   (should (= 1 (nelix-dsl-version)))
@@ -210,6 +243,16 @@
     (should (string-match-p "private data form"
                             (cadr err)))))
 
+(ert-deftest nelix-manifest-test-environment-dsl-v1-forbids-private-package-options ()
+  "Package rows must not embed credentials or private repository data."
+  (let ((err (should-error
+              (eval '(nelix-environment
+                      (name "private-package")
+                      (package magit :secret "token-value")))
+              :type 'anvil-pkg-error)))
+    (should (string-match-p "private data option :secret"
+                            (cadr err)))))
+
 (ert-deftest nelix-manifest-test-environment-dsl-v1-validates-backend-policy ()
   "DSL v1 backend-policy accepts only stable backend symbols and OS rows."
   (let ((flat (nelix-environment
@@ -237,6 +280,16 @@
                       (backend-policy nix (gnu/linux nelix-native))))
               :type 'anvil-pkg-error)))
     (should (string-match-p "either backend symbols or OS rows"
+                            (cadr err)))))
+
+(ert-deftest nelix-manifest-test-environment-dsl-v1-validates-package-backend ()
+  "Package row backend options share the stable backend set."
+  (let ((err (should-error
+              (eval '(nelix-environment
+                      (name "bad-package-backend")
+                      (package magit :backend imaginary-backend)))
+              :type 'anvil-pkg-error)))
+    (should (string-match-p "unsupported backend imaginary-backend"
                             (cadr err)))))
 
 (ert-deftest nelix-manifest-test-environment-dsl-v1-loads-imported-package-vars ()

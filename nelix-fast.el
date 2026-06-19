@@ -52,8 +52,13 @@
 (defconst nelix-fast--environment-form-names
   '("name" "profile" "nix-channel" "imports" "backend-policy"
     "emacs-packages" "linux-packages" "debian-tools"
-    "bootstrap-apt-packages" "pins")
+    "bootstrap-apt-packages" "pins" "package" "linux-package"
+    "version-pin" "remove-policy")
   "Stable DSL v1 subform names accepted by the fast validator.")
+
+(defconst nelix-fast--environment-repeated-form-names
+  '("package" "linux-package" "version-pin")
+  "DSL v1 subforms that may appear more than once.")
 
 (defun nelix-fast-aot-enabled-p ()
   "Return non-nil when the opt-in Nelix AOT engine is enabled."
@@ -485,6 +490,30 @@ prescient-1 from collapsing to the same target."
                                     caller value))))))
           values))
 
+(defun nelix-fast--package-row-name (caller args)
+  "Return a one-element string list for package row ARGS in CALLER."
+  (unless args
+    (signal 'anvil-pkg-error
+            (list (format "%s requires a package name" caller))))
+  (let ((name (car args)))
+    (unless (or (symbolp name) (stringp name))
+      (signal 'anvil-pkg-error
+              (list (format "%s package name must be string or symbol, got %S"
+                            caller name))))
+    (nelix-fast--dsl-string-list caller (list name))))
+
+(defun nelix-fast--package-row-pinned-p (args)
+  "Return non-nil when package row ARGS contain :pin t."
+  (let ((rest (cdr args))
+        pinned)
+    (while rest
+      (when (and (eq (car rest) :pin)
+                 (consp (cdr rest))
+                 (cadr rest))
+        (setq pinned t))
+      (setq rest (cddr rest)))
+    pinned))
+
 (defun nelix-fast--environment-forms (manifest-file)
   "Return top-level `nelix-environment' forms from MANIFEST-FILE."
   (let (environment-forms manifest-forms)
@@ -519,7 +548,9 @@ prescient-1 from collapsing to the same target."
           (signal 'anvil-pkg-error
                   (list (format "nelix-fast validate: unknown DSL form %S"
                                 (car form)))))
-        (when (member name seen)
+        (when (and (member name seen)
+                   (not (member name
+                                nelix-fast--environment-repeated-form-names)))
           (signal 'anvil-pkg-error
                   (list (format "nelix-fast validate: duplicate DSL form %S"
                                 (car form)))))
@@ -769,6 +800,38 @@ prescient-1 from collapsing to the same target."
                (nelix-fast--dsl-string-list
                 "nelix-environment pins"
                 (nelix-fast--dsl-value (cdr form) env))))
+       ((nelix-fast--symbol-name-p (car form) "package")
+        (setq emacs
+              (append emacs
+                      (nelix-fast--package-row-name
+                       "nelix-environment package"
+                       (cdr form))))
+        (when (nelix-fast--package-row-pinned-p (cdr form))
+          (setq pins
+                (append pins
+                        (nelix-fast--package-row-name
+                         "nelix-environment package"
+                         (cdr form))))))
+       ((nelix-fast--symbol-name-p (car form) "linux-package")
+        (setq linux
+              (append linux
+                      (nelix-fast--package-row-name
+                       "nelix-environment linux-package"
+                       (cdr form))))
+        (when (nelix-fast--package-row-pinned-p (cdr form))
+          (setq pins
+                (append pins
+                        (nelix-fast--package-row-name
+                         "nelix-environment linux-package"
+                         (cdr form))))))
+       ((nelix-fast--symbol-name-p (car form) "version-pin")
+        (setq pins
+              (append pins
+                      (nelix-fast--package-row-name
+                       "nelix-environment version-pin"
+                       (cdr form)))))
+       ((nelix-fast--symbol-name-p (car form) "remove-policy")
+        nil)
        (t
         (signal 'anvil-pkg-error
                 (list (format "nelix-fast validate: unknown DSL form %S"
@@ -857,7 +920,19 @@ prescient-1 from collapsing to the same target."
                                  (cdr form) texts)))
          ((nelix-fast--symbol-name-p (car form) "pins")
           (setq pins-count (nelix-fast--count-dsl-values
-                            (cdr form) texts)))))
+                            (cdr form) texts)))
+         ((nelix-fast--symbol-name-p (car form) "package")
+          (setq emacs-count (1+ emacs-count))
+          (when (nelix-fast--package-row-pinned-p (cdr form))
+            (setq pins-count (1+ pins-count))))
+         ((nelix-fast--symbol-name-p (car form) "linux-package")
+          (setq linux-count (1+ linux-count))
+          (when (nelix-fast--package-row-pinned-p (cdr form))
+            (setq pins-count (1+ pins-count))))
+         ((nelix-fast--symbol-name-p (car form) "version-pin")
+          (setq pins-count (1+ pins-count)))
+         ((nelix-fast--symbol-name-p (car form) "remove-policy")
+          nil)))
       (concat
        "{\"ok\":true"
        ",\"manifest\":" (nelix-fast--json-string

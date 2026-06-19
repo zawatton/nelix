@@ -372,6 +372,9 @@ run_json schema_manifest schema manifest-dsl-v1
 expect_json schema_manifest '"name":"manifest-dsl-v1"'
 expect_json schema_manifest '"forms":\['
 expect_json schema_manifest '"emacs-packages"'
+expect_json schema_manifest '"package"'
+expect_json schema_manifest '"linux-package"'
+expect_json schema_manifest '"version-pin"'
 expect_json schema_manifest '"form-map":\['
 expect_json schema_manifest '"form":"linux-packages"'
 expect_json schema_manifest '"manifest-key":"linux"'
@@ -379,14 +382,23 @@ expect_json schema_manifest '"backends":\['
 expect_json schema_manifest '"dnf"'
 expect_json schema_manifest '"nelix-native"'
 expect_json schema_manifest '"backend-policy":"backend-symbols-or-os-rows"'
+expect_json schema_manifest '"package-forms":\['
+expect_json schema_manifest '"package-options":\['
+expect_json schema_manifest '":backend"'
+expect_json schema_manifest '":platform"'
+expect_json schema_manifest '"package-row-semantics":"metadata-plus-target-list"'
+expect_json schema_manifest '"version-pin":"metadata-plus-pin-name"'
+expect_json schema_manifest '"remove-policy-values":\['
+expect_json schema_manifest '"confirm"'
 expect_json schema_manifest '"deferred-forms":\['
-expect_json schema_manifest '"remove-policy"'
+expect_json schema_manifest '"group"'
 expect_json schema_manifest '"platform"'
-expect_json schema_manifest '"version-pin"'
 expect_json schema_manifest '"forbidden-forms":\['
 expect_json schema_manifest '"private-repo"'
 expect_json schema_manifest '"secret"'
-expect_json schema_manifest '"remove-policy":"cli-confirmation"'
+expect_json schema_manifest '"remove-policy":"manifest-declares-cli-still-confirms"'
+expect_json schema_manifest '"classification":"package-options-group-feature"'
+expect_json schema_manifest '"platform-conditions":"package-option-platform-metadata"'
 expect_json schema_manifest '"private-data":"forbidden"'
 
 run_json schema_transaction schema transaction-v1
@@ -445,15 +457,18 @@ cat >"$dsl_manifest" <<'EOF'
  (emacs-packages nelix-installed-cli-emacs-packages)
  (linux-packages nelix-installed-cli-linux-packages)
  (bootstrap-apt-packages build-essential devscripts)
- (pins ripgrep))
+ (package vertico :backend elpa :pin t :group editor :feature completion)
+ (linux-package jq :backend nix :pin t :platform gnu/linux)
+ (version-pin fd "10.2.0")
+ (remove-policy confirm))
 EOF
 run_json dsl_validate validate "$dsl_manifest"
 expect_json dsl_validate '"ok":true'
 expect_json dsl_validate '"name":"installed-cli-dsl-gate"'
 expect_json dsl_validate '"profile":"default"'
-expect_json dsl_validate '"emacs":1'
-expect_json dsl_validate '"linux":2'
-expect_json dsl_validate '"pins":1'
+expect_json dsl_validate '"emacs":2'
+expect_json dsl_validate '"linux":3'
+expect_json dsl_validate '"pins":3'
 
 run_json dsl_plan plan "$dsl_manifest" --dry-run
 expect_json dsl_plan '"status":"planned"'
