@@ -995,8 +995,10 @@ Native install creates additive profile generations: an install replaces
 the same package name when present, otherwise it keeps prior entries and
 appends the new one.  Registry =:dependencies= are installed first so the
 final generation contains both dependency entries and the requested package.
-Native lock files include dependency closure rows, and locked apply replays
-those rows without consulting the current mutable registry.
+Native lock files include dependency closure rows, recipe source metadata,
+recipe install metadata, and source hashes.  Locked apply replays those rows
+without consulting the current mutable registry, so drifted registry recipes
+cannot silently change a locked native apply.
 It also materializes =active/profile= as a Nix/Guix-like profile tree:
 POSIX systems use symlinks in =auto= mode when available, while
 Windows profile systems use copied files.
@@ -1178,6 +1180,9 @@ The next concrete deliverables should be:
     activates its profile, and executes the unpacked runtime binary.
     Failed hash verification is covered by the same CLI gate: a bad recipe
     must not create a profile generation or expose a native store entry.
+    The native lock path is also gated: the lock JSON and S-expression lockfile
+    must retain dependency closure rows, =:recipe-source=, =:recipe-install=,
+    =:recipe-dependencies=, and the source hashes needed for locked replay.
 
 =nelix-apply= can now review native backend changes with =--dry-run= before
 mutating native store profiles.  Broader real fetch/build recipe coverage is

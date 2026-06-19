@@ -314,10 +314,34 @@ test -f "$native_lock_manifest.nelix-lock" || {
   exit 1
 }
 expect_json native_lock '"schema":"nelix-lock"'
+expect_json native_lock '"backend":"nelix-native"'
+expect_json native_lock '"source":"registry"'
 expect_json native_lock '"name":"fixture-app"'
 expect_json native_lock '"name":"fixture-dep"'
+expect_json native_lock '"recipe-version":"1.0.0"'
+expect_json native_lock '"recipe-source":\{'
+expect_json native_lock '"recipe-install":\{'
+expect_json native_lock "\"sha256\":\"$sha256_app\""
+expect_json native_lock "\"sha256\":\"$sha256_dep\""
+expect_json native_lock '"recipe-dependencies":\["fixture-dep"\]'
 grep -q ':recipe-dependencies' "$native_lock_manifest.nelix-lock" || {
   echo "nelix native CLI gate: native lock omitted recipe dependencies" >&2
+  exit 1
+}
+grep -q ':recipe-source' "$native_lock_manifest.nelix-lock" || {
+  echo "nelix native CLI gate: native lock omitted recipe source metadata" >&2
+  exit 1
+}
+grep -q ':recipe-install' "$native_lock_manifest.nelix-lock" || {
+  echo "nelix native CLI gate: native lock omitted recipe install metadata" >&2
+  exit 1
+}
+grep -q "$sha256_app" "$native_lock_manifest.nelix-lock" || {
+  echo "nelix native CLI gate: native lock omitted app source hash" >&2
+  exit 1
+}
+grep -q "$sha256_dep" "$native_lock_manifest.nelix-lock" || {
+  echo "nelix native CLI gate: native lock omitted dependency source hash" >&2
   exit 1
 }
 
