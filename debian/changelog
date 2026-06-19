@@ -8,6 +8,7 @@ nelix (0.1.0-5) unstable; urgency=medium
     version preflight explicitly.
   * Add a source-tree init migration load-only gate.
   * Add a combined source-tree real-user gate.
+  * Add a broader source-tree operational gate.
 
  -- zawatton <zawatton@example.invalid>  Sat, 20 Jun 2026 01:51:36 +0900
 

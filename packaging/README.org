@@ -276,6 +276,16 @@ source tree:
 make verify-user-source-gate
 #+end_src
 
+When changing the source tree before a Debian reinstall,
+=verify-source-operational-gate= is the broader operational gate.  It runs the
+real user manifest and init-load checks above, then also verifies the lockfile
+schema/migration contract, NeLisp lock/plan/apply transaction and recovery
+path, and the native store MVP from the source tree:
+
+#+begin_src shell
+make verify-source-operational-gate
+#+end_src
+
 =verify-installed-user-manifest-runtime= runs the same personal manifest
 runtime gate through the installed Debian package by setting =NELIX_BIN= to
 =/usr/bin/nelix= and =NELIX_LISPDIR= to the installed ELPA source directory.
