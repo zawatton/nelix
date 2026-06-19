@@ -220,8 +220,10 @@ read-only commands and fails required mode when any command exceeds
 to 0 to disable the timing threshold during local diagnosis.  It records the
 AOT cache target count too; set =NELIX_USER_MANIFEST_MIN_TARGETS= when the
 gate must prove a large real manifest such as the current 200-package
-environment.  It prints the =audit= missing/extra candidates and
-=apply --dry-run= remove candidates, and can enforce local safety thresholds
+environment.  It prints the top-level =list= count, =audit=, =plan=,
+=apply --dry-run=, and =upgrade-plan= result counts, the =audit= missing/extra
+candidates, and =apply --dry-run= remove candidates.  It can enforce local
+safety thresholds
 with =NELIX_USER_MANIFEST_MAX_MISSING=N=,
 =NELIX_USER_MANIFEST_MAX_EXTRA=N=, and
 =NELIX_USER_MANIFEST_MAX_REMOVE=N=.  The verifier also supports

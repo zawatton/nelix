@@ -188,6 +188,40 @@ json_array_names() {
     -- "$file" "$key"
 }
 
+json_top_level_count() {
+  file="$1"
+  emacs -Q --batch \
+    --eval '(require (quote json))' \
+    --eval '(let* ((json-object-type (quote alist))
+                   (json-array-type (quote list))
+                   (json-key-type (quote string))
+                   (_ (when (equal (car command-line-args-left) "--")
+                        (pop command-line-args-left)))
+                   (file (pop command-line-args-left))
+                   (obj (json-read-file file)))
+              (princ (length (if (vectorp obj) (append obj nil) obj))))' \
+    -- "$file"
+}
+
+report_top_level_count() {
+  label="$1"
+  file="$2"
+  count="$(json_top_level_count "$file")" || return 1
+  printf 'nelix user manifest %s-count: %s\n' "$label" "$count" >&2
+}
+
+report_json_counts() {
+  label="$1"
+  file="$2"
+  shift 2
+  printf 'nelix user manifest %s-counts:' "$label" >&2
+  for key in "$@"; do
+    count="$(json_array_count "$file" "$key")" || return 1
+    printf ' %s=%s' "$key" "$count" >&2
+  done
+  printf '\n' >&2
+}
+
 check_profile_diff_candidates() {
   file="$1"
   key="$2"
@@ -340,6 +374,7 @@ run_nelisp_aot_readonly() {
     return 1
   fi
   expect_json_fragment list "$nelisp_tmp/list.json" '[' || return 1
+  report_top_level_count list "$nelisp_tmp/list.json" || return 1
   if ! run_nelix_with_timeout --json list \
     >"$nelisp_tmp/list-emacs.json" \
     2>"$nelisp_tmp/list-emacs.err"; then
@@ -366,6 +401,7 @@ run_nelisp_aot_readonly() {
   fi
   compare_runtime_json audit "$nelisp_tmp/audit-emacs.json" "$nelisp_tmp/audit.json" \
     missing extra || return 1
+  report_json_counts audit "$nelisp_tmp/audit.json" present missing extra || return 1
   check_profile_diff_candidates "$nelisp_tmp/audit.json" missing "$nelisp_max_missing" || return 1
   check_profile_diff_candidates "$nelisp_tmp/audit.json" extra "$nelisp_max_extra" || return 1
 
@@ -386,6 +422,8 @@ run_nelisp_aot_readonly() {
     return 1
   fi
   compare_runtime_json plan "$nelisp_tmp/plan-emacs.json" "$nelisp_tmp/plan.json" \
+    install remove keep protected commands || return 1
+  report_json_counts plan "$nelisp_tmp/plan.json" \
     install remove keep protected commands || return 1
 
   if ! run_nelix_timed apply-dry-run "$nelisp_tmp/apply-dry-run.json" "$nelisp_tmp/apply-dry-run.err" \
@@ -408,6 +446,8 @@ run_nelisp_aot_readonly() {
   compare_runtime_json apply-dry-run \
     "$nelisp_tmp/apply-dry-run-emacs.json" \
     "$nelisp_tmp/apply-dry-run.json" \
+    install remove keep protected commands || return 1
+  report_json_counts apply-dry-run "$nelisp_tmp/apply-dry-run.json" \
     install remove keep protected commands || return 1
   compare_runtime_json plan-apply-dry-run \
     "$nelisp_tmp/plan.json" \
@@ -434,6 +474,8 @@ run_nelisp_aot_readonly() {
   compare_runtime_json upgrade-plan \
     "$nelisp_tmp/upgrade-plan-emacs.json" \
     "$nelisp_tmp/upgrade-plan.json" \
+    upgrade pinned missing || return 1
+  report_json_counts upgrade-plan "$nelisp_tmp/upgrade-plan.json" \
     upgrade pinned missing || return 1
 
   if ! run_nelix_timed lock-check "$nelisp_tmp/lock-check.json" "$nelisp_tmp/lock-check.err" \

@@ -243,11 +243,16 @@ Result:
 
 #+begin_example
 target-count=203
+list-count=203
 list: Emacs/NeLisp JSON compare ok
+audit-counts: present=203 missing=0 extra=0
 audit: missing=0 extra=0, Emacs/NeLisp JSON compare ok
+plan-counts: install=0 remove=0 keep=203 protected=0 commands=0
 plan --dry-run: Emacs/NeLisp JSON compare ok
+apply-dry-run-counts: install=0 remove=0 keep=203 protected=0 commands=0
 apply --dry-run: remove=0 max=5, Emacs/NeLisp JSON compare ok
 plan/apply --dry-run: action-set compare ok
+upgrade-plan-counts: upgrade=203 pinned=0 missing=0
 upgrade-plan: Emacs/NeLisp JSON compare ok
 lock-check: ok
 locked apply --dry-run: ok
