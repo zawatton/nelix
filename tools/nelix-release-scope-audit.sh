@@ -271,6 +271,10 @@ require_autopkgtest_gate_strength() {
   require_contains Makefile \
     "grep -Fq 'packaged-rg-ok --nelix-gate'"
   require_contains Makefile \
+    "grep -Fq 'native install fixture-archive --profile archive'"
+  require_contains Makefile \
+    "grep -Fq 'fixture-archive-ok unpack'"
+  require_contains Makefile \
     "grep -Fxq './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/registry/packages/system/ripgrep.el'"
   require_contains Makefile \
     "grep -Fxq './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/registry/packages/system/fd.el'"
@@ -298,6 +302,10 @@ require_autopkgtest_gate_strength() {
     "run_json_packaged packaged_install native install ripgrep"
   require_contains packaging/verify-nelix-native-cli-gate.sh \
     "packaged-rg-ok --nelix-gate"
+  require_contains packaging/verify-nelix-native-cli-gate.sh \
+    "native install fixture-archive --profile archive"
+  require_contains packaging/verify-nelix-native-cli-gate.sh \
+    "fixture-archive-ok unpack"
   require_contains packaging/verify-nelix-native-cli-gate.sh \
     'registry index "$data/nelix/registry" "$generated_index"'
   require_contains packaging/verify-nelix-native-cli-gate.sh \
@@ -482,8 +490,10 @@ require_publication_gate_docs() {
   require_contains packaging/README.org 'public tree and public URL smoke also inspect the downloaded =.deb= payload'
   require_contains packaging/apt/verify-public-tree.sh 'verify_deb_payload "$tree/$deb_path"'
   require_contains packaging/apt/verify-public-tree.sh 'packaged_install native install ripgrep'
+  require_contains packaging/apt/verify-public-tree.sh 'native install fixture-archive --profile archive'
   require_contains packaging/apt/public-url-smoke.sh 'verify_deb_payload "$downloaded"'
   require_contains packaging/apt/public-url-smoke.sh 'packaged_install native install ripgrep'
+  require_contains packaging/apt/public-url-smoke.sh 'native install fixture-archive --profile archive'
   require_contains packaging/fedora/verify-public-tree.sh 'verify_emacs_rpm_payload'
   require_contains packaging/fedora/verify-public-tree.sh 'registry/packages/system/$recipe.el'
 
@@ -648,6 +658,10 @@ require_native_store_gate_docs() {
     'rollback activation output mismatch'
   require_contains packaging/verify-nelix-native-cli-gate.sh \
     'native install fixture-app --profile default --system x86_64-linux'
+  require_contains packaging/verify-nelix-native-cli-gate.sh \
+    'native install fixture-archive --profile archive --system x86_64-linux'
+  require_contains packaging/verify-nelix-native-cli-gate.sh \
+    'archive activation output mismatch'
   require_contains packaging/verify-nelix-native-cli-gate.sh \
     'dependency activation output mismatch'
   require_contains packaging/verify-nelix-native-cli-gate.sh \

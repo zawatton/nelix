@@ -28,6 +28,12 @@ verify_deb_payload() {
       echo "public APT smoke payload native CLI gate is missing packaged ripgrep install smoke" >&2
       exit 1
     }
+  dpkg-deb --fsys-tarfile "$deb" |
+    tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-native-cli-gate.sh |
+    grep -Fq 'native install fixture-archive --profile archive' || {
+      echo "public APT smoke payload native CLI gate is missing archive install smoke" >&2
+      exit 1
+    }
 }
 
 url=${url%/}

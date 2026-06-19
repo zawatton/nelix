@@ -460,7 +460,8 @@ to dry-run.  It stages files only when =--stage= is passed explicitly.
   data-only forms, so unsupported Elisp forms are rejected without execution.
 - Native archive install: =nelix-native= unpack and substitute materialization
   handle portable zip payloads with =:strip-components=, covering
-  top-directory release assets common on Windows/macOS.
+  top-directory release assets common on Windows/macOS.  The native CLI gate
+  now also installs and activates a hash-verified local tar archive recipe.
 - Native GitHub release mirrors: =github-release= sources accept =:base-url=,
   so recipes can use a GitHub-compatible mirror or future self-hosted release
   server without changing the =:repo= / =:tag= / =:asset= shape.

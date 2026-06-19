@@ -35,6 +35,18 @@ verify_deb_payload() {
       echo "public APT payload native CLI gate is missing packaged rg execution smoke" >&2
       exit 1
     }
+  dpkg-deb --fsys-tarfile "$deb" |
+    tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-native-cli-gate.sh |
+    grep -Fq 'native install fixture-archive --profile archive' || {
+      echo "public APT payload native CLI gate is missing archive install smoke" >&2
+      exit 1
+    }
+  dpkg-deb --fsys-tarfile "$deb" |
+    tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-native-cli-gate.sh |
+    grep -Fq 'fixture-archive-ok unpack' || {
+      echo "public APT payload native CLI gate is missing archive execution smoke" >&2
+      exit 1
+    }
 }
 
 base_url=${base_url%/}

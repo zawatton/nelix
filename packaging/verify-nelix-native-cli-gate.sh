@@ -21,6 +21,11 @@ if ! command -v sha256sum >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v tar >/dev/null 2>&1; then
+  echo "nelix native CLI gate: tar is required" >&2
+  exit 1
+fi
+
 tmp="$(mktemp -d)"
 cleanup() {
   rm -rf "$tmp"
@@ -92,6 +97,20 @@ printf '\n'
 EOF
 chmod +x "$payload_app"
 
+archive_root="$source_dir/archive-root"
+archive="$source_dir/fixture-archive.tar"
+mkdir -p "$archive_root/fixture-archive-1.0.0/bin"
+cat >"$archive_root/fixture-archive-1.0.0/bin/fixture-archive" <<'EOF'
+#!/bin/sh
+printf 'fixture-archive-ok'
+if [ "$#" -gt 0 ]; then
+  printf ' %s' "$@"
+fi
+printf '\n'
+EOF
+chmod +x "$archive_root/fixture-archive-1.0.0/bin/fixture-archive"
+tar -cf "$archive" -C "$archive_root" fixture-archive-1.0.0
+
 cat >"$packaged_bin/rg" <<'EOF'
 #!/bin/sh
 printf 'packaged-rg-ok'
@@ -107,6 +126,7 @@ sha256_extra="sha256-$(sha256sum "$payload_extra" | awk '{print $1}')"
 sha256_dep="sha256-$(sha256sum "$payload_dep" | awk '{print $1}')"
 sha256_dep_drift="sha256-$(sha256sum "$payload_dep_drift" | awk '{print $1}')"
 sha256_app="sha256-$(sha256sum "$payload_app" | awk '{print $1}')"
+sha256_archive="sha256-$(sha256sum "$archive" | awk '{print $1}')"
 
 quote_elisp_string() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/^/"/; s/$/"/'
@@ -175,6 +195,24 @@ cat >"$registry/fixture-app.el" <<EOF
              :sha256 "$sha256_app")
     :install (:type copy
               :bin ("fixture-app")))))
+EOF
+
+cat >"$registry/fixture-archive.el" <<EOF
+(require 'nelix-registry)
+(nelix-package
+ :name "fixture-archive"
+ :version "1.0.0"
+ :class 'system-tool
+ :description "Hash-verified archive native CLI gate fixture"
+ :systems
+ '((x86_64-linux
+    :source (:type url
+             :url $(quote_elisp_string "$archive")
+             :sha256 "$sha256_archive"
+             :archive-format tar)
+    :install (:type unpack
+              :strip-components 1
+              :bin ("bin/fixture-archive")))))
 EOF
 
 nelix_lisp_env=()
@@ -272,8 +310,9 @@ grep -q ':recipe-dependencies' "$native_lock_manifest.nelix-lock" || {
 
 run_json registry_list registry list --system x86_64-linux
 expect_json registry_list '"operation":"registry-list"'
-expect_json registry_list '"count":4'
+expect_json registry_list '"count":5'
 expect_json registry_list '"name":"fixture-app"'
+expect_json registry_list '"name":"fixture-archive"'
 expect_json registry_list '"name":"fixture-dep"'
 expect_json registry_list '"name":"fixture-extra"'
 expect_json registry_list '"name":"fixture-tool"'
@@ -312,7 +351,7 @@ test "$packaged_output" = "packaged-rg-ok --nelix-gate" || {
 generated_index="$tmp/generated-registry-index.el"
 run_json registry_index registry index "$data/nelix/registry" "$generated_index"
 expect_json registry_index '"operation":"registry-index"'
-expect_json registry_index '"count":4'
+expect_json registry_index '"count":5'
 expect_json registry_index '"output":'
 test -f "$generated_index" || {
   echo "nelix native CLI gate: generated registry index missing: $generated_index" >&2
@@ -324,6 +363,10 @@ grep -q '(nelix-registry-index' "$generated_index" || {
 }
 grep -q ':path "packages/local/fixture-tool.el"' "$generated_index" || {
   echo "nelix native CLI gate: generated registry index omitted fixture-tool path" >&2
+  exit 1
+}
+grep -q ':path "packages/local/fixture-archive.el"' "$generated_index" || {
+  echo "nelix native CLI gate: generated registry index omitted fixture-archive path" >&2
   exit 1
 }
 
@@ -350,6 +393,38 @@ expect_json native_dry_run '"name":"fixture-app"'
 expect_json native_dry_run '"name":"fixture-dep"'
 test ! -e "$profile_root/lockgate/generations/1/profile.el" || {
   echo "nelix native CLI gate: native apply --dry-run mutated lockgate profile" >&2
+  exit 1
+}
+
+run_json install_archive native install fixture-archive --profile archive --system x86_64-linux
+expect_json install_archive '"operation":"native-install"'
+expect_json install_archive '"status":"ok"'
+expect_json install_archive '"name":"fixture-archive"'
+expect_json install_archive '"runtime-bins":\["bin/fixture-archive"\]'
+
+archive_store_path="$data/nelix/store/$sha256_archive-fixture-archive-1.0.0"
+test -x "$archive_store_path/bin/fixture-archive" || {
+  echo "nelix native CLI gate: archive runtime file missing: $archive_store_path/bin/fixture-archive" >&2
+  exit 1
+}
+test -f "$archive_store_path/.nelix/store-entry.el" || {
+  echo "nelix native CLI gate: archive store metadata missing: $archive_store_path/.nelix/store-entry.el" >&2
+  exit 1
+}
+
+run_json activate_archive native activate --profile archive
+expect_json activate_archive '"operation":"native-activate"'
+expect_json activate_archive '"generation":1'
+expect_json activate_archive '"command":"fixture-archive"'
+
+archive_shim="$profile_root/archive/active/bin/fixture-archive"
+test -x "$archive_shim" || {
+  echo "nelix native CLI gate: archive activation shim missing: $archive_shim" >&2
+  exit 1
+}
+archive_output="$("$archive_shim" unpack)"
+test "$archive_output" = "fixture-archive-ok unpack" || {
+  echo "nelix native CLI gate: archive activation output mismatch: $archive_output" >&2
   exit 1
 }
 

@@ -1174,6 +1174,8 @@ The next concrete deliverables should be:
     coverage.
     The native CLI gate installs the packaged =ripgrep= recipe against a fake
     =rg= command, activates the profile, and executes the generated shim.
+    It also installs a hash-verified local tar archive recipe through the CLI,
+    activates its profile, and executes the unpacked runtime binary.
 
 =nelix-apply= can now review native backend changes with =--dry-run= before
 mutating native store profiles.  Broader real fetch/build recipe coverage is

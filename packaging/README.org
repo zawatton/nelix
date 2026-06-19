@@ -229,7 +229,8 @@ load path, packaged CLI presence, CLI =--json version= output, and the
 installed CLI gate.  That gate covers the packaged registry root through
 =nelix registry list --system x86_64-linux= for the built-in system command
 recipes, then installs and activates the packaged =ripgrep= native recipe
-against a fake =rg= command.  It also covers
+against a fake =rg= command.  The native CLI gate also installs and activates a
+hash-verified local tar archive recipe through the same CLI path.  It also covers
 =validate=, =lock=, =plan=, and =apply --dry-run= with a fake Nix executable,
 and verifies the native store CLI plus the =nelix --runtime nelisp= AOT cache
 shell lane with isolated fake registry/profile/Nix/NeLisp fixtures.  The AOT
