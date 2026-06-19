@@ -19,6 +19,9 @@
 (defvar nelix-manifest-test-import-loaded nil
   "Non-nil when a manifest import fixture has been loaded.")
 
+(defvar nelix-manifest-test-import-count nil
+  "Number of times a manifest import counter fixture has been loaded.")
+
 (defconst nelix-manifest-test--directory
   (file-name-directory (or load-file-name buffer-file-name default-directory))
   "Directory containing nelix-manifest-test.el.")

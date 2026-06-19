@@ -315,6 +315,14 @@ It runs =/usr/bin/nelix= with a fake =nix= executable and verifies:
 The source-tree NeLisp gate also runs =apply MANIFEST --locked --dry-run= so
 locked mode is checked without loading the lock file as executable Elisp.
 
+=make smoke-nelix-lock-schema= is the fast source-tree contract gate for
+lockfile schema drift.  It runs =bin/nelix= with a fake =nix= backend and
+checks that =docs/schema/nelix-lock-v2.schema.json=, =nelix schema lock-v2=,
+=nelix schema all=, =nelix lock= JSON output, =lock validate=, =lock diff=,
+and =lock migrate= agree.  It also verifies that read-only lock commands do
+not rewrite =MANIFEST.nelix-lock=, that v1 legacy locks migrate to v2, and
+that future schema versions are rejected.
+
 =make deb-release-gate= now runs =deb-local-gate=, installs the freshly built
 =.deb= with =install-built-deb=, then runs =verify-installed-debian=,
 =verify-installed-cli-gate=, and =verify-user-environment=.  This ordering is
