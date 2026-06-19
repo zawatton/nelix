@@ -100,6 +100,24 @@
      (current-buffer))
     (insert "\n")))
 
+(ert-deftest nelix-cli-test-fast-json-string-list-preserves-order-and-escaping ()
+  "The direct NeLisp JSON list writer keeps order without quadratic concat."
+  (let ((values nil))
+    (dotimes (i 200)
+      (push (format "pkg%03d" i) values))
+    (setq values (nreverse values))
+    (should (equal (nelix-fast--json-string-list
+                    '("magit" "needs\"quote" "line\nbreak"))
+                   "[\"magit\",\"needs\\\"quote\",\"line\\nbreak\"]"))
+    (let ((json (nelix-fast--json-string-list values)))
+      (should (string-prefix-p "[\"pkg000\",\"pkg001\"" json))
+      (should (string-suffix-p "\"pkg199\"]" json))
+      (should (= 200
+                 (length
+                  (split-string
+                   (substring json 1 (1- (length json)))
+                   "," t)))))))
+
 (ert-deftest nelix-cli-test-parse-strips-emacs-separator-and-json ()
   (should (equal (nelix-cli-parse-args
                   '("--" "--json" "audit" "manifest.el"))

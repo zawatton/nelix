@@ -149,6 +149,16 @@
       (cons value out)
     out))
 
+(defun nelix-fast--push-unique-set (value out seen)
+  "Return OUT with VALUE consed when VALUE is a new string in SEEN."
+  (if (and (stringp value)
+           (> (length value) 0)
+           (not (gethash value seen)))
+      (progn
+        (puthash value t seen)
+        (cons value out))
+    out))
+
 (defun nelix-fast-target-candidates (target)
   "Return profile-name candidates that may satisfy TARGET."
   (let* ((display (nelix-fast--target-name target))
@@ -165,6 +175,23 @@
     (setq out (nelix-fast--push-unique target-tail out))
     (setq out (nelix-fast--push-unique pname out))
     (nreverse out)))
+
+(defun nelix-fast--target-row (target)
+  "Return a compact fast row for TARGET."
+  (let ((name (nelix-fast--target-name target)))
+    (cons name (nelix-fast-target-candidates target))))
+
+(defun nelix-fast--row-name (row)
+  "Return fast ROW's display name."
+  (if (and (consp row) (stringp (car row)))
+      (car row)
+    (plist-get row :name)))
+
+(defun nelix-fast--row-candidates (row)
+  "Return fast ROW's profile-name candidates."
+  (if (and (consp row) (stringp (car row)))
+      (cdr row)
+    (plist-get row :candidates)))
 
 (defun nelix-fast--parse-name-lines (text)
   "Return non-empty newline-separated names from TEXT."
@@ -267,10 +294,7 @@ prescient-1 from collapsing to the same target."
   (let ((targets (nelix-manifest-targets manifest 'nix))
         rows)
     (dolist (target targets (nreverse rows))
-      (push (list :target target
-                  :name (nelix-fast--target-name target)
-                  :candidates (nelix-fast-target-candidates target))
-            rows))))
+      (push (nelix-fast--target-row target) rows))))
 
 (defun nelix-fast-load-manifest (manifest-file)
   "Load MANIFEST-FILE and compile it into the fast manifest shape."
@@ -281,8 +305,8 @@ prescient-1 from collapsing to the same target."
          (pins (plist-get manifest :pins))
          (pins-set (nelix-fast--name-set pins)))
     (dolist (row rows)
-      (push (plist-get row :name) desired-names)
-      (dolist (candidate (plist-get row :candidates))
+      (push (nelix-fast--row-name row) desired-names)
+      (dolist (candidate (nelix-fast--row-candidates row))
         (puthash candidate t desired-set)
         (puthash (nelix-fast--strip-duplicate-suffix candidate)
                  t
@@ -980,8 +1004,8 @@ prescient-1 from collapsing to the same target."
         (next-id 1)
         pair)
     (dolist (row (plist-get fast :targets))
-      (dolist (name (cons (plist-get row :name)
-                          (plist-get row :candidates)))
+      (dolist (name (cons (nelix-fast--row-name row)
+                          (nelix-fast--row-candidates row)))
         (when (and (stringp name) (> (length name) 0))
           (setq pair (nelix-fast-aot--name-id-get name table next-id))
           (setq next-id (cdr pair)))))
@@ -1028,8 +1052,8 @@ without importing the manifest in standalone NeLisp."
     (dolist (row (plist-get fast :targets))
       (push (apply #'nelix-fast--aot-line
                    "target"
-                   (plist-get row :name)
-                   (plist-get row :candidates))
+                   (nelix-fast--row-name row)
+                   (nelix-fast--row-candidates row))
             chunks))
     (dolist (pin (plist-get fast :pins-order))
       (push (nelix-fast--aot-line "pin" pin) chunks))
@@ -1042,11 +1066,11 @@ without importing the manifest in standalone NeLisp."
       (push (apply #'nelix-fast--aot-line
                    "target-id"
                    (number-to-string
-                    (gethash (plist-get row :name) name-ids))
+                    (gethash (nelix-fast--row-name row) name-ids))
                    (mapcar (lambda (candidate)
                              (number-to-string
                               (gethash candidate name-ids)))
-                           (plist-get row :candidates)))
+                           (nelix-fast--row-candidates row)))
             chunks))
     (dolist (pin (plist-get fast :pins-order))
       (push (nelix-fast--aot-line "pin-id"
@@ -1206,8 +1230,8 @@ When INSTALLED-NAMES is nil, read the current profile via
     (dolist (row (plist-get fast :targets))
       (push (apply #'nelix-fast--aot-line
                    "target"
-                   (plist-get row :name)
-                   (plist-get row :candidates))
+                   (nelix-fast--row-name row)
+                   (nelix-fast--row-candidates row))
             chunks))
     (dolist (pin (plist-get fast :pins-order))
       (push (nelix-fast--aot-line "pin" pin) chunks))
@@ -1239,8 +1263,8 @@ artifact replaces this Elisp bridge.")
     (dolist (row (plist-get fast :targets))
       (push (apply #'nelix-fast--aot-line
                    "target"
-                   (plist-get row :name)
-                   (plist-get row :candidates))
+                   (nelix-fast--row-name row)
+                   (nelix-fast--row-candidates row))
             chunks))
     (dolist (pin (plist-get fast :pins-order))
       (push (nelix-fast--aot-line "pin" pin) chunks))
@@ -1325,15 +1349,16 @@ commands continue to use the full plist/report encoder."
 
 (defun nelix-fast--json-string-list (values)
   "Return VALUES encoded as a JSON string array."
-  (let ((out "[")
+  (let ((parts (list "["))
         (first t))
     (while values
       (unless first
-        (setq out (concat out ",")))
-      (setq out (concat out (nelix-fast--json-string (car values))))
+        (push "," parts))
+      (push (nelix-fast--json-string (car values)) parts)
       (setq first nil)
       (setq values (cdr values)))
-    (concat out "]")))
+    (push "]" parts)
+    (apply #'concat (nreverse parts))))
 
 (defun nelix-fast--json-skipped-object (pairs)
   "Return PAIRS encoded as a JSON object with string values."
@@ -1435,21 +1460,26 @@ commands continue to use the full plist/report encoder."
          (normalized-installed-map
           (nelix-fast--normalized-name-map installed))
          (desired-set (plist-get fast :desired-set))
+         (present-set (make-hash-table :test 'equal))
+         (missing-set (make-hash-table :test 'equal))
+         (extra-set (make-hash-table :test 'equal))
          present missing extra)
     (dolist (row (plist-get fast :targets))
       (let ((actual (nelix-fast--find-name
-                     (plist-get row :candidates)
+                     (nelix-fast--row-candidates row)
                      installed-map
                      normalized-installed-map)))
         (if actual
-            (setq present (nelix-fast--push-unique actual present))
+            (setq present
+                  (nelix-fast--push-unique-set actual present present-set))
           (setq missing
-                (nelix-fast--push-unique (plist-get row :name) missing)))))
+                (nelix-fast--push-unique-set
+                 (nelix-fast--row-name row) missing missing-set)))))
     (dolist (name installed)
       (unless (or (gethash name desired-set)
                   (gethash (nelix-fast--strip-duplicate-suffix name)
                            desired-set))
-        (setq extra (nelix-fast--push-unique name extra))))
+        (setq extra (nelix-fast--push-unique-set name extra extra-set))))
     (setq present (nreverse present)
           missing (nreverse missing)
           extra (nreverse extra))
@@ -1543,20 +1573,26 @@ commands continue to use the full plist/report encoder."
          (normalized-installed-map
           (nelix-fast--normalized-name-map installed))
          (pin-set (plist-get fast :pins-set))
+         (upgrade-set (make-hash-table :test 'equal))
+         (pinned-set (make-hash-table :test 'equal))
+         (missing-set (make-hash-table :test 'equal))
          upgrade pinned missing)
     (dolist (row (plist-get fast :targets))
       (let ((actual (nelix-fast--find-name
-                     (plist-get row :candidates)
+                     (nelix-fast--row-candidates row)
                      installed-map
                      normalized-installed-map)))
         (if actual
             (if (or (gethash actual pin-set)
                     (gethash (nelix-fast--strip-duplicate-suffix actual)
                              pin-set))
-                (setq pinned (nelix-fast--push-unique actual pinned))
-              (setq upgrade (nelix-fast--push-unique actual upgrade)))
+                (setq pinned
+                      (nelix-fast--push-unique-set actual pinned pinned-set))
+              (setq upgrade
+                    (nelix-fast--push-unique-set actual upgrade upgrade-set)))
           (setq missing
-                (nelix-fast--push-unique (plist-get row :name) missing)))))
+                (nelix-fast--push-unique-set
+                 (nelix-fast--row-name row) missing missing-set)))))
     (setq upgrade (nreverse upgrade)
           pinned (nreverse pinned)
           missing (nreverse missing))
@@ -1594,21 +1630,26 @@ commands continue to use the full plist/report encoder."
          (normalized-installed-map
           (nelix-fast--normalized-name-map installed))
          (desired-set (plist-get fast :desired-set))
+         (present-set (make-hash-table :test 'equal))
+         (missing-set (make-hash-table :test 'equal))
+         (extra-set (make-hash-table :test 'equal))
          present missing extra)
     (dolist (row (plist-get fast :targets))
       (let ((actual (nelix-fast--find-name
-                     (plist-get row :candidates)
+                     (nelix-fast--row-candidates row)
                      installed-map
                      normalized-installed-map)))
         (if actual
-            (setq present (nelix-fast--push-unique actual present))
+            (setq present
+                  (nelix-fast--push-unique-set actual present present-set))
           (setq missing
-                (nelix-fast--push-unique (plist-get row :name) missing)))))
+                (nelix-fast--push-unique-set
+                 (nelix-fast--row-name row) missing missing-set)))))
     (dolist (name installed)
       (unless (or (gethash name desired-set)
                   (gethash (nelix-fast--strip-duplicate-suffix name)
                            desired-set))
-        (setq extra (nelix-fast--push-unique name extra))))
+        (setq extra (nelix-fast--push-unique-set name extra extra-set))))
     (setq present (nreverse present)
           missing (nreverse missing)
           extra (nreverse extra))
@@ -1657,20 +1698,26 @@ commands continue to use the full plist/report encoder."
          (normalized-installed-map
           (nelix-fast--normalized-name-map installed))
          (pin-set (plist-get fast :pins-set))
+         (upgrade-set (make-hash-table :test 'equal))
+         (pinned-set (make-hash-table :test 'equal))
+         (missing-set (make-hash-table :test 'equal))
          upgrade pinned missing)
     (dolist (row (plist-get fast :targets))
       (let ((actual (nelix-fast--find-name
-                     (plist-get row :candidates)
+                     (nelix-fast--row-candidates row)
                      installed-map
                      normalized-installed-map)))
         (if actual
             (if (or (gethash actual pin-set)
                     (gethash (nelix-fast--strip-duplicate-suffix actual)
                              pin-set))
-                (setq pinned (nelix-fast--push-unique actual pinned))
-              (setq upgrade (nelix-fast--push-unique actual upgrade)))
+                (setq pinned
+                      (nelix-fast--push-unique-set actual pinned pinned-set))
+              (setq upgrade
+                    (nelix-fast--push-unique-set actual upgrade upgrade-set)))
           (setq missing
-                (nelix-fast--push-unique (plist-get row :name) missing)))))
+                (nelix-fast--push-unique-set
+                 (nelix-fast--row-name row) missing missing-set)))))
     (setq upgrade (nreverse upgrade)
           pinned (nreverse pinned)
           missing (nreverse missing))
