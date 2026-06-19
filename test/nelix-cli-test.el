@@ -402,12 +402,30 @@
     (should (member "bootstrap-apt"
                     (nelix-cli-test--json-array-list
                      (alist-get 'manifest-keys manifest))))
+    (should (cl-find "linux-packages"
+                     (alist-get 'form-map manifest)
+                     :key (lambda (row) (alist-get 'form row))
+                     :test #'equal))
+    (should (equal "linux"
+                   (alist-get
+                    'manifest-key
+                    (cl-find "linux-packages"
+                             (alist-get 'form-map manifest)
+                             :key (lambda (row) (alist-get 'form row))
+                             :test #'equal))))
     (should (member "dnf"
                     (nelix-cli-test--json-array-list
                      (alist-get 'backends manifest))))
     (should (member "nelix-native"
                     (nelix-cli-test--json-array-list
                      (alist-get 'backends manifest))))
+    (should (member "remove-policy"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'deferred-forms manifest))))
+    (should (equal "cli-confirmation"
+                   (alist-get 'remove-policy manifest)))
+    (should (equal "forbidden"
+                   (alist-get 'private-data manifest)))
     (should (equal "nelix-lock" (alist-get 'schema lock)))
     (should (= 2 (alist-get 'schema-version lock)))
     (should (member "manifest-files"

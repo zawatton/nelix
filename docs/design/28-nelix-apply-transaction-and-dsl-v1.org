@@ -243,8 +243,9 @@ Rules:
 - the DSL must expand to =nelix-manifest= so existing lock/plan/apply code stays
   the single implementation path;
 - =nelix --json schema manifest-dsl-v1= must report schema
-  =nelix-environment=, schema version =1=, the stable DSL form list, and the
-  stable backend name list.
+  =nelix-environment=, schema version =1=, the stable DSL form list, the
+  form-to-manifest-key mapping, the stable backend name list, the deferred v2
+  candidate forms, and the v1 policies for removal review and private data.
 
 Scope decisions for the user-requested Nix/Guix-style surface:
 

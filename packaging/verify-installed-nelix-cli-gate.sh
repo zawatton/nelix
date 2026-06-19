@@ -254,9 +254,16 @@ run_json schema_manifest schema manifest-dsl-v1
 expect_json schema_manifest '"name":"manifest-dsl-v1"'
 expect_json schema_manifest '"forms":\['
 expect_json schema_manifest '"emacs-packages"'
+expect_json schema_manifest '"form-map":\['
+expect_json schema_manifest '"form":"linux-packages"'
+expect_json schema_manifest '"manifest-key":"linux"'
 expect_json schema_manifest '"backends":\['
 expect_json schema_manifest '"dnf"'
 expect_json schema_manifest '"nelix-native"'
+expect_json schema_manifest '"deferred-forms":\['
+expect_json schema_manifest '"remove-policy"'
+expect_json schema_manifest '"remove-policy":"cli-confirmation"'
+expect_json schema_manifest '"private-data":"forbidden"'
 
 run_json packaged_registry registry list --system x86_64-linux
 expect_json packaged_registry '"operation":"registry-list"'

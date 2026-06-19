@@ -54,9 +54,27 @@
     "emacs" "linux" "debian-tools" "bootstrap-apt" "pins")
   "Stable manifest keys produced by `nelix-environment' DSL v1.")
 
+(defconst nelix-environment-dsl-form-map
+  '(("name" . "name")
+    ("profile" . "profile")
+    ("nix-channel" . "nix-channel")
+    ("imports" . "imports")
+    ("backend-policy" . "backend-policy")
+    ("emacs-packages" . "emacs")
+    ("linux-packages" . "linux")
+    ("debian-tools" . "debian-tools")
+    ("bootstrap-apt-packages" . "bootstrap-apt")
+    ("pins" . "pins"))
+  "Stable mapping from Nelix environment DSL v1 forms to manifest keys.")
+
 (defconst nelix-environment-dsl-backends
   '(nelix-native nix apt dnf git elpa homebrew scoop winget)
   "Stable backend names accepted in `nelix-environment' backend-policy forms.")
+
+(defconst nelix-environment-dsl-deferred-forms
+  '("package" "linux-package" "remove-policy" "group" "feature"
+    "secret" "private-repo" "version-pin")
+  "Nix/Guix-style forms intentionally deferred beyond environment DSL v1.")
 
 (defconst nelix-lock-schema-required-json-keys
   '("schema" "schema-version" "version" "format" "lock"
@@ -94,7 +112,14 @@ When nil, records are written under the user's state directory at
         :entrypoint "nelix-environment"
         :forms (mapcar #'symbol-name nelix-environment-dsl-forms)
         :manifest-keys nelix-environment-dsl-manifest-keys
+        :form-map (mapcar (lambda (pair)
+                            (list :form (car pair)
+                                  :manifest-key (cdr pair)))
+                          nelix-environment-dsl-form-map)
         :backends (mapcar #'symbol-name nelix-environment-dsl-backends)
+        :deferred-forms nelix-environment-dsl-deferred-forms
+        :remove-policy "cli-confirmation"
+        :private-data "forbidden"
         :stable t))
 
 (defun nelix-schema--lock-v2 ()
