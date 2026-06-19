@@ -135,6 +135,84 @@ Record validation rejects schema v1 files missing the stable top-level,
 =:plan=, =:transaction=, =:rollback-plan=, or executed-row keys needed for
 post-failure diagnosis.
 
+** 2.1 Transaction state machine
+
+Transaction records have a deliberately small state machine:
+
+#+begin_example
+started -> running -> ok
+started -> running -> error
+started -> error
+#+end_example
+
+Stable status values:
+
+- =started=: the plan snapshot and before-generation metadata were written
+  before the first command row.
+- =running=: at least one command row has been attempted and every row in
+  =:executed= is known to have completed successfully.
+- =ok=: all command rows completed, after-generation metadata was captured if
+  available, and the apply result returned success.
+- =error=: a command row failed, rollback was either attempted or explicitly
+  unavailable, and the apply result returned failure.
+
+There is intentionally no =rolled-back= top-level status.  Rollback is a
+result attached to an =error= record because the requested convergence failed
+even when recovery succeeded.  The durable answer to "did recovery work?" is
+=:rollback (:attempted t :ok t :verified t ...)=.
+
+The public schema command exposes these values:
+
+#+begin_src sh
+nelix --json schema transaction-v1
+#+end_src
+
+The schema output includes =status-values=, =rollback-plan-unavailable-reasons=,
+and =rollback-result-keys=.  External tooling must treat unknown future values
+as incompatible until the schema version changes.
+
+** 2.2 Record write ordering
+
+The record write order is part of the safety contract:
+
+1. Validate manifest, imports, backend selection, remove confirmation, and
+   locked-mode drift before transaction begin.
+2. Capture =:before-generation= before the first mutating command.
+3. Write =started= with the full plan and empty =:executed=.
+4. After each successful command row, write =running= with the appended
+   executed row.
+5. On failure, compute/attempt rollback and write =error= with =:rollback= and
+   =:error=.
+6. On success, capture =:after-generation= and write =ok=.
+
+If the process crashes between a profile mutation and the next record write,
+the previous record remains the last confirmed safe point.  Recovery tooling
+must therefore prefer the captured =:before-generation= and the plan's command
+rows over guessing from current profile state alone.
+
+** 2.3 Manual recovery contract
+
+Automatic rollback is best-effort.  Operators must be able to recover from a
+partially failed or interrupted apply without re-running the same mutation:
+
+#+begin_src sh
+nelix transaction list --limit 10
+nelix --json transaction show APPLY-ID
+nelix rollback GENERATION
+#+end_src
+
+Manual recovery uses =:rollback-plan :generation= from the record when
+=:rollback-plan :available= is true.  When rollback is unavailable, the record
+must explain one of the stable reasons:
+
+- =transaction-disabled=
+- =rollback-disabled=
+- =before-generation-missing=
+
+The =rollback-result-keys= schema entry lists the stable keys a failed apply may
+write under =:rollback=.  =:verified t= is the only success proof; command exit
+alone is not enough.
+
 Failure signals =anvil-pkg-error= with:
 
 - human message including =rollback=ok= or =rollback=not-ok=;

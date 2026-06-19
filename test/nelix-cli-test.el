@@ -490,6 +490,23 @@
     (should (member "argv"
                     (nelix-cli-test--json-array-list
                      (alist-get 'rollback-plan-available-required transaction))))
+    (should (member "started"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'status-values transaction))))
+    (should (member "running"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'status-values transaction))))
+    (should (member "rollback-disabled"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'rollback-plan-unavailable-reasons
+                                transaction))))
+    (should (member "before-generation-missing"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'rollback-plan-unavailable-reasons
+                                transaction))))
+    (should (member "verified"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'rollback-result-keys transaction))))
     (should (member "action"
                     (nelix-cli-test--json-array-list
                      (alist-get 'executed-required transaction))))))
@@ -512,7 +529,10 @@
     (should (equal "ok" (alist-get 'status parsed)))
     (should (equal "transaction-v1" (alist-get 'name parsed)))
     (should (equal "nelix-apply-transaction" (alist-get 'schema parsed)))
-    (should (= 1 (alist-get 'schema-version parsed)))))
+    (should (= 1 (alist-get 'schema-version parsed)))
+    (should (member "error"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'status-values parsed))))))
 
 (ert-deftest nelix-cli-test-schema-lock-contract-matches-json-schema-file ()
   "The CLI lock schema contract matches the documented JSON schema."

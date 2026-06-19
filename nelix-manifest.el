@@ -127,6 +127,19 @@
   '(:operation :generation :argv)
   "Required rollback-plan keys when transaction rollback is available.")
 
+(defconst nelix-transaction-status-values
+  '("started" "running" "ok" "error")
+  "Stable status values used in Nelix transaction records.")
+
+(defconst nelix-transaction-rollback-unavailable-reasons
+  '("transaction-disabled" "rollback-disabled" "before-generation-missing")
+  "Stable rollback-plan reasons when rollback is unavailable.")
+
+(defconst nelix-transaction-rollback-result-keys
+  '("attempted" "ok" "generation" "after-rollback-generation"
+    "verified" "reason" "error")
+  "Stable rollback result keys that may be present after apply failure.")
+
 (defcustom nelix-transaction-log-root nil
   "Directory used for Nelix apply transaction records.
 
@@ -198,6 +211,10 @@ When nil, records are written under the user's state directory at
         :rollback-plan-available-required
         (nelix-schema--keyword-names
          nelix-transaction-rollback-plan-available-required-keys)
+        :status-values nelix-transaction-status-values
+        :rollback-plan-unavailable-reasons
+        nelix-transaction-rollback-unavailable-reasons
+        :rollback-result-keys nelix-transaction-rollback-result-keys
         :executed-required '("action" "name")
         :stable t))
 
