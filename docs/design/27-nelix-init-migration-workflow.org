@@ -321,6 +321,18 @@ NELISP_ROOT=/home/madblack-21/Cowork/Notes/dev/nelisp \
 packaging/verify-extracted-nelix-debian.sh ../elpa-nelix_0.1.0-4_all.deb 0.1.0-4
 #+end_src
 
+Both installed and extracted Debian verifiers print the same NeLisp AOT real
+manifest counts when =NELIX_USER_MANIFEST_NELISP=1= is set:
+
+#+begin_example
+debian target-count=203
+debian list-count=203
+debian audit-counts: present=203 missing=0 extra=0
+debian plan-counts: install=0 remove=0 keep=203 protected=0 commands=0
+debian apply-dry-run-counts: install=0 remove=0 keep=203 protected=0 commands=0
+debian upgrade-plan-counts: upgrade=203 pinned=0 missing=0
+#+end_example
+
 * 8. Open Edges
 
 - =nelix --runtime nelisp --json validate= works for the standard manifest

@@ -251,7 +251,10 @@ diagnostic.  The lighter installed and extracted Debian verifiers also accept
 =NELIX_USER_MANIFEST_NELISP=required= and run the packaged command through the
 read-only NeLisp AOT cache path for =list=, =audit=, =plan --dry-run=,
 =apply --dry-run=, =upgrade-plan=, and =lock-check=, restoring any pre-existing
-manifest lock/cache files afterward.
+manifest lock/cache files afterward.  When =NELIX_USER_MANIFEST_NELISP=required=
+is set, those Debian payload verifiers also print target, list, audit, plan,
+apply dry-run, and upgrade-plan counts; set =NELIX_USER_MANIFEST_MIN_TARGETS=N=
+to require a large real manifest in installed or extracted package checks.
 
 =verify-user-environment= deliberately does not load =~/.emacs.d/init.el= or
 =~/.emacs.d/early-init.el=, so it stays safe inside =deb-release-gate= and

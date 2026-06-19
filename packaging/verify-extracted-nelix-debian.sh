@@ -106,6 +106,79 @@ if [ -n "${NELIX_USER_MANIFEST:-}" ]; then
     fi
   }
 
+  json_array_count() {
+    file="$1"
+    key="$2"
+    emacs -Q --batch \
+      --eval '(require (quote json))' \
+      --eval '(let* ((json-object-type (quote alist))
+                     (json-array-type (quote list))
+                     (json-key-type (quote string))
+                     (_ (when (equal (car command-line-args-left) "--")
+                          (pop command-line-args-left)))
+                     (file (pop command-line-args-left))
+                     (key (pop command-line-args-left))
+                     (obj (json-read-file file))
+                     (rows (alist-get key obj nil nil (function string=))))
+                (princ (length rows)))' \
+      -- "$file" "$key"
+  }
+
+  json_top_level_count() {
+    file="$1"
+    emacs -Q --batch \
+      --eval '(require (quote json))' \
+      --eval '(let* ((json-object-type (quote alist))
+                     (json-array-type (quote list))
+                     (json-key-type (quote string))
+                     (_ (when (equal (car command-line-args-left) "--")
+                          (pop command-line-args-left)))
+                     (file (pop command-line-args-left))
+                     (obj (json-read-file file)))
+                (princ (length (if (vectorp obj) (append obj nil) obj))))' \
+      -- "$file"
+  }
+
+  report_top_level_count() {
+    label="$1"
+    file="$2"
+    count="$(json_top_level_count "$file")" || return 1
+    printf 'nelix extracted Debian %s-count: %s\n' "$label" "$count" >&2
+  }
+
+  report_json_counts() {
+    label="$1"
+    file="$2"
+    shift 2
+    printf 'nelix extracted Debian %s-counts:' "$label" >&2
+    for key in "$@"; do
+      count="$(json_array_count "$file" "$key")" || return 1
+      printf ' %s=%s' "$key" "$count" >&2
+    done
+    printf '\n' >&2
+  }
+
+  check_aot_target_count() {
+    cache_file="$1"
+    min_targets="${NELIX_USER_MANIFEST_MIN_TARGETS:-0}"
+    target_count="$(
+      grep -c '^target-id[[:space:]]' "$cache_file" 2>/dev/null ||
+        printf '0\n'
+    )"
+    printf 'nelix extracted Debian target-count: %s min=%s\n' \
+      "$target_count" "$min_targets" >&2
+    case "$min_targets" in
+      ''|*[!0-9]*)
+        echo "invalid NELIX_USER_MANIFEST_MIN_TARGETS value: $min_targets" >&2
+        return 64
+        ;;
+    esac
+    if [ "$min_targets" -gt 0 ] && [ "$target_count" -lt "$min_targets" ]; then
+      echo "nelix extracted Debian target count $target_count is below NELIX_USER_MANIFEST_MIN_TARGETS=$min_targets" >&2
+      return 1
+    fi
+  }
+
   run_nelisp_manifest_gate() (
     gate_tmp="$(mktemp -d)"
     lock_file="$NELIX_USER_MANIFEST.nelix-lock"
@@ -145,28 +218,34 @@ if [ -n "${NELIX_USER_MANIFEST:-}" ]; then
     run_extracted_nelix --runtime nelisp aot-cache "$NELIX_USER_MANIFEST" \
       >"$gate_tmp/aot-cache.out"
     expect_json_fragment aot-cache "$gate_tmp/aot-cache.out" ':status ok'
+    check_aot_target_count "$cache_file"
 
     run_extracted_nelix --runtime nelisp --json list >"$gate_tmp/list.json"
     expect_json_fragment list "$gate_tmp/list.json" '['
+    report_top_level_count list "$gate_tmp/list.json"
 
     run_extracted_nelix --runtime nelisp --json audit "$NELIX_USER_MANIFEST" \
       >"$gate_tmp/audit.json"
     expect_json_fragment audit "$gate_tmp/audit.json" '"fallback":":nelisp-aot-cache"'
+    report_json_counts audit "$gate_tmp/audit.json" present missing extra
 
     run_extracted_nelix --runtime nelisp --json plan "$NELIX_USER_MANIFEST" --dry-run \
       >"$gate_tmp/plan.json"
     expect_json_fragment plan "$gate_tmp/plan.json" '"status":"planned"'
     expect_json_fragment plan "$gate_tmp/plan.json" '"fallback":":nelisp-aot-cache"'
+    report_json_counts plan "$gate_tmp/plan.json" install remove keep protected commands
 
     run_extracted_nelix --runtime nelisp --json apply "$NELIX_USER_MANIFEST" --dry-run \
       >"$gate_tmp/apply-dry-run.json"
     expect_json_fragment apply-dry-run "$gate_tmp/apply-dry-run.json" '"status":"dry-run"'
     expect_json_fragment apply-dry-run "$gate_tmp/apply-dry-run.json" '"fallback":":nelisp-aot-cache"'
+    report_json_counts apply-dry-run "$gate_tmp/apply-dry-run.json" install remove keep protected commands
 
     run_extracted_nelix --runtime nelisp --json upgrade-plan "$NELIX_USER_MANIFEST" \
       >"$gate_tmp/upgrade-plan.json"
     expect_json_fragment upgrade-plan "$gate_tmp/upgrade-plan.json" '"operation":"upgrade"'
     expect_json_fragment upgrade-plan "$gate_tmp/upgrade-plan.json" '"fallback":":nelisp-aot-cache"'
+    report_json_counts upgrade-plan "$gate_tmp/upgrade-plan.json" upgrade pinned missing
 
     run_extracted_nelix --runtime nelisp --json lock-check "$NELIX_USER_MANIFEST" \
       >"$gate_tmp/lock-check.json"
