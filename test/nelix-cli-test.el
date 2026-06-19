@@ -439,6 +439,18 @@
     (should (member "remove-policy"
                     (nelix-cli-test--json-array-list
                      (alist-get 'deferred-forms manifest))))
+    (should (member "platform"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'deferred-forms manifest))))
+    (should (member "version-pin"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'deferred-forms manifest))))
+    (should (member "private-repo"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'forbidden-forms manifest))))
+    (should (member "secret"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'forbidden-forms manifest))))
     (should (equal "cli-confirmation"
                    (alist-get 'remove-policy manifest)))
     (should (equal "forbidden"

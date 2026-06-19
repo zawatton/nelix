@@ -254,7 +254,8 @@ Rules:
 - =nelix --json schema manifest-dsl-v1= must report schema
   =nelix-environment=, schema version =1=, the stable DSL form list, the
   form-to-manifest-key mapping, the stable backend name list, the deferred v2
-  candidate forms, and the v1 policies for removal review and private data.
+  candidate forms, the forbidden private-data forms, and the v1 policies for
+  removal review and private data.
 
 Scope decisions for the user-requested Nix/Guix-style surface:
 
@@ -278,14 +279,16 @@ Scope decisions for the user-requested Nix/Guix-style surface:
 - feature/group support in v1 is done with regular imported Elisp variables:
   =(imports "...")= plus =(emacs-packages my-emacs-group)= and
   =(linux-packages my-linux-group)=.  First-class =(group ...)= and
-  =(feature ...)= subforms are v2 candidates.
+  =(feature ...)= subforms are v2 candidates and are rejected as reserved in
+  v1.
 - platform conditions in v1 are split between =(backend-policy ...)= for
   environment-level OS policy and registry recipe =:systems= for package-level
-  availability.
+  availability.  First-class =(platform ...)= forms are reserved for v2.
 - secrets and private repositories must not be embedded in manifest or lockfile
   rows.  Use environment/configured credentials and registry roots/remotes with
   hash/signature policy.  Lockfiles may record public source identity and
-  hashes, but not tokens.
+  hashes, but not tokens.  DSL v1 rejects private-data forms such as
+  =(secret ...)= and =(private-repo ...)= explicitly.
 
 Implementation status: =nelix-environment= is implemented as a macro expanding
 to =nelix-manifest=.  Existing plist manifests remain valid.

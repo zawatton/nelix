@@ -188,6 +188,26 @@
               :type 'anvil-pkg-error)))
     (should (string-match-p "duplicate form name" (cadr err)))))
 
+(ert-deftest nelix-manifest-test-environment-dsl-v1-reserves-future-forms ()
+  "Future DSL forms are reserved instead of silently accepted."
+  (let ((err (should-error
+              (eval '(nelix-environment
+                      (name "reserved")
+                      (platform gnu/linux)))
+              :type 'anvil-pkg-error)))
+    (should (string-match-p "reserved for a later DSL version"
+                            (cadr err)))))
+
+(ert-deftest nelix-manifest-test-environment-dsl-v1-forbids-private-data-forms ()
+  "Private data must not be embedded in DSL manifests."
+  (let ((err (should-error
+              (eval '(nelix-environment
+                      (name "private")
+                      (secret github-token "token-value")))
+              :type 'anvil-pkg-error)))
+    (should (string-match-p "private data form"
+                            (cadr err)))))
+
 (ert-deftest nelix-manifest-test-validate-is-process-free ()
   "nelix-validate loads manifests and reports counts without profile IO."
   (let ((dir (make-temp-file "nelix-manifest-validate-" t)))

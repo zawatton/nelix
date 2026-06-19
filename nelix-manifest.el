@@ -73,8 +73,13 @@
 
 (defconst nelix-environment-dsl-deferred-forms
   '("package" "linux-package" "remove-policy" "group" "feature"
-    "secret" "private-repo" "version-pin")
+    "platform" "platform-when" "version-pin")
   "Nix/Guix-style forms intentionally deferred beyond environment DSL v1.")
+
+(defconst nelix-environment-dsl-forbidden-forms
+  '(secret secrets private-repo private-repos credential credentials
+    token access-token auth-header)
+  "Private-data forms forbidden in `nelix-environment' DSL v1.")
 
 (defconst nelix-lock-schema-required-json-keys
   '("schema" "schema-version" "version" "format" "lock"
@@ -135,6 +140,8 @@ When nil, records are written under the user's state directory at
                           nelix-environment-dsl-form-map)
         :backends (mapcar #'symbol-name nelix-environment-dsl-backends)
         :deferred-forms nelix-environment-dsl-deferred-forms
+        :forbidden-forms (mapcar #'symbol-name
+                                 nelix-environment-dsl-forbidden-forms)
         :remove-policy "cli-confirmation"
         :private-data "forbidden"
         :stable t))
@@ -259,6 +266,14 @@ NAME may be nil, \"all\", \"manifest-dsl-v1\", or \"lock-v2\"."
             (list (format "nelix-environment: malformed form %S" form))))
   (let ((head (car form))
         (args (cdr form)))
+    (when (memq head nelix-environment-dsl-forbidden-forms)
+      (signal 'anvil-pkg-error
+              (list (format "nelix-environment: private data form %S is forbidden"
+                            head))))
+    (when (member (symbol-name head) nelix-environment-dsl-deferred-forms)
+      (signal 'anvil-pkg-error
+              (list (format "nelix-environment: form %S is reserved for a later DSL version"
+                            head))))
     (pcase head
       ('name
        (list :name (nelix-environment--single-value "nelix-environment name"
