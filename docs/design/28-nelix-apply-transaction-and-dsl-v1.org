@@ -272,6 +272,81 @@ Remaining design edge:
   planner.  A future mutating recovery command must use the same record schema
   and must not infer recovery state from current profile contents alone.
 
+** 2.5 Failure classes and recovery boundary
+
+The transaction model distinguishes four failure classes because they have
+different safety guarantees:
+
+| Class | Example | Durable record | Automatic rollback | Operator action |
+|-------+---------+----------------+--------------------+-----------------|
+| preflight | invalid manifest, lock drift, remove not confirmed | no transaction record | no | fix input, rerun dry-run |
+| snapshot | generation history unavailable before mutation | record may be absent or has unavailable rollback plan | no | inspect profile manually before mutating |
+| command failure | install/remove exits non-zero after =started= | =error= record with =:executed= and =:rollback= | yes when rollback plan is available | inspect =transaction show= and rerun after fixing cause |
+| interruption | process exits between mutations/record writes | last complete record write only | not guaranteed | use =transaction recover --dry-run= and profile history |
+
+Preflight failures must happen before =nelix-manifest--transaction-begin=.
+They are intentionally outside the transaction log because no profile mutation
+has happened.  This includes manifest validation errors, backend selection
+errors, =apply --locked= drift, missing lockfiles in locked mode, remove-count
+mismatch, and dry-run-only paths.
+
+Snapshot failures happen after the plan is known but before the first mutating
+command.  If rollback cannot be made available, real apply may still proceed
+only when the user explicitly disabled rollback or when the backend reports no
+rollback support.  The resulting record must say why rollback is unavailable
+with one of the schema-stable reasons, so unattended automation can reject the
+run before calling real apply.
+
+Command failures are the primary supported automatic recovery path.  Once the
+=started= record exists, every successful command row is appended to
+=:executed= and the record is rewritten as =running=.  When a later command
+fails, the failure record stores the exact =:executed= rows, the derived
+=:rollback-plan=, the =:rollback= result, and the error string.  Rollback is
+considered successful only when =:verified t= proves the active generation
+matches =:before-generation=.
+
+Interruption recovery is deliberately read-only today.  =nelix transaction
+recover ID|FILE --dry-run= validates the record and returns the manual rollback
+command derived from =:rollback-plan=.  It does not execute that command.  A
+future mutating =transaction recover= must add a new schema version or an
+explicit record event so external tools can distinguish operator-triggered
+recovery from the original failed apply.
+
+** 2.6 Lock update and transaction boundary
+
+Lock mutation is outside the current apply transaction:
+
+1. =nelix lock= and =nelix lock migrate= are the only commands that rewrite
+   =MANIFEST.nelix-lock=.
+2. =apply --locked= reads and validates the lock before transaction begin.
+3. =apply --dry-run= and real =apply= must not rewrite the lockfile.
+4. Automatic lock refresh, if added later, must be a separate post-success
+   transaction step after all profile commands succeed and after
+   =:after-generation= is captured.
+
+This separation is intentional.  Profile rollback can restore package profile
+state, but it cannot reliably recover a rewritten lockfile unless the lock
+rewrite is journaled independently.  Until that journal exists, apply treats
+the lock as an immutable precondition rather than an output.
+
+** 2.7 Minimum gate set for changing transaction code
+
+Any change to transaction, rollback, remove confirmation, lock enforcement, or
+transaction schema constants must run at least:
+
+#+begin_src sh
+make smoke-nelix-lock-plan-apply
+make smoke-nelix-lock-plan-apply-nelisp
+make smoke-nelix-lock-schema
+make verify-installed-cli-gate   # after installing the freshly built package
+#+end_src
+
+The first two gates prove the source-tree CLI in Emacs and standalone NeLisp
+paths.  =smoke-nelix-lock-schema= proves schema, lock read-only commands, and
+legacy migration behavior.  The installed CLI gate is required before release
+because it is the only one that exercises the packaged =/usr/bin/nelix=
+payload and its documented transaction CLI surface.
+
 * 3. Remove Safety
 
 Real =apply= refuses unmanaged remove actions unless the caller explicitly
