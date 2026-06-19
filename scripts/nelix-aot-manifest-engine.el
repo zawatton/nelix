@@ -137,6 +137,12 @@
       list
     (append list (list value))))
 
+(defun nelix-aot--cons-unique (value list)
+  "Return LIST with VALUE consed if absent."
+  (if (member value list)
+      list
+    (cons value list)))
+
 (defun nelix-aot--normalize-name-list (names)
   "Return NAMES plus duplicate-suffix-normalized aliases."
   (let (out)
@@ -278,12 +284,20 @@
         (puthash (nelix-aot--strip-duplicate-suffix name) t set)))))
 
 (defun nelix-aot--name-map (names)
-  "Return a hash map from normalized name aliases to installed names."
+  "Return a hash map from exact NAMES to installed names."
   (let ((map (make-hash-table :test 'equal)))
     (dolist (name names map)
       (when (and (stringp name) (> (length name) 0))
-        (puthash name name map)
-        (puthash (nelix-aot--strip-duplicate-suffix name) name map)))))
+        (puthash name name map)))))
+
+(defun nelix-aot--normalized-name-map (names)
+  "Return a hash map from duplicate-suffix aliases to installed NAMES."
+  (let ((map (make-hash-table :test 'equal)))
+    (dolist (name names map)
+      (when (and (stringp name) (> (length name) 0))
+        (let ((normalized (nelix-aot--strip-duplicate-suffix name)))
+          (unless (equal normalized name)
+            (puthash normalized name map)))))))
 
 (defun nelix-aot--set-add-name (set name)
   "Add NAME and its duplicate-suffix alias to SET."
@@ -297,12 +311,21 @@
   (or (gethash name set)
       (gethash (nelix-aot--strip-duplicate-suffix name) set)))
 
-(defun nelix-aot--find-installed (candidates installed-map)
-  "Return the installed name matching CANDIDATES in INSTALLED-MAP."
+(defun nelix-aot--find-installed (candidates installed-map
+                                             &optional normalized-map)
+  "Return the installed name matching CANDIDATES.
+
+Exact profile-name matches in INSTALLED-MAP win before duplicate-suffix
+fallback matches in NORMALIZED-MAP."
   (let ((found nil))
     (dolist (candidate candidates found)
       (when (and (null found) (gethash candidate installed-map))
-        (setq found (gethash candidate installed-map))))))
+        (setq found (gethash candidate installed-map))))
+    (when (and (null found) normalized-map)
+      (dolist (candidate candidates found)
+        (when (and (null found) (gethash candidate normalized-map))
+          (setq found (gethash candidate normalized-map)))))
+    found))
 
 (defun nelix-aot--id-map (entries)
   "Return a hash map built from integer ID ENTRIES."
@@ -382,20 +405,26 @@
                             (cdr target)
                             installed-set)))
             (if actual-id
-                (push (nelix-aot--installed-id-name
-                       actual-id id-name-map installed-id-name-map)
-                      present)
-              (push (nelix-aot--id-name (car target) id-name-map)
-                    missing))))
+                (setq present
+                      (nelix-aot--cons-unique
+                       (nelix-aot--installed-id-name
+                        actual-id id-name-map installed-id-name-map)
+                       present))
+              (setq missing
+                    (nelix-aot--cons-unique
+                     (nelix-aot--id-name (car target) id-name-map)
+                     missing)))))
         (dolist (id (plist-get input :installed-ids))
           (unless (gethash id desired-id-set)
-            (push (nelix-aot--installed-id-name
-                   id id-name-map installed-id-name-map)
-                  extra)))
+            (setq extra
+                  (nelix-aot--cons-unique
+                   (nelix-aot--installed-id-name
+                    id id-name-map installed-id-name-map)
+                   extra))))
         (dolist (name (plist-get input :installed))
           (unless (or (nelix-aot--set-has-name-p mapped-installed-name-set name)
                       (nelix-aot--set-has-name-p desired-name-set name))
-            (push name extra)))
+            (setq extra (nelix-aot--cons-unique name extra))))
         (list :present (nreverse present)
               :missing (nreverse missing)
               :extra (nreverse extra))))))
@@ -404,15 +433,20 @@
   "Return audit lists using string records."
   (let* ((installed (plist-get input :installed))
          (installed-map (nelix-aot--name-map installed))
+         (normalized-installed-map
+          (nelix-aot--normalized-name-map installed))
          (desired (make-hash-table :test 'equal))
          present
          missing
          extra)
     (dolist (target (plist-get input :targets))
-      (let ((actual (nelix-aot--find-installed (cdr target) installed-map)))
+      (let ((actual (nelix-aot--find-installed
+                     (cdr target)
+                     installed-map
+                     normalized-installed-map)))
         (if actual
-            (push actual present)
-          (push (car target) missing)))
+            (setq present (nelix-aot--cons-unique actual present))
+          (setq missing (nelix-aot--cons-unique (car target) missing))))
       (dolist (candidate (cdr target))
         (nelix-aot--set-add-name desired candidate)))
     (dolist (name installed)
@@ -424,7 +458,9 @@
 
 (defun nelix-aot--audit-report (input)
   "Return audit lists, preferring numeric ID records."
-  (or (nelix-aot--audit-id-report input)
+  (or (and (plist-get input :targets)
+           (nelix-aot--audit-string-report input))
+      (nelix-aot--audit-id-report input)
       (nelix-aot--audit-string-report input)))
 
 (defun nelix-aot--upgrade-id-report (input)
@@ -445,17 +481,24 @@
           (let ((actual-id (nelix-aot--first-installed-id
                             (cdr target)
                             installed-set)))
-            (cond
-             ((null actual-id)
-              (push (nelix-aot--id-name (car target) id-name-map) missing))
-             ((gethash actual-id pin-set)
-              (push (nelix-aot--installed-id-name
-                     actual-id id-name-map installed-id-name-map)
-                    pinned))
-             (t
-              (push (nelix-aot--installed-id-name
-                     actual-id id-name-map installed-id-name-map)
-                    upgrade)))))
+        (cond
+         ((null actual-id)
+          (setq missing
+                (nelix-aot--cons-unique
+                 (nelix-aot--id-name (car target) id-name-map)
+                 missing)))
+         ((gethash actual-id pin-set)
+          (setq pinned
+                (nelix-aot--cons-unique
+                 (nelix-aot--installed-id-name
+                  actual-id id-name-map installed-id-name-map)
+                 pinned)))
+         (t
+          (setq upgrade
+                (nelix-aot--cons-unique
+                 (nelix-aot--installed-id-name
+                  actual-id id-name-map installed-id-name-map)
+                 upgrade))))))
         (list :upgrade (nreverse upgrade)
               :pinned (nreverse pinned)
               :pinned-names (nelix-aot--id-list-names
@@ -467,20 +510,25 @@
   "Return upgrade-plan lists using string records."
   (let* ((installed (plist-get input :installed))
          (installed-map (nelix-aot--name-map installed))
+         (normalized-installed-map
+          (nelix-aot--normalized-name-map installed))
          (pins (plist-get input :pins))
          (pin-set (nelix-aot--name-set pins))
          upgrade
          pinned
          missing)
     (dolist (target (plist-get input :targets))
-      (let ((actual (nelix-aot--find-installed (cdr target) installed-map)))
+      (let ((actual (nelix-aot--find-installed
+                     (cdr target)
+                     installed-map
+                     normalized-installed-map)))
         (cond
          ((null actual)
-          (push (car target) missing))
+          (setq missing (nelix-aot--cons-unique (car target) missing)))
          ((nelix-aot--set-has-name-p pin-set actual)
-          (push actual pinned))
+          (setq pinned (nelix-aot--cons-unique actual pinned)))
          (t
-          (push actual upgrade)))))
+          (setq upgrade (nelix-aot--cons-unique actual upgrade))))))
     (list :upgrade (nreverse upgrade)
           :pinned (nreverse pinned)
           :pinned-names pins
@@ -488,7 +536,9 @@
 
 (defun nelix-aot--upgrade-report (input)
   "Return upgrade-plan lists, preferring numeric ID records."
-  (or (nelix-aot--upgrade-id-report input)
+  (or (and (plist-get input :targets)
+           (nelix-aot--upgrade-string-report input))
+      (nelix-aot--upgrade-id-report input)
       (nelix-aot--upgrade-string-report input)))
 
 (defun nelix-aot--json-escape-string (string)

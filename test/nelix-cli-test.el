@@ -1060,6 +1060,27 @@
                                :lock-drift :nelisp-aot
                                :state-pins :nelisp-aot))))))
 
+(ert-deftest nelix-cli-test-aot-engine-prefers-exact-before-normalized-name ()
+  "AOT target matching keeps exact profile names before -1 fallback aliases."
+  (let ((payload (concat
+                  "NELIX-AOT-MANIFEST-V1\n"
+                  "manifest\t/tmp/manifest.el\n"
+                  "profile\tdefault\n"
+                  "system\tx86_64-linux\n"
+                  "target\tprescient\tprescient\temacsPackages.company-prescient\tcompany-prescient\n"
+                  "target\tprescient-radian-software\tprescient-radian-software\temacsPackages.prescient\tprescient\n"
+                  "target\tcompat\tcompat\temacsPackages.compat\n"
+                  "target\tcompat-emacs-compat\tcompat-emacs-compat\temacsPackages.compat\tcompat\n"
+                  "installed\tcompany-prescient\n"
+                  "installed\tprescient-1\n"
+                  "installed\tcompat-1\n"
+                  "end\n")))
+    (let ((plan (nelix-aot-upgrade-plan payload)))
+      (should (equal (plist-get plan :upgrade)
+                     '("company-prescient" "prescient-1" "compat-1")))
+      (should (= 3 (plist-get plan :count)))
+      (should-not (plist-get plan :missing)))))
+
 (ert-deftest nelix-cli-test-aot-engine-upgrade-plan-json-uses-direct-writer ()
   "AOT upgrade-plan can emit JSON without constructing the CLI plist report."
   (let* ((payload (concat
@@ -1466,8 +1487,8 @@
             (should (string-match-p "installed\tbat\nend\n" payload))
             (should (string-match-p "installed-id\t1\n" payload))
             (should (string-match-p "installed-id\t2\n" payload))
-            (should-not (string-match-p "^target\t" payload))
-            (should-not (string-match-p "^pin\t" payload))
+            (should (string-match-p "^target\tmagit\tmagit$" payload))
+            (should (string-match-p "^pin\tripgrep$" payload))
             (should (string-match-p "^target-id\t1\t1$" payload))
             (should (string-match-p "^pin-id\t2$" payload))
             (should (equal (plist-get report :present)
@@ -1520,8 +1541,8 @@
             (should (string-match-p "installed\tripgrep-1\n" payload))
             (should (string-match-p "installed-id\t1\n" payload))
             (should (string-match-p "installed-id\t2\n" payload))
-            (should-not (string-match-p "^target\t" payload))
-            (should-not (string-match-p "^pin\t" payload))
+            (should (string-match-p "^target\tmagit\tmagit$" payload))
+            (should (string-match-p "^pin\tripgrep$" payload))
             (should (string-match-p "^target-id\t1\t1$" payload))
             (should (string-match-p "^pin-id\t2$" payload))
             (should (equal (plist-get report :present)

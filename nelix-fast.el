@@ -212,19 +212,36 @@ standalone predicate, fall back to `nelix-list' so fixtures stay pure."
         (puthash (nelix-fast--strip-duplicate-suffix name) t set)))))
 
 (defun nelix-fast--name-map (names)
-  "Return a hash table mapping normalized profile names to actual names."
+  "Return a hash table mapping exact profile NAMES to actual names."
   (let ((map (make-hash-table :test 'equal)))
     (dolist (name names map)
       (when (and (stringp name) (> (length name) 0))
-        (puthash name name map)
-        (puthash (nelix-fast--strip-duplicate-suffix name) name map)))))
+        (puthash name name map)))))
 
-(defun nelix-fast--find-name (candidates index)
-  "Return the installed name matching any member of CANDIDATES in INDEX."
+(defun nelix-fast--normalized-name-map (names)
+  "Return a hash table mapping duplicate-suffix aliases to actual NAMES."
+  (let ((map (make-hash-table :test 'equal)))
+    (dolist (name names map)
+      (when (and (stringp name) (> (length name) 0))
+        (let ((normalized (nelix-fast--strip-duplicate-suffix name)))
+          (unless (equal normalized name)
+            (puthash normalized name map)))))))
+
+(defun nelix-fast--find-name (candidates index &optional normalized-index)
+  "Return the installed name matching CANDIDATES.
+
+Exact profile-name matches in INDEX win before duplicate-suffix fallback
+matches in NORMALIZED-INDEX.  This keeps aliases such as company-prescient and
+prescient-1 from collapsing to the same target."
   (let ((found nil))
     (dolist (name candidates found)
       (when (and (null found) (gethash name index))
-        (setq found (gethash name index))))))
+        (setq found (gethash name index))))
+    (when (and (null found) normalized-index)
+      (dolist (name candidates found)
+        (when (and (null found) (gethash name normalized-index))
+          (setq found (gethash name normalized-index)))))
+    found))
 
 (defun nelix-fast--aot-field (value)
   "Return VALUE as a safe Nelix AOT line-protocol field."
@@ -1013,6 +1030,8 @@ standalone NeLisp parses less data on the hot cache path."
                     (member tag '("manifest"
                                   "profile"
                                   "system"
+                                  "target"
+                                  "pin"
                                   "name-id"
                                   "target-id"
                                   "pin-id")))
@@ -1052,6 +1071,7 @@ record-by-record in Elisp."
              "END { exit(found ? 0 : 1) }' \"$1\"; then "
              "awk -F '\\t' 'NR == 1 || $1 == \"manifest\" || "
              "$1 == \"profile\" || $1 == \"system\" || "
+             "$1 == \"target\" || $1 == \"pin\" || "
              "$1 == \"name-id\" || $1 == \"target-id\" || "
              "$1 == \"pin-id\" { print }' \"$1\"; "
              "else cat \"$1\"; fi; "
@@ -1339,20 +1359,24 @@ commands continue to use the full plist/report encoder."
   "Return direct compact audit JSON for FAST."
   (let* ((installed (or installed-names (nelix-fast-profile-names)))
          (installed-map (nelix-fast--name-map installed))
+         (normalized-installed-map
+          (nelix-fast--normalized-name-map installed))
          (desired-set (plist-get fast :desired-set))
          present missing extra)
     (dolist (row (plist-get fast :targets))
       (let ((actual (nelix-fast--find-name
                      (plist-get row :candidates)
-                     installed-map)))
+                     installed-map
+                     normalized-installed-map)))
         (if actual
-            (push actual present)
-          (push (plist-get row :name) missing))))
+            (setq present (nelix-fast--push-unique actual present))
+          (setq missing
+                (nelix-fast--push-unique (plist-get row :name) missing)))))
     (dolist (name installed)
       (unless (or (gethash name desired-set)
                   (gethash (nelix-fast--strip-duplicate-suffix name)
                            desired-set))
-        (push name extra)))
+        (setq extra (nelix-fast--push-unique name extra))))
     (setq present (nreverse present)
           missing (nreverse missing)
           extra (nreverse extra))
@@ -1443,19 +1467,23 @@ commands continue to use the full plist/report encoder."
   "Return direct compact upgrade-plan JSON for FAST."
   (let* ((installed (or installed-names (nelix-fast-profile-names)))
          (installed-map (nelix-fast--name-map installed))
+         (normalized-installed-map
+          (nelix-fast--normalized-name-map installed))
          (pin-set (plist-get fast :pins-set))
          upgrade pinned missing)
     (dolist (row (plist-get fast :targets))
       (let ((actual (nelix-fast--find-name
                      (plist-get row :candidates)
-                     installed-map)))
+                     installed-map
+                     normalized-installed-map)))
         (if actual
             (if (or (gethash actual pin-set)
                     (gethash (nelix-fast--strip-duplicate-suffix actual)
                              pin-set))
-                (push actual pinned)
-              (push actual upgrade))
-          (push (plist-get row :name) missing))))
+                (setq pinned (nelix-fast--push-unique actual pinned))
+              (setq upgrade (nelix-fast--push-unique actual upgrade)))
+          (setq missing
+                (nelix-fast--push-unique (plist-get row :name) missing)))))
     (setq upgrade (nreverse upgrade)
           pinned (nreverse pinned)
           missing (nreverse missing))
@@ -1490,20 +1518,24 @@ commands continue to use the full plist/report encoder."
   "Return the direct fast audit report for compiled FAST manifest data."
   (let* ((installed (or installed-names (nelix-fast-profile-names)))
          (installed-map (nelix-fast--name-map installed))
+         (normalized-installed-map
+          (nelix-fast--normalized-name-map installed))
          (desired-set (plist-get fast :desired-set))
          present missing extra)
     (dolist (row (plist-get fast :targets))
       (let ((actual (nelix-fast--find-name
                      (plist-get row :candidates)
-                     installed-map)))
+                     installed-map
+                     normalized-installed-map)))
         (if actual
-            (push actual present)
-          (push (plist-get row :name) missing))))
+            (setq present (nelix-fast--push-unique actual present))
+          (setq missing
+                (nelix-fast--push-unique (plist-get row :name) missing)))))
     (dolist (name installed)
       (unless (or (gethash name desired-set)
                   (gethash (nelix-fast--strip-duplicate-suffix name)
                            desired-set))
-        (push name extra)))
+        (setq extra (nelix-fast--push-unique name extra))))
     (setq present (nreverse present)
           missing (nreverse missing)
           extra (nreverse extra))
@@ -1549,19 +1581,23 @@ commands continue to use the full plist/report encoder."
   "Return the direct fast upgrade plan for compiled FAST manifest data."
   (let* ((installed (or installed-names (nelix-fast-profile-names)))
          (installed-map (nelix-fast--name-map installed))
+         (normalized-installed-map
+          (nelix-fast--normalized-name-map installed))
          (pin-set (plist-get fast :pins-set))
          upgrade pinned missing)
     (dolist (row (plist-get fast :targets))
       (let ((actual (nelix-fast--find-name
                      (plist-get row :candidates)
-                     installed-map)))
+                     installed-map
+                     normalized-installed-map)))
         (if actual
             (if (or (gethash actual pin-set)
                     (gethash (nelix-fast--strip-duplicate-suffix actual)
                              pin-set))
-                (push actual pinned)
-              (push actual upgrade))
-          (push (plist-get row :name) missing))))
+                (setq pinned (nelix-fast--push-unique actual pinned))
+              (setq upgrade (nelix-fast--push-unique actual upgrade)))
+          (setq missing
+                (nelix-fast--push-unique (plist-get row :name) missing)))))
     (setq upgrade (nreverse upgrade)
           pinned (nreverse pinned)
           missing (nreverse missing))
