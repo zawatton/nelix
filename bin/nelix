@@ -648,7 +648,7 @@ nelix_run_aot_id_cache_shell_lane() {
               } else if (command == "audit") {
                 add_present(found_name)
               } else if (command == "plan" || command == "apply-dry-run") {
-                add_keep(found_name)
+                add_keep(string_target_display[t])
               } else if (found_name in pin_name || norm(found_name) in pin_name) {
                 add_pinned(found_name)
               } else {
@@ -679,7 +679,7 @@ nelix_run_aot_id_cache_shell_lane() {
               } else if (command == "audit") {
                 add_present(installed_name_by_id[found_id])
               } else if (command == "plan" || command == "apply-dry-run") {
-                add_keep(installed_name_by_id[found_id])
+                add_keep(name_by_id[target_display[t]])
               } else if (found_id in pin_id) {
                 add_pinned(installed_name_by_id[found_id])
               } else {

@@ -1464,6 +1464,46 @@
               (should-not (string-suffix-p "end\n" body)))))
       (delete-directory dir t))))
 
+(ert-deftest nelix-cli-test-aot-target-cache-resolves-emacs-overrides ()
+  "The AOT target cache stores resolved manifest targets for Emacs packages."
+  (let ((dir (make-temp-file "nelix-cli-aot-cache-overrides-" t))
+        (old-overrides-bound (boundp 'nelix-package-nixpkgs-overrides))
+        (old-overrides-value (and (boundp 'nelix-package-nixpkgs-overrides)
+                                  nelix-package-nixpkgs-overrides))
+        (old-target-function (and (fboundp 'nelix-package-install-target)
+                                  (symbol-function 'nelix-package-install-target))))
+    (unwind-protect
+        (let* ((manifest (expand-file-name "manifest.el" dir))
+               (cache (expand-file-name "targets.cache" dir)))
+          (makunbound 'nelix-package-nixpkgs-overrides)
+          (with-temp-file manifest
+            (insert "(require 'nelix-manifest)\n"
+                    "(defun nelix-package-install-target (package)\n"
+                    "  (or (cdr (assq package"
+                    " '((compat . \"emacsPackages.compat\"))))"
+                    " package))\n"
+                    "(nelix-manifest :name \"default\""
+                    " :emacs '(compat))\n"))
+          (let ((result (nelix-fast-aot-target-cache-write manifest cache)))
+            (should (equal (plist-get result :cache) cache))
+            (should (equal (plist-get result :targets) 1))
+            (let ((body (with-temp-buffer
+                          (insert-file-contents cache)
+                          (buffer-string))))
+              (should (string-match-p
+                       "^target\temacsPackages\\.compat\temacsPackages\\.compat\tcompat$"
+                       body))
+              (should (string-match-p "^name-id\t1\temacsPackages\\.compat$" body))
+              (should (string-match-p "^name-id\t2\tcompat$" body))
+              (should (string-match-p "^target-id\t1\t1\t2$" body)))))
+      (if old-overrides-bound
+          (setq nelix-package-nixpkgs-overrides old-overrides-value)
+        (makunbound 'nelix-package-nixpkgs-overrides))
+      (if old-target-function
+          (fset 'nelix-package-install-target old-target-function)
+        (fmakunbound 'nelix-package-install-target))
+      (delete-directory dir t))))
+
 (ert-deftest nelix-cli-test-aot-target-cache-builds-runtime-payload ()
   "A target cache can be completed with installed names at runtime."
   (let ((dir (make-temp-file "nelix-cli-aot-cache-payload-" t)))

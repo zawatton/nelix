@@ -259,9 +259,7 @@ prescient-1 from collapsing to the same target."
 
 (defun nelix-fast--target-rows (manifest)
   "Return compact target rows for MANIFEST."
-  (let ((targets (append (plist-get manifest :emacs)
-                         (plist-get manifest :linux)
-                         (plist-get manifest :debian-tools)))
+  (let ((targets (nelix-manifest-targets manifest 'nix))
         rows)
     (dolist (target targets (nreverse rows))
       (push (list :target target
