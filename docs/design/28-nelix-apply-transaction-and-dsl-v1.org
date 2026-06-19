@@ -105,6 +105,9 @@ It runs =/usr/bin/nelix= with a fake =nix= executable and verifies:
   mutating profile or lock state;
 - =lock diff MANIFEST= reports manifest/import drift against the lockfile
   without mutating profile or lock state;
+- =lock migrate MANIFEST --dry-run= reports whether a compatible legacy lock
+  needs a v2 rewrite, and =lock migrate MANIFEST= writes the current
+  =MANIFEST.nelix-lock= while preserving the old file;
 - =plan MANIFEST= reports install/remove rows;
 - =apply MANIFEST --dry-run= reports transaction metadata without mutating.
 - =apply MANIFEST --locked --allow-remove-count 1= enforces the lock and
@@ -192,8 +195,9 @@ and NeLisp load directly.
 
 Current compatibility rule:
 
-- legacy v1 locks are readable for drift checks, but =apply --locked= refuses
-  them because they do not contain package rows;
+- legacy v1 locks are readable for drift checks and can be migrated with
+  =lock migrate=, but =apply --locked= refuses them before migration because
+  they do not contain package rows;
 - legacy v2 locks without explicit =:schema= / =:schema-version= are readable
   and schema-compatible;
 - current v2 locks with explicit schema metadata are covered by a fixture with

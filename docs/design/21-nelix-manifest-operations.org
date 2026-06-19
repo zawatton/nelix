@@ -406,6 +406,7 @@ nelix prune-plan MANIFEST
 nelix lock MANIFEST
 nelix lock validate MANIFEST
 nelix lock diff MANIFEST
+nelix lock migrate MANIFEST [--dry-run]
 nelix upgrade-plan [MANIFEST]
 nelix outdated [MANIFEST|NAME] [--backend BACKEND]
 nelix upgrade [MANIFEST]
@@ -422,6 +423,9 @@ CLI requirements:
 - mutating commands must print the target profile path
 - =lock validate= and =lock diff= are read-only schema/drift inspection
   commands; they must not print mutation metadata or touch the profile
+- =lock migrate --dry-run= reports whether a compatible legacy lock needs a
+  current v2 rewrite; =lock migrate= writes the current lock path and preserves
+  the legacy file for compatibility
 - =apply --locked= and =sync --locked= must refuse mutation unless
   =nelix-lock-check= is clean and package rows match current
   manifest resolution

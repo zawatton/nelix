@@ -34,6 +34,9 @@ Validate the manifest lockfile schema without mutating state.
 .B lock diff MANIFEST
 Report read-only manifest/import drift against the lockfile.
 .TP
+.B lock migrate MANIFEST [--dry-run]
+Rewrite compatible legacy lockfiles as the current versioned lockfile.
+.TP
 .B upgrade-plan [MANIFEST|NAME]
 Print a read-only upgrade plan.
 .TP

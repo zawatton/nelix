@@ -1267,6 +1267,15 @@ remove count."
   (concat (file-name-sans-extension (expand-file-name manifest-file))
           ".lock.el"))
 
+(defun nelix-manifest--selected-lock-file-name (manifest-file)
+  "Return the lock file path currently selected for MANIFEST-FILE."
+  (let ((default-lock-file (nelix-manifest-lock-file-name manifest-file))
+        (legacy-lock-file (nelix-manifest--legacy-lock-file-name
+                           manifest-file)))
+    (if (anvil-pkg-compat-file-exists-p default-lock-file)
+        default-lock-file
+      legacy-lock-file)))
+
 (defun nelix-manifest--lock-drift (manifest-file)
   "Return lock drift details for MANIFEST-FILE, or nil."
   (let ((lock-path (nelix-manifest-lock-file-name manifest-file)))
@@ -2198,13 +2207,8 @@ This is the constructor used inside generated lock files."
 ;;;###autoload
 (defun nelix-lock-read (manifest-file)
   "Read the lock file associated with MANIFEST-FILE."
-  (let* ((default-lock-file (nelix-manifest-lock-file-name manifest-file))
-         (legacy-lock-file (nelix-manifest--legacy-lock-file-name
-                            manifest-file))
-         (lock-file (if (anvil-pkg-compat-file-exists-p default-lock-file)
-                        default-lock-file
-                      legacy-lock-file))
-        (nelix-lock-last nil))
+  (let* ((lock-file (nelix-manifest--selected-lock-file-name manifest-file))
+         (nelix-lock-last nil))
     (unless (anvil-pkg-compat-file-exists-p lock-file)
       (signal 'anvil-pkg-error
               (list (format "nelix-lock-read: file does not exist: %s"
@@ -2343,6 +2347,58 @@ verified before locked apply may mutate a profile."
           :version (plist-get schema-check :version)
           :format (or format 'sexp)
           :format-ok format-ok)))
+
+;;;###autoload
+(defun nelix-lock-migrate (manifest-file &rest args)
+  "Migrate MANIFEST-FILE lock data to the current lock schema.
+
+When ARGS contains `:dry-run' non-nil, return the migration plan without
+writing a lockfile.  Migration preserves old lockfiles and writes the current
+v2 S-expression lock at `nelix-manifest-lock-file-name'."
+  (let* ((dry-run (plist-get args :dry-run))
+         (source-lock-file (nelix-manifest--selected-lock-file-name
+                            manifest-file))
+         (target-lock-file (nelix-manifest-lock-file-name manifest-file))
+         (legacy-lock-file (nelix-manifest--legacy-lock-file-name
+                            manifest-file))
+         (lock (nelix-lock-read manifest-file))
+         (schema-check (nelix-lock-schema-check lock))
+         (source-schema-version (plist-get schema-check :schema-version))
+         (source-format (or (plist-get lock :format) 'sexp))
+         (needed (or (not (equal (expand-file-name source-lock-file)
+                                 (expand-file-name target-lock-file)))
+                     (not (plist-get schema-check :ok))
+                     (not (and (integerp source-schema-version)
+                               (= source-schema-version
+                                  nelix-lock-schema-version)))
+                     (not (or (eq source-format 'sexp)
+                              (equal source-format "sexp")))))
+         (report (list :ok (plist-get schema-check :ok)
+                       :status (if needed 'migration-needed 'current)
+                       :needed needed
+                       :dry-run (and dry-run t)
+                       :manifest (expand-file-name manifest-file)
+                       :source-lock source-lock-file
+                       :target-lock target-lock-file
+                       :legacy-lock legacy-lock-file
+                       :schema-check schema-check
+                       :from-schema-version source-schema-version
+                       :to-schema-version nelix-lock-schema-version
+                       :from-format source-format
+                       :to-format 'sexp)))
+    (if dry-run
+        report
+      (unless (plist-get schema-check :ok)
+        (signal 'anvil-pkg-error
+                (list (format "nelix-lock-migrate: unsupported lock schema in %s"
+                              source-lock-file))))
+      (let ((written (nelix-lock-write manifest-file)))
+        (setq report (plist-put report :status 'migrated))
+        (setq report (plist-put report :ok t))
+        (setq report (plist-put report :written-lock
+                                (plist-get written :lock)))
+        (plist-put report :written-schema-version
+                   (plist-get written :schema-version))))))
 
 (defun nelix-lock--file-row-path (row)
   "Return ROW path normalized for comparisons."

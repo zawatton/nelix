@@ -30,6 +30,7 @@ Commands:
   lock MANIFEST
   lock validate MANIFEST
   lock diff MANIFEST
+  lock migrate MANIFEST [--dry-run]
   lock-check MANIFEST
   plan MANIFEST [--dry-run]
   apply MANIFEST [--dry-run] [--locked] [--allow-remove]
@@ -291,6 +292,28 @@ read-only and already returns the dry-run convergence report."
                   (list (format "nelix lock diff: unexpected argument %S"
                                 (cadr rest)))))
         (nelix-lock-diff manifest)))
+     ((equal subcommand "migrate")
+      (let ((manifest nil)
+            (dry-run nil))
+        (while rest
+          (let ((arg (car rest)))
+            (cond
+             ((equal arg "--dry-run")
+              (setq dry-run t))
+             ((null manifest)
+              (setq manifest arg))
+             (t
+              (signal 'anvil-pkg-error
+                      (list (format "nelix lock migrate: unexpected argument %S"
+                                    arg))))))
+          (setq rest (cdr rest)))
+        (unless manifest
+          (signal 'anvil-pkg-error
+                  (list "nelix lock migrate: missing required MANIFEST")))
+        (let ((result (nelix-lock-migrate manifest :dry-run dry-run)))
+          (if dry-run
+              result
+            (nelix-cli--add-profile-path result)))))
      (t
       (nelix-cli--add-profile-path
        (nelix-lock-write (nelix-cli--arg-or-error "lock" args)))))))

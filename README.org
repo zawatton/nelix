@@ -217,7 +217,8 @@ Public Elisp API uses the short =pkg-= prefix:
 - =bin/nelix= and =scripts/nelix-cli.el= provide the initial command
   line wrapper for manifest operations: =validate=, =apply=, =audit=, =sync
   [--prune]=, =prune-plan=, =lock=, =lock validate=, =lock diff=,
-  =upgrade-plan=, =outdated=, =upgrade=, =list=, =rollback=, and =doctor=.
+  =lock migrate=, =upgrade-plan=, =outdated=, =upgrade=, =list=,
+  =rollback=, and =doctor=.
   =--json= emits
   normalized JSON for agent use.  The wrapper supports Emacs batch mode
   and standalone NeLisp direct mode via =--runtime nelisp= or

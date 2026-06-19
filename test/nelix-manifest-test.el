@@ -951,6 +951,47 @@
             (should (= 1 (plist-get schema :version)))))
       (delete-directory dir t))))
 
+(ert-deftest nelix-manifest-test-lock-migrate-legacy-v1-to-current-v2 ()
+  "lock migrate converts a legacy v1 lock into the current v2 lock path."
+  (let ((dir (make-temp-file "nelix-manifest-lock-migrate-v1-" t)))
+    (unwind-protect
+        (let* ((manifest-file
+                (nelix-manifest-test--write
+                 dir "manifest.el"
+                 "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep))\n"))
+               (legacy-lock (expand-file-name "manifest.lock.el" dir))
+               (current-lock (nelix-manifest-lock-file-name manifest-file)))
+          (copy-file (nelix-manifest-test--fixture
+                      "nelix-lock-v1-legacy.el")
+                     legacy-lock t)
+          (cl-letf (((symbol-function 'nelix-list)
+                     (lambda ()
+                       (list (list :name "ripgrep"
+                                   :attr-path "legacyPackages.x86_64-linux.ripgrep"))))
+                    ((symbol-function 'anvil-pkg-compat-executable-find)
+                     (lambda (program)
+                       (and (equal program "nix") "/usr/bin/nix")))
+                    ((symbol-function 'anvil-pkg--detect-nix-version)
+                     (lambda () "2.34.7")))
+            (let ((dry-run (nelix-lock-migrate manifest-file :dry-run t)))
+              (should (plist-get dry-run :needed))
+              (should (plist-get dry-run :dry-run))
+              (should (eq 'migration-needed (plist-get dry-run :status)))
+              (should (= 1 (plist-get dry-run :from-schema-version)))
+              (should (= 2 (plist-get dry-run :to-schema-version)))
+              (should (equal legacy-lock (plist-get dry-run :source-lock)))
+              (should (equal current-lock (plist-get dry-run :target-lock)))
+              (should-not (file-exists-p current-lock)))
+            (let* ((migrated (nelix-lock-migrate manifest-file))
+                   (read-lock (nelix-lock-read manifest-file)))
+              (should (eq 'migrated (plist-get migrated :status)))
+              (should (equal current-lock (plist-get migrated :written-lock)))
+              (should (= 2 (plist-get migrated :written-schema-version)))
+              (should (file-exists-p current-lock))
+              (should (= 2 (plist-get read-lock :schema-version)))
+              (should (equal "nelix-lock" (plist-get read-lock :schema))))))
+      (delete-directory dir t))))
+
 (ert-deftest nelix-manifest-test-lock-schema-check-rejects-future-version ()
   "Future lock schema versions are rejected until explicitly supported."
   (let ((schema (nelix-lock-schema-check

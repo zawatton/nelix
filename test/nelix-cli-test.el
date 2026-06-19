@@ -269,6 +269,34 @@
                      '(:ok nil :status drift :manifest "m.el")))
       (should (equal called "m.el")))))
 
+(ert-deftest nelix-cli-test-dispatch-lock-migrate-dry-run-is-read-only-api ()
+  "lock migrate --dry-run reports migration status without mutation metadata."
+  (let (called)
+    (cl-letf (((symbol-function 'nelix-lock-migrate)
+               (lambda (manifest &rest args)
+                 (setq called (cons manifest args))
+                 (list :ok t :needed t :dry-run (plist-get args :dry-run)))))
+      (should (equal (nelix-cli-dispatch
+                      '(:command "lock" :args ("migrate" "m.el" "--dry-run")))
+                     '(:ok t :needed t :dry-run t)))
+      (should (equal called '("m.el" :dry-run t))))))
+
+(ert-deftest nelix-cli-test-dispatch-lock-migrate-adds-profile-root ()
+  "lock migrate without --dry-run is a lockfile mutation command."
+  (let ((anvil-pkg-profile-dir "/tmp/nelix-profile")
+        called)
+    (cl-letf (((symbol-function 'nelix-lock-migrate)
+               (lambda (manifest &rest args)
+                 (setq called (cons manifest args))
+                 (list :ok t :status 'migrated
+                       :written-lock "m.el.nelix-lock"))))
+      (should (equal (nelix-cli-dispatch
+                      '(:command "lock" :args ("migrate" "m.el")))
+                     '(:ok t :status migrated
+                       :written-lock "m.el.nelix-lock"
+                       :profile-root "/tmp/nelix-profile")))
+      (should (equal called '("m.el" :dry-run nil))))))
+
 (ert-deftest nelix-cli-test-dispatch-lock-check-is-read-only-api ()
   "lock-check exposes the public lock checker without profile mutation metadata."
   (let (called)
