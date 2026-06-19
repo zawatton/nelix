@@ -320,6 +320,14 @@ or =skip= to disable it explicitly.  The default
 use =NELIX_INIT_MIGRATION_AUDIT=load-only= while developing against the source
 tree when the installed Debian bootstrap package is intentionally behind.
 
+For that source-tree case, the dedicated load-only target keeps the command
+short while still running the real manifest and NeLisp read-only checks before
+loading the user's init files:
+
+#+begin_src shell
+make verify-user-init-migration-load
+#+end_src
+
 When =autopkgtest= is available, run the Debian smoke gate too.  On a normal
 host backend, autopkgtest needs root because it writes temporary APT
 configuration under =/etc/apt=; the Makefile target invokes =sudo= only for
