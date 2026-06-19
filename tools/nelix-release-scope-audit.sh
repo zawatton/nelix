@@ -864,6 +864,8 @@ require_aot_plan_gate_docs() {
   require_contains docs/design/25-nelix-native-aot-manifest-engine.org \
     '=make smoke-nelix-aot-native-cli-proof='
   require_contains docs/design/25-nelix-native-aot-manifest-engine.org \
+    '=nelix-aot-native-cli-large-id-summary-proof='
+  require_contains docs/design/25-nelix-native-aot-manifest-engine.org \
     '=NELIX_NELISP_AOT=0='
   require_contains docs/design/29-nelix-release-worktree-scope.org \
     '=plan=, =apply --dry-run=, =upgrade-plan=, and their JSON variants'
@@ -879,6 +881,12 @@ require_aot_plan_gate_docs() {
     'smoke-nelix-aot-native-cli-proof:'
   require_contains Makefile \
     'tools/nelix-aot-native-cli-proof-gate.sh'
+  require_contains Makefile \
+    'nelix-aot-native-cli-large-id-summary-proof'
+  require_contains tools/nelix-aot-native-cli-proof-gate.sh \
+    'target-id-rows\t204'
+  require_contains tools/nelix-aot-native-cli-proof-gate.sh \
+    'large-id-proof-code'
   require_contains Makefile \
     "tar -xO ./usr/bin/nelix | grep -q 'NELIX_NELISP_AOT:-auto'"
   require_contains Makefile \

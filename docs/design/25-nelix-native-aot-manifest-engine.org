@@ -280,7 +280,10 @@ Status on 2026-06-17:
   =scripts/nelix-aot-native-cli-proof.el=, runs
   =nelisp native-exec-elisp-artifact= directly, and verifies numeric proof,
   compact audit line proof, numeric-ID audit line proof, and numeric-ID
-  upgrade line proof without entering the full Nelix CLI.
+  upgrade line proof without entering the full Nelix CLI.  The larger
+  numeric-ID path also emits an exact tab-separated summary so the gate
+  proves string result output from a 204-row standalone native scan, not
+  only a small integer return code.
 - =scripts/nelix-aot-native-subset.el= proves the native-eligible
   name-set comparison kernel as 8-bit integer set operations.  The host
   proof executes both leaf kernels and the composed equality code.  The
@@ -709,14 +712,17 @@ Do not auto-select replay-source runtime-image mode for speed.
   =scripts/nelix-aot-native-cli-proof.el= to =.neln=, invokes
   =nelisp native-exec-elisp-artifact= directly, and requires
   =nelix-aot-native-cli-large-id-scan-proof= to count all 204 rows while
-  proving the payload crossed the larger-manifest threshold.  This is still
-  a scanner/dispatch proof rather than a full allocator telemetry gate, but
-  it prevents the public native path from regressing back to tiny fixed
-  payloads only.  The Debian ELPA payload now ships
+  proving the payload crossed the larger-manifest threshold.  The gate also
+  requires =nelix-aot-native-cli-large-id-summary-proof= to return
+  =target-id-rows\t204=, =payload-threshold\tlarge=, and
+  =scan-proof\tok= through the public string result lane.  This is still a
+  scanner/dispatch proof rather than a full allocator telemetry gate, but it
+  prevents the public native path from regressing back to tiny fixed payloads
+  only.  The Debian ELPA payload now ships
   =scripts/nelix-aot-native-cli-proof.el= and
   =scripts/nelix-aot-native-subset.el=, and =verify-deb-contents= anchors the
-  =large-id-scan-proof= definition plus its 204-row contract so packaging does
-  not silently drop the proof sources.
+  =large-id-scan-proof= and =large-id-summary-proof= definitions plus their
+  204-row contract so packaging does not silently drop the proof sources.
 - 2026-06-18: the native subset proof now covers the =upgrade-plan=
   numeric-ID contract, not only audit.  Host native exec verifies
   =target-candidate-id-mask=7=, =pin-id-mask=2=,

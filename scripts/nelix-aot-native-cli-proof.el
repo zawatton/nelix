@@ -303,6 +303,16 @@ and that it still starts with the Nelix AOT protocol header."
      (if (>= (str-len text) 2500) 1 0)
      (if (= (str-byte-at text 0) 78) 1 0)))
 
+(defun nelix-aot-native-cli-large-id-summary-proof (text)
+  "Return a machine-readable summary for the larger numeric-ID proof.
+The public gate checks this exact string so the standalone native path has
+to scan the full payload and return a string result, not only a small code."
+  (if (= (nelix-aot-native-cli-count-target-id text) 204)
+      (if (>= (str-len text) 2500)
+          "target-id-rows\t204\npayload-threshold\tlarge\nscan-proof\tok\n"
+        "error\tpayload-too-small\n")
+    "error\tbad-target-id-count\n"))
+
 (provide 'nelix-aot-native-cli-proof)
 
 ;;; nelix-aot-native-cli-proof.el ends here

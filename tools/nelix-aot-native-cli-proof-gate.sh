@@ -100,4 +100,15 @@ test "$large_id_scan_proof" = "206" || {
   exit 1
 }
 
+large_id_summary_output="$("$NELISP" native-exec-elisp-artifact "$artifact" nelix-aot-native-cli-large-id-summary-proof "$large_id_payload")"
+large_id_summary_expected="$(printf 'target-id-rows\t204\npayload-threshold\tlarge\nscan-proof\tok')"
+large_id_summary_expected_lisp='"target-id-rows\t204\npayload-threshold\tlarge\nscan-proof\tok\n"'
+{ test "$large_id_summary_output" = "$large_id_summary_expected" ||
+  test "$large_id_summary_output" = "$large_id_summary_expected_lisp"; } || {
+  echo "error: standalone large ID summary proof returned $large_id_summary_output" >&2
+  exit 1
+}
+
+printf '%s\n' "$large_id_summary_output"
+printf 'large-id-proof-code\t%s\n' "$large_id_scan_proof"
 echo "nelix-aot-native-cli-proof-gate: standalone .neln CLI proof passed"
