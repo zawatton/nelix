@@ -814,6 +814,16 @@ run_json bad_lock_check lock-check "$bad_lock_manifest"
 expect_json bad_lock_check '"ok":null'
 expect_json bad_lock_check \
   'lock package row 1 is missing schema-required key :source'
+bad_lock_record_count_before="$(transaction_record_count)"
+: >"$fake_log"
+run_failing_json bad_lock_apply_locked __never__ \
+  apply "$bad_lock_manifest" --locked --allow-remove-count 2
+expect_json bad_lock_apply_locked \
+  'nelix locked mode: lock schema incompatible'
+reject_log 'profile install'
+reject_log 'profile remove'
+reject_log 'profile rollback'
+assert_transaction_record_count bad-lock-apply-locked "$bad_lock_record_count_before"
 
 dry_run_record_count_before="$(transaction_record_count)"
 run_json plan plan "$manifest" --dry-run
