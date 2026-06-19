@@ -265,6 +265,17 @@ real user manifest.  It defaults to =NELIX_USER_MANIFEST_NELISP=required=,
 building or reinstalling a Debian package when changing the Nelix runtime,
 manifest fast lane, or the personal =nelix-package.el= migration files.
 
+For source-tree development, =verify-user-source-gate= combines that real
+manifest/runtime gate with the init migration load-only gate.  It verifies the
+real =~/.emacs.d/nelix-package.el=, NeLisp AOT read-only commands, plan/apply
+dry-run equivalence, and the user's =early-init.el= / =init.el= load path
+without requiring the installed Debian bootstrap package to already match the
+source tree:
+
+#+begin_src shell
+make verify-user-source-gate
+#+end_src
+
 =verify-installed-user-manifest-runtime= runs the same personal manifest
 runtime gate through the installed Debian package by setting =NELIX_BIN= to
 =/usr/bin/nelix= and =NELIX_LISPDIR= to the installed ELPA source directory.
