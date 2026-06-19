@@ -1380,6 +1380,8 @@ manifest targets."
       (setq transaction-plan
             (plist-put transaction-plan :commands transaction-commands))
       (setq transaction-plan
+            (plist-put transaction-plan :dry-run nil))
+      (setq transaction-plan
             (plist-put transaction-plan :locked (and lock-check t)))
       (setq transaction-plan
             (plist-put transaction-plan :lock-check lock-check))
@@ -2212,6 +2214,7 @@ remove count."
               (nelix-manifest--require-remove-safe
                remove allow-remove allow-remove-count))
         (setq plan (plist-put plan :remove-safety remove-safety))
+        (setq plan (plist-put plan :dry-run nil))
         (setq transaction
               (nelix-manifest--transaction-begin
                commands rollback-on-error))

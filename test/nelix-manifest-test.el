@@ -406,8 +406,13 @@
               (should (string-match-p "refusing to remove 1 package"
                                       (cadr err))))
             (should-not nix-calls)
-            (let ((report (nelix-apply (expand-file-name "manifest.el" dir)
-                                       :allow-remove-count 1)))
+            (let* ((manifest-file (expand-file-name "manifest.el" dir))
+                   (dry-run-report (nelix-apply manifest-file :dry-run t))
+                   (dry-run-commands (plist-get dry-run-report :commands))
+                   (report (nelix-apply manifest-file
+                                        :allow-remove-count 1)))
+              (should (plist-get dry-run-report :dry-run))
+              (should (= 2 (length dry-run-commands)))
               (should (eq 'ok (plist-get report :status)))
               (should (eq 'nix (plist-get report :backend)))
               (should (equal '("ripgrep")
@@ -437,6 +442,10 @@
                 (should (= 2 (length (plist-get
                                       (plist-get record :plan)
                                       :commands))))
+                (should-not (plist-get (plist-get record :plan) :dry-run))
+                (should (equal dry-run-commands
+                               (plist-get (plist-get record :plan)
+                                          :commands)))
                 (should (plist-get (plist-get record :rollback-plan)
                                    :available))
                 (should (equal 7 (plist-get
