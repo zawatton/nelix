@@ -104,6 +104,61 @@ expect_json() {
   fi
 }
 
+lock_schema_file() {
+  if [ -f "$script_dir/../schema/nelix-lock-v2.schema.json" ]; then
+    printf '%s\n' "$script_dir/../schema/nelix-lock-v2.schema.json"
+  elif [ -f "$script_dir/../docs/schema/nelix-lock-v2.schema.json" ]; then
+    printf '%s\n' "$script_dir/../docs/schema/nelix-lock-v2.schema.json"
+  else
+    echo "nelix installed CLI gate: lock v2 JSON schema file is missing" >&2
+    exit 1
+  fi
+}
+
+validate_lock_json_schema_smoke() {
+  schema_file="$(lock_schema_file)"
+  lock_json="$tmp/lock.json"
+  emacs -Q --batch \
+    --eval '(require (quote json))' \
+    --eval '(let ((json-object-type (quote alist))
+                  (json-array-type (quote list))
+                  (json-key-type (quote string)))
+              (let* ((args command-line-args-left)
+                     (_ (when (equal (car args) "--")
+                          (setq args (cdr args))))
+                     (schema (json-read-file (car args)))
+                     (lock (json-read-file (cadr args)))
+                     (schema-properties (alist-get "properties" schema nil nil (function string=)))
+                     (defs (alist-get "$defs" schema nil nil (function string=)))
+                     (package-schema (alist-get "package" defs nil nil (function string=)))
+                     (required (alist-get "required" schema nil nil (function string=)))
+                     (package-required (alist-get "required" package-schema nil nil (function string=)))
+                     (packages (alist-get "packages" lock nil nil (function string=))))
+                (dolist (key required)
+                  (unless (assoc key lock)
+                    (error "lock JSON is missing schema-required key: %s" key)))
+                (unless (equal (alist-get "const" (alist-get "schema" schema-properties nil nil (function string=)) nil nil (function string=))
+                               (alist-get "schema" lock nil nil (function string=)))
+                  (error "lock JSON schema const mismatch"))
+                (unless (= (alist-get "const" (alist-get "schema-version" schema-properties nil nil (function string=)) nil nil (function string=))
+                           (alist-get "schema-version" lock nil nil (function string=)))
+                  (error "lock JSON schema-version const mismatch"))
+                (unless (= (alist-get "const" (alist-get "version" schema-properties nil nil (function string=)) nil nil (function string=))
+                           (alist-get "version" lock nil nil (function string=)))
+                  (error "lock JSON version const mismatch"))
+                (unless (equal (alist-get "const" (alist-get "format" schema-properties nil nil (function string=)) nil nil (function string=))
+                               (alist-get "format" lock nil nil (function string=)))
+                  (error "lock JSON format const mismatch"))
+                (unless packages
+                  (error "lock JSON packages must not be empty in installed CLI gate"))
+                (dolist (package packages)
+                  (dolist (key package-required)
+                    (unless (assoc key package)
+                      (error "lock JSON package is missing schema-required key: %s" key))))
+                (princ "nelix installed CLI lock schema smoke ok\n")))' \
+    -- "$schema_file" "$lock_json"
+}
+
 expect_log() {
   pattern="$1"
   if ! grep -Eq "$pattern" "$fake_log"; then
@@ -223,6 +278,7 @@ test -f "$manifest.nelix-lock" || {
 expect_json lock '"lock":'
 expect_json lock '"schema":"nelix-lock"'
 expect_json lock '"schema-version":2'
+validate_lock_json_schema_smoke
 
 run_json lock_validate lock validate "$manifest"
 expect_json lock_validate '"ok":true'

@@ -318,6 +318,8 @@ verify-deb-contents:
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'lock_validate lock validate'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'lock_diff lock diff'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'lock_migrate_dry_run lock migrate'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'validate_lock_json_schema_smoke'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'lock JSON package is missing schema-required key'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'lock_check lock-check'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'plan "$$manifest" --dry-run'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'schema_manifest schema manifest-dsl-v1'
