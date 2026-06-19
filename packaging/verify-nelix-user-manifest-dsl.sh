@@ -348,7 +348,45 @@ run_locked_readonly_checks() (
 
 run_nelisp_aot_readonly() {
   nelisp_tmp="$(mktemp -d)"
-  trap 'rm -rf "$nelisp_tmp"' EXIT HUP INT TERM
+  lock_file="$manifest.nelix-lock"
+  cache_file="$manifest.nelix-aot-targets"
+  lock_backup="$nelisp_tmp/manifest.nelix-lock.backup"
+  cache_backup="$nelisp_tmp/manifest.nelix-aot-targets.backup"
+  had_lock=0
+  had_cache=0
+
+  cleanup_nelisp_aot_readonly() {
+    if [ "$had_lock" -eq 1 ]; then
+      cp -p "$lock_backup" "$lock_file"
+    else
+      rm -f "$lock_file"
+    fi
+    if [ "$had_cache" -eq 1 ]; then
+      cp -p "$cache_backup" "$cache_file"
+    else
+      rm -f "$cache_file"
+    fi
+    rm -rf "$nelisp_tmp"
+  }
+  trap cleanup_nelisp_aot_readonly EXIT HUP INT TERM
+
+  if [ -f "$lock_file" ]; then
+    cp -p "$lock_file" "$lock_backup"
+    had_lock=1
+  fi
+  if [ -f "$cache_file" ]; then
+    cp -p "$cache_file" "$cache_backup"
+    had_cache=1
+  fi
+
+  if ! run_nelix_with_timeout --json lock "$manifest" \
+    >"$nelisp_tmp/lock.json" \
+    2>"$nelisp_tmp/lock.err"; then
+    sed -n '1,3p' "$nelisp_tmp/lock.json" >&2
+    sed -n '1,20p' "$nelisp_tmp/lock.err" >&2
+    return 1
+  fi
+  expect_json_fragment lock "$nelisp_tmp/lock.json" '"schema":"nelix-lock"' || return 1
 
   if ! run_nelix_timed aot-cache "$nelisp_tmp/aot-cache.out" "$nelisp_tmp/aot-cache.err" \
     --runtime nelisp aot-cache "$manifest"; then
@@ -493,7 +531,7 @@ run_nelisp_aot_readonly() {
   expect_json_fragment lock-check "$nelisp_tmp/lock-check.json" '"ok":true' || return 1
   expect_json_fragment lock-check "$nelisp_tmp/lock-check.json" '"checked-by":":nelisp-aot-cache"' || return 1
 
-  rm -rf "$nelisp_tmp"
+  cleanup_nelisp_aot_readonly
   trap - EXIT HUP INT TERM
   printf 'nelix user manifest nelisp AOT read-only ok: %s\n' "$manifest"
 }

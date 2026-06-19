@@ -91,7 +91,7 @@ else
 fi
 
 check_deb_version() {
-  expected_deb_version="${NELIX_INIT_MIGRATION_EXPECTED_DEB_VERSION:-0.1.0-4}"
+  expected_deb_version="${NELIX_INIT_MIGRATION_EXPECTED_DEB_VERSION:-0.1.0-5}"
   if ! command -v dpkg-query >/dev/null 2>&1; then
     echo "dpkg-query is required for Debian package version verification" >&2
     exit 1

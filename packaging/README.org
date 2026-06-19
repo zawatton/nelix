@@ -89,7 +89,7 @@ version; bump the Debian revision when the package payload changes.
 
 #+begin_src shell
 make deb-local-gate
-sudo apt install /home/madblack-21/Cowork/Notes/dev/elpa-nelix_0.1.0-4_all.deb
+sudo apt install /home/madblack-21/Cowork/Notes/dev/elpa-nelix_0.1.0-5_all.deb
 #+end_src
 
 For source-package publication, build and lint the full source upload:
@@ -99,8 +99,8 @@ make deb-source-gate
 #+end_src
 
 This produces =../nelix_0.1.0.orig.tar.gz=,
-=../nelix_0.1.0-4.dsc=, =../nelix_0.1.0-4.debian.tar.xz=, and
-=../nelix_0.1.0-4_source.changes=, then runs =lintian= over the source
+=../nelix_0.1.0-5.dsc=, =../nelix_0.1.0-5.debian.tar.xz=, and
+=../nelix_0.1.0-5_source.changes=, then runs =lintian= over the source
 changes.  =debian/source/options= ignores local generated smoke caches and
 repository outputs, so =.cache/= or local publication trees do not appear as
 unexpected upstream changes.
@@ -179,7 +179,7 @@ make verify-installed-debian
 
 The verifier checks:
 
-- =elpa-nelix= is installed at version =0.1.0-4= or newer
+- =elpa-nelix= is installed at version =0.1.0-5= or newer
 - normal Debian Emacs startup can =(require 'nelix)=
 - =emacs -Q= can load from the installed ELPA source directory
 - =anvil-pkg-profile-dir= resolves to =~/.local/state/nelix/profile=
@@ -196,6 +196,7 @@ verifier after the Debian package verifier passes:
 
 #+begin_src shell
 make verify-user-manifest-dsl
+make verify-user-runtime-gate
 make verify-installed-user-manifest-runtime
 make verify-user-environment
 make verify-user-init-migration
@@ -232,6 +233,15 @@ with =NELIX_USER_MANIFEST_MAX_MISSING=N=,
 previous lock file so the real profile is not mutated.  When combined with
 =NELIX_USER_MANIFEST_NELISP=required=, the locked dry-run must use the
 =:nelisp-aot-cache= fast lane.
+
+=verify-user-runtime-gate= is the strict source-tree shortcut for the same
+real user manifest.  It defaults to =NELIX_USER_MANIFEST_NELISP=required=,
+=NELIX_USER_MANIFEST_LOCKED=required=,
+=NELIX_USER_MANIFEST_MIN_TARGETS=180=, and caps
+=NELIX_USER_MANIFEST_MAX_MISSING=0=, =NELIX_USER_MANIFEST_MAX_EXTRA=0=, and
+=NELIX_USER_MANIFEST_MAX_REMOVE=0=.  It is the rootless gate to run before
+building or reinstalling a Debian package when changing the Nelix runtime,
+manifest fast lane, or the personal =nelix-package.el= migration files.
 
 =verify-installed-user-manifest-runtime= runs the same personal manifest
 runtime gate through the installed Debian package by setting =NELIX_BIN= to
@@ -375,14 +385,14 @@ make apt-repo-gate
 This target runs:
 
 - =make deb-local-gate=
-- =packaging/apt/make-repo.sh ../elpa-nelix_0.1.0-4_all.deb ../nelix-apt-repo unstable=
+- =packaging/apt/make-repo.sh ../elpa-nelix_0.1.0-5_all.deb ../nelix-apt-repo unstable=
 - =packaging/apt/verify-repo.sh ../nelix-apt-repo unstable=
 
 The generated repository has this shape:
 
 #+begin_example
 nelix-apt-repo/
-  pool/main/n/nelix/elpa-nelix_0.1.0-4_all.deb
+  pool/main/n/nelix/elpa-nelix_0.1.0-5_all.deb
   dists/unstable/Release
   dists/unstable/main/binary-all/Packages
   dists/unstable/main/binary-all/Packages.gz

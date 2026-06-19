@@ -284,30 +284,30 @@ bootstrap reason:
 
 #+begin_example
 installed elpa-nelix: 0.1.0-3
-required by ~/.emacs.d/custom-lisp/nelix-linux.el: 0.1.0-4
+required by ~/.emacs.d/custom-lisp/nelix-linux.el: 0.1.0-5
 #+end_example
 
 This is not a manifest/runtime mismatch: the read-only Nelix commands report
 =missing=0=, =extra=0=, and =remove=0=.  It means the next operational step on
-this machine is to install =../elpa-nelix_0.1.0-4_all.deb= before treating
+this machine is to install =../elpa-nelix_0.1.0-5_all.deb= before treating
 =my-nelix-audit= as green.
 
 * 7. Debian Package Verification
 
-Installed package verification requires =elpa-nelix >= 0.1.0-4= because older
+Installed package verification requires =elpa-nelix >= 0.1.0-5= because older
 packages did not ship =/usr/bin/nelix=.
 
 After installing the rebuilt package:
 
 #+begin_src sh
-sudo apt install --reinstall ../elpa-nelix_0.1.0-4_all.deb
+sudo apt install --reinstall ../elpa-nelix_0.1.0-5_all.deb
 
 NELIX_USER_MANIFEST="$HOME/.emacs.d/nelix-package.el" \
 NELIX_USER_MANIFEST_NELISP=1 \
 NELIX_USER_MANIFEST_LOCKED=required \
 NELISP=/home/madblack-21/Cowork/Notes/dev/nelisp/target/nelisp \
 NELISP_ROOT=/home/madblack-21/Cowork/Notes/dev/nelisp \
-packaging/verify-installed-nelix-debian.sh 0.1.0-4
+packaging/verify-installed-nelix-debian.sh 0.1.0-5
 #+end_src
 
 Without root access, the package payload can still be verified by extraction:
@@ -318,7 +318,7 @@ NELIX_USER_MANIFEST_NELISP=1 \
 NELIX_USER_MANIFEST_LOCKED=required \
 NELISP=/home/madblack-21/Cowork/Notes/dev/nelisp/target/nelisp \
 NELISP_ROOT=/home/madblack-21/Cowork/Notes/dev/nelisp \
-packaging/verify-extracted-nelix-debian.sh ../elpa-nelix_0.1.0-4_all.deb 0.1.0-4
+packaging/verify-extracted-nelix-debian.sh ../elpa-nelix_0.1.0-5_all.deb 0.1.0-5
 #+end_src
 
 Both installed and extracted Debian verifiers print the same NeLisp AOT real

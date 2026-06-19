@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 
-deb="${1:-../elpa-nelix_0.1.0-4_all.deb}"
-expected_version="${2:-0.1.0-4}"
+deb="${1:-../elpa-nelix_0.1.0-5_all.deb}"
+expected_version="${2:-0.1.0-5}"
 expected_profile="${NELIX_EXPECTED_PROFILE:-$HOME/.local/state/nelix/profile}"
 elpa_rel="usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0"
 

@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-expected_version="${1:-0.1.0-4}"
+expected_version="${1:-0.1.0-5}"
 expected_profile="${NELIX_EXPECTED_PROFILE:-$HOME/.local/state/nelix/profile}"
 elpa_src_dir="/usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0"
 

@@ -26,7 +26,7 @@ INSTALL_DATA ?= $(INSTALL) -m 0644
 INSTALL_PROGRAM ?= $(INSTALL) -m 0755
 INSTALL_DIR ?= $(INSTALL) -d
 RM ?= rm -f
-DEB_VERSION ?= 0.1.0-4
+DEB_VERSION ?= 0.1.0-5
 DEB_UPSTREAM_VERSION ?= $(firstword $(subst -, ,$(DEB_VERSION)))
 DEB_ORIG ?= ../nelix_$(DEB_UPSTREAM_VERSION).orig.tar.gz
 DEB_SOURCE_CHANGES ?= ../nelix_$(DEB_VERSION)_source.changes
@@ -434,6 +434,7 @@ verify-deb-contents:
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq '"recovery":"nelix transaction recover ID|FILE --dry-run"'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/README.org.gz | gzip -dc | grep -q 'make verify-user-environment'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/README.org.gz | gzip -dc | grep -q 'make verify-user-manifest-dsl'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/README.org.gz | gzip -dc | grep -q 'make verify-user-runtime-gate'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/README.org.gz | gzip -dc | grep -q 'make verify-installed-user-manifest-runtime'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/README.org.gz | gzip -dc | grep -q 'make verify-user-init-migration'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/README.org.gz | gzip -dc | grep -q ':nelisp-aot-cache'
