@@ -68,10 +68,12 @@ run_nelix_json() {
 }
 
 run_nelix_json --runtime nelisp --json validate "$manifest"
+run_nelix_json --runtime nelisp --json list
 run_nelix_json --runtime nelisp --json audit "$manifest"
-run_nelix_json --runtime nelisp --json plan "$manifest"
+run_nelix_json --runtime nelisp --json plan "$manifest" --dry-run
 run_nelix_json --runtime nelisp --json apply "$manifest" --dry-run
 run_nelix_json --runtime nelisp --json upgrade-plan "$manifest"
+run_nelix_json --runtime nelisp --json lock-check "$manifest"
 
 (
   lock_tmp="$(mktemp -d)"

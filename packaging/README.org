@@ -224,7 +224,8 @@ Nelix manifest/audit path only.
 
 =verify-user-init-migration= is the explicit daily-use cutover check.  It first
 runs the personal manifest through =nelix --runtime nelisp= read-only commands
-(=validate=, =audit=, =plan=, =apply --dry-run=, =upgrade-plan=, and locked
+(=validate=, =list=, =audit=, =plan --dry-run=, =apply --dry-run=,
+=upgrade-plan=, =lock-check=, and locked
 =apply --dry-run=), then loads =~/.emacs.d/early-init.el= and
 =~/.emacs.d/init.el= in Emacs batch and runs =my-nelix-audit=.  This target is
 not part of =deb-full-gate=; run it when verifying the real desktop Emacs

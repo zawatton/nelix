@@ -752,6 +752,10 @@ nelix_try_nelisp_aot_cache_fast_lane() {
     json=1
     command=apply-dry-run-locked
     manifest=$(nelix_abs_path "$3")
+  elif [ "$#" -eq 4 ] && [ "$1" = "--json" ] && [ "$2" = "plan" ] && [ "$4" = "--dry-run" ]; then
+    json=1
+    command=plan
+    manifest=$(nelix_abs_path "$3")
   elif [ "$#" -eq 3 ] && [ "$1" = "apply" ] && [ "$3" = "--dry-run" ]; then
     json=0
     command=apply-dry-run
@@ -763,6 +767,10 @@ nelix_try_nelisp_aot_cache_fast_lane() {
   elif [ "$#" -eq 4 ] && [ "$1" = "apply" ] && [ "$3" = "--dry-run" ] && [ "$4" = "--locked" ]; then
     json=0
     command=apply-dry-run-locked
+    manifest=$(nelix_abs_path "$2")
+  elif [ "$#" -eq 3 ] && [ "$1" = "plan" ] && [ "$3" = "--dry-run" ]; then
+    json=0
+    command=plan
     manifest=$(nelix_abs_path "$2")
   elif [ "$#" -eq 3 ] && [ "$1" = "--json" ]; then
     json=1

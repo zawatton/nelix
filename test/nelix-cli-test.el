@@ -229,6 +229,9 @@
       (should (equal (nelix-cli-dispatch
                       '(:command "plan" :args ("m.el")))
                      '(:status planned :manifest "m.el")))
+      (should (equal (nelix-cli-dispatch
+                      '(:command "plan" :args ("m.el" "--dry-run")))
+                     '(:status planned :manifest "m.el")))
       (should (equal called "m.el")))))
 
 (ert-deftest nelix-cli-test-mutating-command-adds-profile-root ()

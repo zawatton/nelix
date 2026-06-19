@@ -29,7 +29,7 @@ Commands:
   validate MANIFEST
   lock MANIFEST
   lock-check MANIFEST
-  plan MANIFEST
+  plan MANIFEST [--dry-run]
   apply MANIFEST [--dry-run] [--locked] [--allow-remove]
                  [--allow-remove-count N] [--no-rollback]
   audit MANIFEST
@@ -223,6 +223,26 @@ Commands:
                    (and allow-remove (list :allow-remove t))
                    (and allow-remove-count
                         (list :allow-remove-count allow-remove-count))))))
+
+(defun nelix-cli--dispatch-plan (args)
+  "Dispatch `nelix plan' with ARGS.
+
+`--dry-run' is accepted as an explicit no-op because `plan' is always
+read-only and already returns the dry-run convergence report."
+  (let ((manifest nil))
+    (while args
+      (let ((arg (car args)))
+        (cond
+         ((equal arg "--dry-run"))
+         ((null manifest) (setq manifest arg))
+         (t (signal 'anvil-pkg-error
+                    (list (format "nelix plan: unexpected argument %S"
+                                  arg))))))
+      (setq args (cdr args)))
+    (unless manifest
+      (signal 'anvil-pkg-error
+              (list "nelix plan: missing required MANIFEST")))
+    (nelix-plan manifest)))
 
 (defun nelix-cli--dispatch-schema (args)
   "Dispatch `nelix schema' with ARGS."
@@ -686,7 +706,7 @@ ALLOWED may contain `profile', `system', `generation', and `dry-run'."
            ((equal command "apply")
             (nelix-cli--dispatch-apply args))
            ((equal command "plan")
-            (nelix-plan (nelix-cli--arg-or-error command args)))
+            (nelix-cli--dispatch-plan args))
            ((equal command "audit")
             (nelix-cli--dispatch-audit args json))
            ((equal command "sync")

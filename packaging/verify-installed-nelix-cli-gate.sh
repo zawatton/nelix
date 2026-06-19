@@ -183,7 +183,7 @@ expect_json lock_check '"ok":true'
 expect_json lock_check '"schema-check":'
 expect_json lock_check '"schema-version":2'
 
-run_json plan plan "$manifest"
+run_json plan plan "$manifest" --dry-run
 expect_json plan '"status":"planned"'
 expect_json plan '"action":"install"'
 expect_json plan '"name":"ripgrep"'

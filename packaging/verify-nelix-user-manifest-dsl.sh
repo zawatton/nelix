@@ -148,6 +148,15 @@ run_nelisp_aot_readonly() {
     return 1
   fi
 
+  if ! run_nelix_with_timeout --runtime nelisp --json list \
+    >"$nelisp_tmp/list.json" \
+    2>"$nelisp_tmp/list.err"; then
+    sed -n '1,3p' "$nelisp_tmp/list.json" >&2
+    sed -n '1,20p' "$nelisp_tmp/list.err" >&2
+    return 1
+  fi
+  expect_json_fragment list "$nelisp_tmp/list.json" '[' || return 1
+
   if ! run_nelix_with_timeout --runtime nelisp --json audit "$manifest" \
     >"$nelisp_tmp/audit.json" \
     2>"$nelisp_tmp/audit.err"; then
@@ -158,7 +167,7 @@ run_nelisp_aot_readonly() {
   expect_json_fragment audit "$nelisp_tmp/audit.json" '"fallback":":nelisp-aot-cache"' || return 1
   expect_json_fragment audit "$nelisp_tmp/audit.json" '"backend":"nix"' || return 1
 
-  if ! run_nelix_with_timeout --runtime nelisp --json plan "$manifest" \
+  if ! run_nelix_with_timeout --runtime nelisp --json plan "$manifest" --dry-run \
     >"$nelisp_tmp/plan.json" \
     2>"$nelisp_tmp/plan.err"; then
     sed -n '1,3p' "$nelisp_tmp/plan.json" >&2
@@ -179,6 +188,7 @@ run_nelisp_aot_readonly() {
   expect_json_fragment apply-dry-run "$nelisp_tmp/apply-dry-run.json" '"status":"dry-run"' || return 1
   expect_json_fragment apply-dry-run "$nelisp_tmp/apply-dry-run.json" '"fallback":":nelisp-aot-cache"' || return 1
   expect_json_fragment apply-dry-run "$nelisp_tmp/apply-dry-run.json" '"backend":"nix"' || return 1
+  expect_json_fragment apply-dry-run "$nelisp_tmp/apply-dry-run.json" '"remove":[' || return 1
 
   if ! run_nelix_with_timeout --runtime nelisp --json upgrade-plan "$manifest" \
     >"$nelisp_tmp/upgrade-plan.json" \
@@ -190,6 +200,16 @@ run_nelisp_aot_readonly() {
   expect_json_fragment upgrade-plan "$nelisp_tmp/upgrade-plan.json" '"operation":"upgrade"' || return 1
   expect_json_fragment upgrade-plan "$nelisp_tmp/upgrade-plan.json" '"fallback":":nelisp-aot-cache"' || return 1
   expect_json_fragment upgrade-plan "$nelisp_tmp/upgrade-plan.json" '"backend":"nix"' || return 1
+
+  if ! run_nelix_with_timeout --runtime nelisp --json lock-check "$manifest" \
+    >"$nelisp_tmp/lock-check.json" \
+    2>"$nelisp_tmp/lock-check.err"; then
+    sed -n '1,3p' "$nelisp_tmp/lock-check.json" >&2
+    sed -n '1,20p' "$nelisp_tmp/lock-check.err" >&2
+    return 1
+  fi
+  expect_json_fragment lock-check "$nelisp_tmp/lock-check.json" '"ok":true' || return 1
+  expect_json_fragment lock-check "$nelisp_tmp/lock-check.json" '"checked-by":":nelisp-aot-cache"' || return 1
 
   rm -rf "$nelisp_tmp"
   trap - EXIT HUP INT TERM

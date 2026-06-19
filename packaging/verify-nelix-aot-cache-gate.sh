@@ -132,7 +132,7 @@ expect_output audit '^missing[[:space:]]+fd$'
 expect_output audit '^extra[[:space:]]+bat$'
 expect_output audit '^fallback[[:space:]]+:nelisp-aot-cache$'
 
-run_capture apply_plan plan "$manifest"
+run_capture apply_plan plan "$manifest" --dry-run
 expect_output apply_plan '^status[[:space:]]+planned$'
 expect_output apply_plan '^install[[:space:]]+fd$'
 expect_output apply_plan '^remove[[:space:]]+bat$'
@@ -162,7 +162,7 @@ expect_output audit_json '"missing":\["fd"\]'
 expect_output audit_json '"extra":\["bat"\]'
 expect_output audit_json '"fallback":":nelisp-aot-cache"'
 
-run_capture apply_plan_json --json plan "$manifest"
+run_capture apply_plan_json --json plan "$manifest" --dry-run
 expect_output apply_plan_json '"status":"planned"'
 expect_output apply_plan_json '"action":"install","name":"fd"'
 expect_output apply_plan_json '"action":"remove","name":"bat"'
