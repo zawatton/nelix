@@ -5,6 +5,8 @@ repo_dir="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 manifest="${NELIX_USER_MANIFEST:-$HOME/.emacs.d/nelix-package.el}"
 nelisp_mode="${NELIX_USER_MANIFEST_NELISP:-auto}"
 locked_mode="${NELIX_USER_MANIFEST_LOCKED:-auto}"
+nelisp_max_seconds="${NELIX_USER_MANIFEST_NELISP_MAX_SECONDS:-5}"
+nelisp_min_targets="${NELIX_USER_MANIFEST_MIN_TARGETS:-0}"
 
 if [ ! -f "$manifest" ]; then
   echo "Nelix user manifest is missing: $manifest" >&2
@@ -12,6 +14,20 @@ if [ ! -f "$manifest" ]; then
 fi
 
 export NELIX_USER_MANIFEST="$manifest"
+
+case "$nelisp_max_seconds" in
+  ''|*[!0-9]*)
+    echo "invalid NELIX_USER_MANIFEST_NELISP_MAX_SECONDS value: $nelisp_max_seconds" >&2
+    exit 64
+    ;;
+esac
+
+case "$nelisp_min_targets" in
+  ''|*[!0-9]*)
+    echo "invalid NELIX_USER_MANIFEST_MIN_TARGETS value: $nelisp_min_targets" >&2
+    exit 64
+    ;;
+esac
 
 emacs -Q --batch \
   --eval '(let ((read-eval nil)
@@ -71,6 +87,31 @@ compare_runtime_json() {
   emacs -Q --batch \
     -l "$repo_dir/packaging/compare-nelix-json.el" \
     -- "$label" "$emacs_json" "$nelisp_json" "$@"
+}
+
+run_nelix_timed() {
+  label="$1"
+  out_file="$2"
+  err_file="$3"
+  shift 3
+  start="$(date +%s)"
+  if run_nelix_with_timeout "$@" >"$out_file" 2>"$err_file"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  end="$(date +%s)"
+  elapsed=$((end - start))
+  printf 'nelix user manifest timing: %s elapsed=%ss max=%ss\n' \
+    "$label" "$elapsed" "$nelisp_max_seconds" >&2
+  if [ "$rc" -ne 0 ]; then
+    return "$rc"
+  fi
+  if [ "$nelisp_max_seconds" -gt 0 ] && [ "$elapsed" -gt "$nelisp_max_seconds" ]; then
+    echo "nelix user manifest $label exceeded NELIX_USER_MANIFEST_NELISP_MAX_SECONDS=${nelisp_max_seconds}s" >&2
+    return 1
+  fi
+  return 0
 }
 
 run_locked_readonly_checks() (
@@ -144,9 +185,8 @@ run_nelisp_aot_readonly() {
   nelisp_tmp="$(mktemp -d)"
   trap 'rm -rf "$nelisp_tmp"' EXIT HUP INT TERM
 
-  if ! run_nelix_with_timeout --runtime nelisp aot-cache "$manifest" \
-    >"$nelisp_tmp/aot-cache.out" \
-    2>"$nelisp_tmp/aot-cache.err"; then
+  if ! run_nelix_timed aot-cache "$nelisp_tmp/aot-cache.out" "$nelisp_tmp/aot-cache.err" \
+    --runtime nelisp aot-cache "$manifest"; then
     sed -n '1,20p' "$nelisp_tmp/aot-cache.out" >&2
     sed -n '1,20p' "$nelisp_tmp/aot-cache.err" >&2
     return 1
@@ -157,10 +197,19 @@ run_nelisp_aot_readonly() {
     sed -n '1,20p' "$nelisp_tmp/aot-cache.err" >&2
     return 1
   fi
+  target_count="$(
+    grep -c '^target-id[[:space:]]' "$manifest.nelix-aot-targets" 2>/dev/null ||
+      printf '0\n'
+  )"
+  printf 'nelix user manifest target-count: %s min=%s\n' \
+    "$target_count" "$nelisp_min_targets" >&2
+  if [ "$nelisp_min_targets" -gt 0 ] && [ "$target_count" -lt "$nelisp_min_targets" ]; then
+    echo "nelix user manifest target count $target_count is below NELIX_USER_MANIFEST_MIN_TARGETS=$nelisp_min_targets" >&2
+    return 1
+  fi
 
-  if ! run_nelix_with_timeout --runtime nelisp --json list \
-    >"$nelisp_tmp/list.json" \
-    2>"$nelisp_tmp/list.err"; then
+  if ! run_nelix_timed list "$nelisp_tmp/list.json" "$nelisp_tmp/list.err" \
+    --runtime nelisp --json list; then
     sed -n '1,3p' "$nelisp_tmp/list.json" >&2
     sed -n '1,20p' "$nelisp_tmp/list.err" >&2
     return 1
@@ -175,9 +224,8 @@ run_nelisp_aot_readonly() {
   fi
   compare_runtime_json list "$nelisp_tmp/list-emacs.json" "$nelisp_tmp/list.json" "." || return 1
 
-  if ! run_nelix_with_timeout --runtime nelisp --json audit "$manifest" \
-    >"$nelisp_tmp/audit.json" \
-    2>"$nelisp_tmp/audit.err"; then
+  if ! run_nelix_timed audit "$nelisp_tmp/audit.json" "$nelisp_tmp/audit.err" \
+    --runtime nelisp --json audit "$manifest"; then
     sed -n '1,3p' "$nelisp_tmp/audit.json" >&2
     sed -n '1,20p' "$nelisp_tmp/audit.err" >&2
     return 1
@@ -194,9 +242,8 @@ run_nelisp_aot_readonly() {
   compare_runtime_json audit "$nelisp_tmp/audit-emacs.json" "$nelisp_tmp/audit.json" \
     missing extra || return 1
 
-  if ! run_nelix_with_timeout --runtime nelisp --json plan "$manifest" --dry-run \
-    >"$nelisp_tmp/plan.json" \
-    2>"$nelisp_tmp/plan.err"; then
+  if ! run_nelix_timed plan-dry-run "$nelisp_tmp/plan.json" "$nelisp_tmp/plan.err" \
+    --runtime nelisp --json plan "$manifest" --dry-run; then
     sed -n '1,3p' "$nelisp_tmp/plan.json" >&2
     sed -n '1,20p' "$nelisp_tmp/plan.err" >&2
     return 1
@@ -214,9 +261,8 @@ run_nelisp_aot_readonly() {
   compare_runtime_json plan "$nelisp_tmp/plan-emacs.json" "$nelisp_tmp/plan.json" \
     install remove protected || return 1
 
-  if ! run_nelix_with_timeout --runtime nelisp --json apply "$manifest" --dry-run \
-    >"$nelisp_tmp/apply-dry-run.json" \
-    2>"$nelisp_tmp/apply-dry-run.err"; then
+  if ! run_nelix_timed apply-dry-run "$nelisp_tmp/apply-dry-run.json" "$nelisp_tmp/apply-dry-run.err" \
+    --runtime nelisp --json apply "$manifest" --dry-run; then
     sed -n '1,3p' "$nelisp_tmp/apply-dry-run.json" >&2
     sed -n '1,20p' "$nelisp_tmp/apply-dry-run.err" >&2
     return 1
@@ -237,9 +283,8 @@ run_nelisp_aot_readonly() {
     "$nelisp_tmp/apply-dry-run.json" \
     install remove protected || return 1
 
-  if ! run_nelix_with_timeout --runtime nelisp --json upgrade-plan "$manifest" \
-    >"$nelisp_tmp/upgrade-plan.json" \
-    2>"$nelisp_tmp/upgrade-plan.err"; then
+  if ! run_nelix_timed upgrade-plan "$nelisp_tmp/upgrade-plan.json" "$nelisp_tmp/upgrade-plan.err" \
+    --runtime nelisp --json upgrade-plan "$manifest"; then
     sed -n '1,3p' "$nelisp_tmp/upgrade-plan.json" >&2
     sed -n '1,20p' "$nelisp_tmp/upgrade-plan.err" >&2
     return 1
@@ -259,9 +304,8 @@ run_nelisp_aot_readonly() {
     "$nelisp_tmp/upgrade-plan.json" \
     upgrade pinned missing || return 1
 
-  if ! run_nelix_with_timeout --runtime nelisp --json lock-check "$manifest" \
-    >"$nelisp_tmp/lock-check.json" \
-    2>"$nelisp_tmp/lock-check.err"; then
+  if ! run_nelix_timed lock-check "$nelisp_tmp/lock-check.json" "$nelisp_tmp/lock-check.err" \
+    --runtime nelisp --json lock-check "$manifest"; then
     sed -n '1,3p' "$nelisp_tmp/lock-check.json" >&2
     sed -n '1,20p' "$nelisp_tmp/lock-check.err" >&2
     return 1
