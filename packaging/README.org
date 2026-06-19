@@ -309,6 +309,16 @@ is set, those Debian payload verifiers also print target, list, audit, plan,
 apply dry-run, and upgrade-plan counts; set =NELIX_USER_MANIFEST_MIN_TARGETS=N=
 to require a large real manifest in installed or extracted package checks.
 
+After reinstalling the freshly built Debian package, run
+=verify-installed-operational-gate= to verify both installed sides together:
+the fixture-backed CLI lock/plan/apply transaction, rollback, schema, DSL, and
+native-store checks, plus the real =~/.emacs.d/nelix-package.el= NeLisp runtime
+gate through =/usr/bin/nelix=:
+
+#+begin_src shell
+make verify-installed-operational-gate
+#+end_src
+
 =verify-user-environment= deliberately does not load =~/.emacs.d/init.el= or
 =~/.emacs.d/early-init.el=, so it stays safe inside =deb-release-gate= and
 =deb-full-gate=.  It checks the installed Debian package plus the personal
