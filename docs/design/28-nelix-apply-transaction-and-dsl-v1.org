@@ -75,6 +75,20 @@ latest executed rows, the transaction metadata, the rollback plan, and the
 rollback result on failure.  This is the durable audit trail for "what was going
 to happen" and "how far apply got" before rollback.
 
+The durable records are inspectable through the CLI:
+
+#+begin_example
+nelix transaction list
+nelix transaction list --limit 5
+nelix transaction show apply-...
+nelix --json transaction show ~/.local/state/nelix/transactions/apply-....el
+#+end_example
+
+=transaction list= returns summaries only, including record id, status,
+manifest, command count, executed count, and rollback availability.
+=transaction show= returns the validated record body under =:record= so that
+the CLI status and the apply record status do not collide.
+
 Failure signals =anvil-pkg-error= with:
 
 - human message including =rollback=ok= or =rollback=not-ok=;

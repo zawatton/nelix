@@ -53,6 +53,36 @@
       (append value nil)
     value))
 
+(defun nelix-cli-test--write-transaction-record (file status)
+  "Write a generated transaction record fixture to FILE with STATUS."
+  (make-directory (file-name-directory file) t)
+  (with-temp-file file
+    (insert ";;; generated Nelix apply transaction record -*- lexical-binding: t; -*-\n\n")
+    (prin1
+     (list :schema nelix-transaction-schema-name
+           :schema-version nelix-transaction-schema-version
+           :id (file-name-base file)
+           :status status
+           :manifest "/tmp/manifest.el"
+           :profile "/tmp/profile"
+           :started-at "2026-06-19T18:00:00+0900"
+           :updated-at "2026-06-19T18:00:01+0900"
+           :plan '(:commands ((:operation install
+                                :name "ripgrep"
+                                :argv ("profile" "install" "ripgrep"))))
+           :transaction '(:enabled t
+                          :rollback-on-error t
+                          :before-generation 7)
+           :executed '((:operation install :name "ripgrep" :ok t))
+           :rollback-plan '(:available t
+                            :operation rollback
+                            :generation 7)
+           :rollback (and (eq status 'error)
+                          '(:attempted t :ok t :generation 7))
+           :error (and (eq status 'error) "install failed"))
+     (current-buffer))
+    (insert "\n")))
+
 (ert-deftest nelix-cli-test-parse-strips-emacs-separator-and-json ()
   (should (equal (nelix-cli-parse-args
                   '("--" "--json" "audit" "manifest.el"))
@@ -709,6 +739,48 @@
                (ert-fail "standalone NeLisp list should not use row path"))))
     (should (equal (nelix-cli-dispatch '(:command "list" :args nil))
                    '("magit" "ripgrep")))))
+
+(ert-deftest nelix-cli-test-dispatch-transaction-list-and-show ()
+  "Transaction CLI lists generated records and shows record contents."
+  (let* ((dir (make-temp-file "nelix-cli-transaction-" t))
+         (nelix-transaction-log-root dir)
+         (file (expand-file-name "apply-alpha.el" dir)))
+    (unwind-protect
+        (progn
+          (nelix-cli-test--write-transaction-record file 'error)
+          (let* ((list-result
+                  (nelix-cli-dispatch
+                   '(:command "transaction" :args ("list" "--limit" "10"))))
+                 (row (car (plist-get list-result :transactions)))
+                 (show-result
+                  (nelix-cli-dispatch
+                   '(:command "transaction" :args ("show" "apply-alpha"))))
+                 (record (plist-get show-result :record))
+                 (json (nelix-cli-format-result show-result t))
+                 (parsed (json-parse-string json :object-type 'alist))
+                 (parsed-record (alist-get 'record parsed)))
+            (should (eq 'ok (plist-get list-result :status)))
+            (should (equal 'transaction-list
+                           (plist-get list-result :operation)))
+            (should (= 1 (plist-get list-result :count)))
+            (should (equal "apply-alpha" (plist-get row :id)))
+            (should (eq 'error (plist-get row :status)))
+            (should (= 1 (plist-get row :command-count)))
+            (should (= 1 (plist-get row :executed-count)))
+            (should (plist-get row :rollback-available))
+            (should (equal "install failed" (plist-get row :error)))
+            (should (eq 'ok (plist-get show-result :status)))
+            (should (equal 'transaction-show
+                           (plist-get show-result :operation)))
+            (should (equal file (plist-get show-result :file)))
+            (should (equal nelix-transaction-schema-name
+                           (plist-get record :schema)))
+            (should (eq 'error (plist-get record :status)))
+            (should (equal "install failed" (plist-get record :error)))
+            (should (equal "error" (alist-get 'status parsed-record)))
+            (should (equal "nelix-apply-transaction"
+                           (alist-get 'schema parsed-record)))))
+      (delete-directory dir t))))
 
 (ert-deftest nelix-cli-test-formats-string-list-as-lines ()
   "Name-only CLI results stay useful without generic prin1 support."

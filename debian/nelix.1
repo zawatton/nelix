@@ -37,6 +37,12 @@ Report read-only manifest/import drift against the lockfile.
 .B lock migrate MANIFEST [--dry-run]
 Rewrite compatible legacy lockfiles as the current versioned lockfile.
 .TP
+.B transaction list [--limit N]
+List saved apply transaction record summaries.
+.TP
+.B transaction show ID|FILE
+Show a saved apply transaction record.
+.TP
 .B upgrade-plan [MANIFEST|NAME]
 Print a read-only upgrade plan.
 .TP

@@ -64,6 +64,12 @@
   '("name" "target" "backend" "system" "source")
   "Required package row keys in the public Nelix lock schema v2.")
 
+(defconst nelix-transaction-schema-name "nelix-apply-transaction"
+  "Stable schema name recorded in Nelix apply transaction records.")
+
+(defconst nelix-transaction-schema-version 1
+  "Current stable Nelix apply transaction record schema version.")
+
 (defcustom nelix-transaction-log-root nil
   "Directory used for Nelix apply transaction records.
 
@@ -1007,8 +1013,8 @@ manifest targets."
                                                   transaction executed
                                                   &optional rollback error)
   "Return a transaction record for STATUS and current apply state."
-  (list :schema "nelix-apply-transaction"
-        :schema-version 1
+  (list :schema nelix-transaction-schema-name
+        :schema-version nelix-transaction-schema-version
         :id (plist-get transaction :record-id)
         :status status
         :manifest (expand-file-name manifest-file)
@@ -1058,6 +1064,204 @@ manifest targets."
        (nelix-manifest--transaction-record
         status manifest-file plan transaction executed rollback error))
       transaction)))
+
+(defun nelix-transaction--nil-like-p (value)
+  "Return non-nil when VALUE represents nil across runtimes."
+  (or (null value)
+      (equal value "nil")
+      (and (symbolp value)
+           (equal (symbol-name value) "nil"))))
+
+(defun nelix-transaction--true-like-p (value)
+  "Return non-nil when VALUE represents t across runtimes."
+  (or (eq value t)
+      (equal value "t")
+      (and (symbolp value)
+           (equal (symbol-name value) "t"))))
+
+(defun nelix-transaction--normalize-bool (value)
+  "Normalize VALUE when it is a runtime-dependent boolean."
+  (cond
+   ((nelix-transaction--nil-like-p value) nil)
+   ((nelix-transaction--true-like-p value) t)
+   (t value)))
+
+(defun nelix-transaction--normalize-plist-bools (plist keys)
+  "Return PLIST with boolean-like KEYS normalized."
+  (let ((result (copy-sequence plist)))
+    (dolist (key keys result)
+      (when (plist-member result key)
+        (setq result
+              (plist-put result key
+                         (nelix-transaction--normalize-bool
+                          (plist-get result key))))))))
+
+(defun nelix-transaction--normalize-record (record)
+  "Normalize runtime-dependent boolean/null fields in RECORD."
+  (let ((result (copy-sequence record)))
+    (dolist (key '(:error :rollback))
+      (when (and (plist-member result key)
+                 (nelix-transaction--nil-like-p (plist-get result key)))
+        (setq result (plist-put result key nil))))
+    (when (plist-get result :transaction)
+      (setq result
+            (plist-put
+             result :transaction
+             (nelix-transaction--normalize-plist-bools
+              (plist-get result :transaction)
+              '(:enabled :rollback-on-error
+                :generation-captured :rollback-available)))))
+    (when (plist-get result :rollback-plan)
+      (setq result
+            (plist-put
+             result :rollback-plan
+             (nelix-transaction--normalize-plist-bools
+              (plist-get result :rollback-plan)
+              '(:available)))))
+    (when (plist-get result :rollback)
+      (setq result
+            (plist-put
+             result :rollback
+             (nelix-transaction--normalize-plist-bools
+              (plist-get result :rollback)
+              '(:attempted :ok :verified)))))
+    (when (plist-get result :executed)
+      (setq result
+            (plist-put
+             result :executed
+             (mapcar
+              (lambda (row)
+                (if (and (listp row) (plist-member row :ok))
+                    (nelix-transaction--normalize-plist-bools row '(:ok))
+                  row))
+              (plist-get result :executed)))))
+    result))
+
+(defun nelix-transaction-record-read (file)
+  "Read and validate a generated Nelix apply transaction record FILE."
+  (unless (anvil-pkg-compat-file-exists-p file)
+    (signal 'anvil-pkg-error
+            (list (format "nelix transaction: file does not exist: %s"
+                          file))))
+  (let* ((text (anvil-pkg-compat-read-file file))
+         (record (car (read-from-string text)))
+         (schema (plist-get record :schema))
+         (schema-version (plist-get record :schema-version)))
+    (unless (and (equal schema nelix-transaction-schema-name)
+                 (integerp schema-version)
+                 (= schema-version nelix-transaction-schema-version))
+      (signal 'anvil-pkg-error
+              (list (format "nelix transaction: unsupported record schema in %s"
+                            file))))
+    (nelix-transaction--normalize-record record)))
+
+(defun nelix-transaction--record-files ()
+  "Return generated transaction record files in the transaction log root."
+  (let ((root (nelix-manifest--transaction-log-root)))
+    (if (file-directory-p root)
+        (directory-files root t "\\`apply-.*\\.el\\'")
+      nil)))
+
+(defun nelix-transaction--file-mtime (file)
+  "Return FILE modification time as a floating point number."
+  (condition-case _
+      (let* ((attrs (and (fboundp 'file-attributes)
+                         (file-attributes file)))
+             (mtime (cond
+                     ((and attrs
+                           (fboundp 'file-attribute-modification-time))
+                      (file-attribute-modification-time attrs))
+                     (attrs (nth 5 attrs))
+                     (t nil))))
+        (cond
+         ((and mtime (fboundp 'float-time)) (float-time mtime))
+         ((numberp mtime) mtime)
+         (t 0)))
+    (error 0)))
+
+(defun nelix-transaction--summary (file)
+  "Return a summary plist for transaction record FILE."
+  (let* ((record (nelix-transaction-record-read file))
+         (plan (plist-get record :plan))
+         (executed (plist-get record :executed))
+         (rollback-plan (plist-get record :rollback-plan))
+         (error (plist-get record :error)))
+    (list :id (or (plist-get record :id)
+                  (file-name-base file))
+          :file file
+          :schema (plist-get record :schema)
+          :schema-version (plist-get record :schema-version)
+          :status (plist-get record :status)
+          :manifest (plist-get record :manifest)
+          :profile (plist-get record :profile)
+          :started-at (plist-get record :started-at)
+          :updated-at (plist-get record :updated-at)
+          :mtime (nelix-transaction--file-mtime file)
+          :command-count (length (plist-get plan :commands))
+          :executed-count (length executed)
+          :rollback-available
+          (and (plist-get rollback-plan :available) t)
+          :error (and (stringp error) error))))
+
+;;;###autoload
+(defun nelix-transaction-list (&optional limit)
+  "Return summaries for generated Nelix apply transaction records.
+
+When LIMIT is non-nil, return at most LIMIT records.  Records are ordered by
+file modification time, newest first."
+  (let* ((root (nelix-manifest--transaction-log-root))
+         (files (sort (nelix-transaction--record-files)
+                      (lambda (a b)
+                        (> (nelix-transaction--file-mtime a)
+                           (nelix-transaction--file-mtime b)))))
+         (rows nil)
+         (remaining limit))
+    (while (and files
+                (or (null remaining) (> remaining 0)))
+      (push (nelix-transaction--summary (car files)) rows)
+      (setq files (cdr files))
+      (when remaining
+        (setq remaining (1- remaining))))
+    (setq rows (nreverse rows))
+    (list :status 'ok
+          :operation 'transaction-list
+          :root root
+          :count (length rows)
+          :transactions rows)))
+
+(defun nelix-transaction--absolute-file-name-p (path)
+  "Return non-nil when PATH is syntactically absolute."
+  (or (string-prefix-p "/" path)
+      (string-prefix-p "~/" path)
+      (string-match-p "\\`[A-Za-z]:[\\/]" path)))
+
+(defun nelix-transaction--resolve-file (id-or-file)
+  "Resolve transaction ID-OR-FILE to a record file."
+  (let* ((root (nelix-manifest--transaction-log-root))
+         (path
+          (cond
+           ((or (nelix-transaction--absolute-file-name-p id-or-file)
+                (string-match-p "/" id-or-file))
+            (expand-file-name id-or-file))
+           ((string-suffix-p ".el" id-or-file)
+            (expand-file-name id-or-file root))
+           (t
+            (expand-file-name (concat id-or-file ".el") root)))))
+    (unless (anvil-pkg-compat-file-exists-p path)
+      (signal 'anvil-pkg-error
+              (list (format "nelix transaction show: record not found: %s"
+                            id-or-file))))
+    path))
+
+;;;###autoload
+(defun nelix-transaction-show (id-or-file)
+  "Return the generated Nelix apply transaction record ID-OR-FILE."
+  (let* ((file (nelix-transaction--resolve-file id-or-file))
+         (record (nelix-transaction-record-read file)))
+    (list :status 'ok
+          :operation 'transaction-show
+          :file file
+          :record record)))
 
 (defun nelix-manifest--transaction-begin (commands rollback-on-error)
   "Capture pre-apply generation metadata for COMMANDS."

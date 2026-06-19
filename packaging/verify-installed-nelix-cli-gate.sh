@@ -154,6 +154,14 @@ reject_log() {
   echo "nelix installed CLI gate: help omits lock migrate command" >&2
   exit 1
 }
+/usr/bin/nelix --help | grep -Fq 'transaction list [--limit N]' || {
+  echo "nelix installed CLI gate: help omits transaction list command" >&2
+  exit 1
+}
+/usr/bin/nelix --help | grep -Fq 'transaction show ID|FILE' || {
+  echo "nelix installed CLI gate: help omits transaction show command" >&2
+  exit 1
+}
 
 run_json schema_all schema
 expect_json schema_all '"name":"manifest-dsl-v1"'

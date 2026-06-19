@@ -968,6 +968,11 @@ nelix_run_nelisp_image() {
   trap 'rm -f "$runner" "$result"' EXIT HUP INT TERM
   {
     printf '(setq nelix-cli--direct-home %s)\n' "$(nelix_quote_elisp_string "${HOME:-}")"
+    if [ -n "${XDG_STATE_HOME:-}" ]; then
+      printf '(setq nelix-transaction-log-root %s)\n' "$(nelix_quote_elisp_string "$XDG_STATE_HOME/nelix/transactions")"
+    elif [ -n "${HOME:-}" ]; then
+      printf '(setq nelix-transaction-log-root %s)\n' "$(nelix_quote_elisp_string "$HOME/.local/state/nelix/transactions")"
+    fi
     printf '(setq nelix-manifest--nelisp-progress-file %s)\n' "$(nelix_quote_elisp_string "${NELIX_PROGRESS_FILE:-}")"
     printf '(setq nelix-fast-aot-force %s)\n' "$(nelix_quote_elisp_string "${NELIX_NELISP_AOT:-}")"
     printf '(setq nelix-cli--direct-result-file %s)\n' "$(nelix_quote_elisp_string "$result")"
@@ -1136,6 +1141,11 @@ nelix_run_nelisp_direct() {
     printf '(setq anvil-pkg-nelisp-smoke-actor-source %s)\n' "$(nelix_quote_elisp_string "$actor_src")"
     printf '(setq anvil-pkg-nelisp-smoke-process-source %s)\n' "$(nelix_quote_elisp_string "$process_src")"
     printf '(setq nelix-cli--direct-home %s)\n' "$(nelix_quote_elisp_string "${HOME:-}")"
+    if [ -n "${XDG_STATE_HOME:-}" ]; then
+      printf '(setq nelix-transaction-log-root %s)\n' "$(nelix_quote_elisp_string "$XDG_STATE_HOME/nelix/transactions")"
+    elif [ -n "${HOME:-}" ]; then
+      printf '(setq nelix-transaction-log-root %s)\n' "$(nelix_quote_elisp_string "$HOME/.local/state/nelix/transactions")"
+    fi
     printf '(setq nelix-manifest--nelisp-progress-file %s)\n' "$(nelix_quote_elisp_string "${NELIX_PROGRESS_FILE:-}")"
     printf '(setq nelix-fast-aot-force %s)\n' "$(nelix_quote_elisp_string "${NELIX_NELISP_AOT:-}")"
     printf '(setq nelix-cli--direct-stats-enabled %s)\n' "$stats_enabled"

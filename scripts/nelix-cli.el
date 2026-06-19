@@ -32,6 +32,8 @@ Commands:
   lock diff MANIFEST
   lock migrate MANIFEST [--dry-run]
   lock-check MANIFEST
+  transaction list [--limit N]
+  transaction show ID|FILE
   plan MANIFEST [--dry-run]
   apply MANIFEST [--dry-run] [--locked] [--allow-remove]
                  [--allow-remove-count N] [--no-rollback]
@@ -317,6 +319,48 @@ read-only and already returns the dry-run convergence report."
      (t
       (nelix-cli--add-profile-path
        (nelix-lock-write (nelix-cli--arg-or-error "lock" args)))))))
+
+(defun nelix-cli--dispatch-transaction (args)
+  "Dispatch `nelix transaction' subcommands with ARGS."
+  (let ((subcommand (car args))
+        (rest (cdr args)))
+    (cond
+     ((equal subcommand "list")
+      (let ((limit nil))
+        (while rest
+          (let ((arg (car rest)))
+            (cond
+             ((equal arg "--limit")
+              (setq rest (cdr rest))
+              (unless rest
+                (signal 'anvil-pkg-error
+                        (list "nelix transaction list: --limit requires a value")))
+              (setq limit
+                    (nelix-cli--numeric-arg "transaction list"
+                                            (car rest))))
+             (t
+              (signal 'anvil-pkg-error
+                      (list (format "nelix transaction list: unexpected argument %S"
+                                    arg))))))
+          (setq rest (cdr rest)))
+        (nelix-transaction-list limit)))
+     ((equal subcommand "show")
+      (let ((id-or-file (car rest)))
+        (unless id-or-file
+          (signal 'anvil-pkg-error
+                  (list "nelix transaction show: missing required ID|FILE")))
+        (when (cdr rest)
+          (signal 'anvil-pkg-error
+                  (list (format "nelix transaction show: unexpected argument %S"
+                                (cadr rest)))))
+        (nelix-transaction-show id-or-file)))
+     ((null subcommand)
+      (signal 'anvil-pkg-error
+              (list "nelix transaction: missing subcommand")))
+     (t
+      (signal 'anvil-pkg-error
+              (list (format "nelix transaction: unknown subcommand %S"
+                            subcommand)))))))
 
 (defun nelix-cli--dispatch-outdated (args)
   "Dispatch `nelix outdated' with ARGS."
@@ -775,6 +819,8 @@ ALLOWED may contain `profile', `system', `generation', and `dry-run'."
             (nelix-cli--dispatch-lock args))
            ((equal command "lock-check")
             (nelix-cli--dispatch-lock-check args))
+           ((equal command "transaction")
+            (nelix-cli--dispatch-transaction args))
            ((equal command "upgrade-plan")
             (nelix-cli--dispatch-upgrade-plan args json))
            ((equal command "outdated")
