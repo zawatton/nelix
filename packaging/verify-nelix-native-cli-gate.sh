@@ -556,6 +556,10 @@ test -x "$profile_link" || {
   echo "nelix native CLI gate: activation profile tree file missing: $profile_link" >&2
   exit 1
 }
+test -L "$profile_link" || {
+  echo "nelix native CLI gate: activation profile tree file is not a symlink: $profile_link" >&2
+  exit 1
+}
 shim_output="$("$shim" smoke)"
 test "$shim_output" = "fixture-tool-ok smoke" || {
   echo "nelix native CLI gate: activation shim output mismatch: $shim_output" >&2
@@ -665,6 +669,10 @@ test -x "$post_dependency_rollback_profile_link" || {
   echo "nelix native CLI gate: dependency rollback profile tree file missing: $post_dependency_rollback_profile_link" >&2
   exit 1
 }
+test -L "$post_dependency_rollback_profile_link" || {
+  echo "nelix native CLI gate: dependency rollback profile tree file is not a symlink: $post_dependency_rollback_profile_link" >&2
+  exit 1
+}
 test ! -e "$profile_root/default/active/bin/fixture-dep" || {
   echo "nelix native CLI gate: dependency rollback left dependency shim behind" >&2
   exit 1
@@ -745,12 +753,12 @@ test "$locked_app_output" = "fixture-app-ok locked" || {
   echo "nelix native CLI gate: locked app output mismatch: $locked_app_output" >&2
   exit 1
 }
-mvp_checkpoint profile-activation
+mvp_checkpoint profile-symlink
 
 run_json gc native gc --dry-run --profile default
 expect_json gc '"operation":"native-gc"'
 expect_json gc '"dry-run":true'
 expect_json gc '"removed":null'
 
-echo "nelix native store MVP ok: recipe-registry fetch hash-verify unpack profile-activation rollback lockfile-recording"
+echo "nelix native store MVP ok: recipe-registry fetch hash-verify unpack profile-symlink rollback lockfile-recording"
 echo "nelix native CLI gate ok"

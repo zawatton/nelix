@@ -42,12 +42,12 @@ Native store MVP evidence is currently tracked as follows:
 | fetch | =nelix-fetch.el= and ERT coverage for =url=, =elpa=, =github-release=, =git=, and =local= sources |
 | hash verify | =nelix-fetch-verify-file= / =nelix-fetch-verify-local-source= tests plus the CLI bad-hash install rejection gate |
 | unpack | =nelix-builder.el= archive builders and the CLI =native install fixture-archive= gate |
-| profile activation | =nelix-profile-activate-runtime= tests, explicit POSIX =symlink= mode coverage, and CLI checks for active shims, =path.sh=, and the =active/profile= file tree |
+| profile symlink | =nelix-profile-activate-runtime= tests, explicit POSIX =symlink= mode coverage, and CLI checks for active shims, =path.sh=, and symlinked =active/profile= files |
 | rollback | =nelix-profile-rollback= tests plus the CLI =native rollback --generation= gate, including rollback from an activated dependency profile back to generation 1 with stale shims and =active/profile= files removed |
 | lockfile recording | =nelix lock= records native =:recipe-source=, =:recipe-install=, =:recipe-dependencies=, and source hashes; the CLI gate replays =apply --locked= after registry drift |
 
 The packaged gate prints
-=nelix native store MVP ok: recipe-registry fetch hash-verify unpack profile-activation rollback lockfile-recording=
+=nelix native store MVP ok: recipe-registry fetch hash-verify unpack profile-symlink rollback lockfile-recording=
 only after these CLI checks pass.  It also prints one checkpoint per MVP
 capability:
 
@@ -56,7 +56,7 @@ nelix native store MVP checkpoint: recipe-registry ok
 nelix native store MVP checkpoint: fetch ok
 nelix native store MVP checkpoint: hash-verify ok
 nelix native store MVP checkpoint: unpack ok
-nelix native store MVP checkpoint: profile-activation ok
+nelix native store MVP checkpoint: profile-symlink ok
 nelix native store MVP checkpoint: rollback ok
 nelix native store MVP checkpoint: lockfile-recording ok
 #+end_example
