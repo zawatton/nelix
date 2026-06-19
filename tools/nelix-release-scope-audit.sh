@@ -382,6 +382,12 @@ require_user_manifest_dsl_gate() {
     '--runtime nelisp --json apply "$manifest" --dry-run'
   require_contains packaging/verify-nelix-user-manifest-dsl.sh \
     '--runtime nelisp --json upgrade-plan'
+  require_contains packaging/verify-nelix-user-manifest-dsl.sh \
+    'NELIX_USER_MANIFEST_REPORT_DIR'
+  require_contains packaging/verify-nelix-user-manifest-dsl.sh \
+    'timing.tsv'
+  require_contains packaging/verify-nelix-user-manifest-dsl.sh \
+    'summary.txt'
   require_contains Makefile \
     "grep -Fq -- '--runtime nelisp --json apply"
   require_contains bin/nelix \

@@ -11,10 +11,22 @@ nelisp_min_targets="${NELIX_USER_MANIFEST_MIN_TARGETS:-0}"
 nelisp_max_remove="${NELIX_USER_MANIFEST_MAX_REMOVE:-}"
 nelisp_max_missing="${NELIX_USER_MANIFEST_MAX_MISSING:-}"
 nelisp_max_extra="${NELIX_USER_MANIFEST_MAX_EXTRA:-}"
+nelisp_report_dir="${NELIX_USER_MANIFEST_REPORT_DIR:-}"
 
 if [ ! -f "$manifest" ]; then
   echo "Nelix user manifest is missing: $manifest" >&2
   exit 1
+fi
+
+if [ -n "$nelisp_report_dir" ]; then
+  mkdir -p "$nelisp_report_dir"
+  : >"$nelisp_report_dir/timing.tsv"
+  : >"$nelisp_report_dir/summary.txt"
+  {
+    printf 'label=%s\n' "$verification_label"
+    printf 'manifest=%s\n' "$manifest"
+    printf 'nelix=%s\n' "${NELIX_BIN:-auto}"
+  } >>"$nelisp_report_dir/summary.txt"
 fi
 
 export NELIX_USER_MANIFEST="$manifest"
@@ -130,6 +142,22 @@ expect_json_fragment() {
   fi
 }
 
+append_report_summary() {
+  if [ -n "$nelisp_report_dir" ]; then
+    printf '%s\n' "$*" >>"$nelisp_report_dir/summary.txt"
+  fi
+}
+
+copy_report_tree() {
+  label="$1"
+  source_dir="$2"
+  if [ -n "$nelisp_report_dir" ]; then
+    dest="$nelisp_report_dir/$label"
+    mkdir -p "$dest"
+    cp "$source_dir"/*.json "$source_dir"/*.err "$source_dir"/*.out "$dest"/ 2>/dev/null || true
+  fi
+}
+
 compare_runtime_json() {
   label="$1"
   emacs_json="$2"
@@ -208,6 +236,7 @@ report_top_level_count() {
   file="$2"
   count="$(json_top_level_count "$file")" || return 1
   printf 'nelix user manifest %s-count: %s\n' "$label" "$count" >&2
+  append_report_summary "$label-count=$count"
 }
 
 report_json_counts() {
@@ -218,6 +247,7 @@ report_json_counts() {
   for key in "$@"; do
     count="$(json_array_count "$file" "$key")" || return 1
     printf ' %s=%s' "$key" "$count" >&2
+    append_report_summary "$label-$key-count=$count"
   done
   printf '\n' >&2
 }
@@ -230,6 +260,7 @@ check_profile_diff_candidates() {
   names="$(json_array_names "$file" "$key")" || return 1
   printf 'nelix user manifest audit-%s-count: %s max=%s names=%s\n' \
     "$key" "$count" "${limit:-none}" "${names:-none}" >&2
+  append_report_summary "audit-$key-count=$count max=${limit:-none} names=${names:-none}"
   if [ -n "$limit" ] && [ "$count" -gt "$limit" ]; then
     echo "nelix user manifest audit $key count $count exceeds limit $limit" >&2
     return 1
@@ -242,6 +273,7 @@ check_remove_candidates() {
   remove_names="$(json_array_names "$file" remove)" || return 1
   printf 'nelix user manifest remove-count: %s max=%s names=%s\n' \
     "$remove_count" "${nelisp_max_remove:-none}" "${remove_names:-none}" >&2
+  append_report_summary "remove-count=$remove_count max=${nelisp_max_remove:-none} names=${remove_names:-none}"
   if [ -n "$nelisp_max_remove" ] && [ "$remove_count" -gt "$nelisp_max_remove" ]; then
     echo "nelix user manifest remove count $remove_count exceeds NELIX_USER_MANIFEST_MAX_REMOVE=$nelisp_max_remove" >&2
     return 1
@@ -269,6 +301,9 @@ run_nelix_timed() {
   max_ms=$((nelisp_max_seconds * 1000))
   printf 'nelix user manifest timing: %s elapsed-ms=%s elapsed=%ss max=%ss\n' \
     "$label" "$elapsed_ms" "$elapsed" "$nelisp_max_seconds" >&2
+  if [ -n "$nelisp_report_dir" ]; then
+    printf '%s\t%s\t%s\n' "$label" "$elapsed_ms" "$rc" >>"$nelisp_report_dir/timing.tsv"
+  fi
   if [ "$rc" -ne 0 ]; then
     return "$rc"
   fi
@@ -343,6 +378,7 @@ run_locked_readonly_checks() (
       ;;
   esac
 
+  copy_report_tree locked-readonly "$locked_tmp"
   printf 'nelix user manifest locked dry-run ok: %s\n' "$manifest"
 )
 
@@ -530,6 +566,11 @@ run_nelisp_aot_readonly() {
   fi
   expect_json_fragment lock-check "$nelisp_tmp/lock-check.json" '"ok":true' || return 1
   expect_json_fragment lock-check "$nelisp_tmp/lock-check.json" '"checked-by":":nelisp-aot-cache"' || return 1
+
+  copy_report_tree nelisp-aot "$nelisp_tmp"
+  if [ -n "$nelisp_report_dir" ]; then
+    cp "$manifest.nelix-aot-targets" "$nelisp_report_dir/nelisp-aot/" 2>/dev/null || true
+  fi
 
   cleanup_nelisp_aot_readonly
   trap - EXIT HUP INT TERM
