@@ -117,9 +117,12 @@ for =audit=, =plan=, =apply --dry-run=, and =upgrade-plan=.  Those commands
 must report =:nelisp-aot-cache= as the fallback and must not enter the slow full
 standalone manifest path.  =lock= may still run through Emacs batch until the
 NeLisp process/runtime path is complete enough for mutating lock writes.
-The verifier prints the =apply --dry-run= remove candidate count and names, and
+The verifier prints the =audit= missing/extra counts and names plus the
+=apply --dry-run= remove candidate count and names.
+=NELIX_USER_MANIFEST_MAX_MISSING=N=,
+=NELIX_USER_MANIFEST_MAX_EXTRA=N=, and
 =NELIX_USER_MANIFEST_MAX_REMOVE=N= can make the gate fail when the real profile
-would remove more entries than the operator has explicitly allowed.
+diff is larger than the operator has explicitly allowed.
 It also compares =nelix --runtime nelisp --json plan MANIFEST --dry-run= with
 =nelix --runtime nelisp --json apply MANIFEST --dry-run= across =install=,
 =remove=, =keep=, =protected=, and =commands= so the review command and dry-run

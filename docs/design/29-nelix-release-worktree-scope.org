@@ -434,7 +434,8 @@ to dry-run.  It stages files only when =--stage= is passed explicitly.
 - Lock schema: =nelix-lock= schema version =2=, with legacy v1/v2,
   current v2, native dependency closure fixture coverage, and CLI JSON
   round-trip coverage for Nix and native dependency locks.
-- Current real manifest dry-run: =install=0=, =remove=0=, =lock-drift=nil=
+- Current real manifest dry-run/audit: =missing=0=, =extra=0=, =install=0=,
+  =remove=0=, =lock-drift=nil=
 - Current real manifest AOT plan: =NELIX_USER_MANIFEST_NELISP=required make
   verify-user-manifest-dsl= verifies =nelix --runtime nelisp --json validate=
   plus the read-only AOT cache fast lane for =audit=, =plan=,

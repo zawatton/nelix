@@ -8,6 +8,8 @@ locked_mode="${NELIX_USER_MANIFEST_LOCKED:-auto}"
 nelisp_max_seconds="${NELIX_USER_MANIFEST_NELISP_MAX_SECONDS:-5}"
 nelisp_min_targets="${NELIX_USER_MANIFEST_MIN_TARGETS:-0}"
 nelisp_max_remove="${NELIX_USER_MANIFEST_MAX_REMOVE:-}"
+nelisp_max_missing="${NELIX_USER_MANIFEST_MAX_MISSING:-}"
+nelisp_max_extra="${NELIX_USER_MANIFEST_MAX_EXTRA:-}"
 
 if [ ! -f "$manifest" ]; then
   echo "Nelix user manifest is missing: $manifest" >&2
@@ -34,6 +36,24 @@ case "$nelisp_max_remove" in
   ''|*[!0-9]*)
     if [ -n "$nelisp_max_remove" ]; then
       echo "invalid NELIX_USER_MANIFEST_MAX_REMOVE value: $nelisp_max_remove" >&2
+      exit 64
+    fi
+    ;;
+esac
+
+case "$nelisp_max_missing" in
+  ''|*[!0-9]*)
+    if [ -n "$nelisp_max_missing" ]; then
+      echo "invalid NELIX_USER_MANIFEST_MAX_MISSING value: $nelisp_max_missing" >&2
+      exit 64
+    fi
+    ;;
+esac
+
+case "$nelisp_max_extra" in
+  ''|*[!0-9]*)
+    if [ -n "$nelisp_max_extra" ]; then
+      echo "invalid NELIX_USER_MANIFEST_MAX_EXTRA value: $nelisp_max_extra" >&2
       exit 64
     fi
     ;;
@@ -136,12 +156,29 @@ json_array_names() {
                (string-join
                 (mapcar
                  (lambda (row)
-                   (let ((name (and (listp row)
-                                    (alist-get "name" row nil nil (function string=)))))
-                     (if name (format "%s" name) (format "%S" row))))
+                   (cond
+                    ((stringp row) row)
+                    ((let ((name (and (listp row)
+                                      (alist-get "name" row nil nil (function string=)))))
+                       (and name (format "%s" name))))
+                    (t (format "%S" row))))
                  rows)
                 ",")))' \
     -- "$file" "$key"
+}
+
+check_profile_diff_candidates() {
+  file="$1"
+  key="$2"
+  limit="$3"
+  count="$(json_array_count "$file" "$key")" || return 1
+  names="$(json_array_names "$file" "$key")" || return 1
+  printf 'nelix user manifest audit-%s-count: %s max=%s names=%s\n' \
+    "$key" "$count" "${limit:-none}" "${names:-none}" >&2
+  if [ -n "$limit" ] && [ "$count" -gt "$limit" ]; then
+    echo "nelix user manifest audit $key count $count exceeds limit $limit" >&2
+    return 1
+  fi
 }
 
 check_remove_candidates() {
@@ -308,6 +345,8 @@ run_nelisp_aot_readonly() {
   fi
   compare_runtime_json audit "$nelisp_tmp/audit-emacs.json" "$nelisp_tmp/audit.json" \
     missing extra || return 1
+  check_profile_diff_candidates "$nelisp_tmp/audit.json" missing "$nelisp_max_missing" || return 1
+  check_profile_diff_candidates "$nelisp_tmp/audit.json" extra "$nelisp_max_extra" || return 1
 
   if ! run_nelix_timed plan-dry-run "$nelisp_tmp/plan.json" "$nelisp_tmp/plan.err" \
     --runtime nelisp --json plan "$manifest" --dry-run; then
