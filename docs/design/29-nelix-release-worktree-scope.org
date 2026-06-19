@@ -449,6 +449,8 @@ to dry-run.  It stages files only when =--stage= is passed explicitly.
 - Native registry: static remote indexes and package recipe rows are
   hash-verified and can require trusted signatures through the substitute
   signature verifier path.
+- Native CLI transaction gate: failed hash verification is checked to leave no
+  profile generation and no exposed native store entry.
 - Native packaged registry: the installed Nelix Lisp tree includes initial
   system-command =script-shim= recipes for =ripgrep=, =git=, =curl=, =fd=,
   =jq=, and =tree=.

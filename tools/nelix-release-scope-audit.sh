@@ -275,6 +275,10 @@ require_autopkgtest_gate_strength() {
   require_contains Makefile \
     "grep -Fq 'fixture-archive-ok unpack'"
   require_contains Makefile \
+    "grep -Fq 'native install fixture-bad-hash --profile bad-hash'"
+  require_contains Makefile \
+    "grep -Fq 'failed hash install created a profile generation'"
+  require_contains Makefile \
     "grep -Fxq './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/registry/packages/system/ripgrep.el'"
   require_contains Makefile \
     "grep -Fxq './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/registry/packages/system/fd.el'"
@@ -306,6 +310,14 @@ require_autopkgtest_gate_strength() {
     "native install fixture-archive --profile archive"
   require_contains packaging/verify-nelix-native-cli-gate.sh \
     "fixture-archive-ok unpack"
+  require_contains packaging/verify-nelix-native-cli-gate.sh \
+    "native install fixture-bad-hash --profile bad-hash"
+  require_contains packaging/verify-nelix-native-cli-gate.sh \
+    "failed hash install created a profile generation"
+  require_contains packaging/fedora/verify-source.sh \
+    "native install fixture-bad-hash --profile bad-hash"
+  require_contains packaging/fedora/verify-source.sh \
+    "failed hash install created a profile generation"
   require_contains packaging/verify-nelix-native-cli-gate.sh \
     'registry index "$data/nelix/registry" "$generated_index"'
   require_contains packaging/verify-nelix-native-cli-gate.sh \

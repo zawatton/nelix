@@ -263,6 +263,19 @@ run_json_packaged() {
   fi
 }
 
+run_json_expect_fail() {
+  local label="$1"
+  shift
+  local out="$tmp/$label.json"
+  local err="$tmp/$label.err"
+  if env "${env_args[@]}" "$nelix_bin" --json "$@" >"$out" 2>"$err"; then
+    echo "nelix native CLI gate: command unexpectedly succeeded: $*" >&2
+    sed 's/^/nelix_native_cli_stdout /' "$out" >&2
+    sed 's/^/nelix_native_cli_stderr /' "$err" >&2
+    exit 1
+  fi
+}
+
 expect_json() {
   local label="$1"
   local pattern="$2"
@@ -427,6 +440,39 @@ test "$archive_output" = "fixture-archive-ok unpack" || {
   echo "nelix native CLI gate: archive activation output mismatch: $archive_output" >&2
   exit 1
 }
+
+cat >"$registry/fixture-bad-hash.el" <<EOF
+(require 'nelix-registry)
+(nelix-package
+ :name "fixture-bad-hash"
+ :version "1.0.0"
+ :class 'system-tool
+ :description "Native CLI gate fixture for failed hash verification"
+ :systems
+ '((x86_64-linux
+    :source (:type local
+             :path $(quote_elisp_string "$payload")
+             :sha256 "sha256-0000000000000000000000000000000000000000000000000000000000000000")
+    :install (:type copy
+              :bin ("fixture-tool")))))
+EOF
+
+run_json_expect_fail bad_hash native install fixture-bad-hash --profile bad-hash --system x86_64-linux
+if ! { grep -Eq 'hash mismatch|nelix-fetch' "$tmp/bad_hash.json" ||
+       grep -Eq 'hash mismatch|nelix-fetch' "$tmp/bad_hash.err"; }; then
+  echo "nelix native CLI gate: bad hash failure did not report verification error" >&2
+  sed 's/^/nelix_native_cli_stdout /' "$tmp/bad_hash.json" >&2
+  sed 's/^/nelix_native_cli_stderr /' "$tmp/bad_hash.err" >&2
+  exit 1
+fi
+test ! -e "$profile_root/bad-hash/generations/1/profile.el" || {
+  echo "nelix native CLI gate: failed hash install created a profile generation" >&2
+  exit 1
+}
+if [ -d "$data/nelix/store" ] && find "$data/nelix/store" -name '*fixture-bad-hash*' | grep -q .; then
+  echo "nelix native CLI gate: failed hash install exposed a store entry" >&2
+  exit 1
+fi
 
 run_json install native install fixture-tool --profile default --system x86_64-linux
 expect_json install '"operation":"native-install"'

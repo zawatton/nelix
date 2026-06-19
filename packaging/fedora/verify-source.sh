@@ -68,6 +68,16 @@ tar -xOzf "$tarball" "$prefix/packaging/verify-nelix-native-cli-gate.sh" | grep 
   exit 1
 }
 
+tar -xOzf "$tarball" "$prefix/packaging/verify-nelix-native-cli-gate.sh" | grep -q 'native install fixture-bad-hash --profile bad-hash' || {
+  echo "Fedora source tarball native CLI gate is missing failed hash install smoke" >&2
+  exit 1
+}
+
+tar -xOzf "$tarball" "$prefix/packaging/verify-nelix-native-cli-gate.sh" | grep -q 'failed hash install created a profile generation' || {
+  echo "Fedora source tarball native CLI gate is missing failed install transaction check" >&2
+  exit 1
+}
+
 tar -xOzf "$tarball" "$prefix/packaging/fedora/verify-public-tree.sh" | grep -q 'set FEDORA_PUBLIC_URL to the real published Fedora repository URL' || {
   echo "Fedora source tarball public tree verifier is missing real URL refusal" >&2
   exit 1

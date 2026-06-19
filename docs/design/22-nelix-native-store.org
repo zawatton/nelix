@@ -1176,6 +1176,8 @@ The next concrete deliverables should be:
     =rg= command, activates the profile, and executes the generated shim.
     It also installs a hash-verified local tar archive recipe through the CLI,
     activates its profile, and executes the unpacked runtime binary.
+    Failed hash verification is covered by the same CLI gate: a bad recipe
+    must not create a profile generation or expose a native store entry.
 
 =nelix-apply= can now review native backend changes with =--dry-run= before
 mutating native store profiles.  Broader real fetch/build recipe coverage is
