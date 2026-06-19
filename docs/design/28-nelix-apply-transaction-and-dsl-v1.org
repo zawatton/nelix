@@ -280,9 +280,10 @@ Scope decisions for the user-requested Nix/Guix-style surface:
   backend list such as =(backend-policy nix nelix-native)= or OS rows such as
   =(backend-policy (gnu/linux nix nelix-native dnf))=, and rejects unknown
   backend symbols at macro expansion time.
-- pinning is =(pins ...)= for environment-level holds.  Version pinning belongs
-  to registry recipes and lockfile rows; Nix attr/version pin syntax is deferred
-  until it can be represented in lock schema without ambiguity.
+- pinning is =(pins ...)= for literal environment-level package-name holds.
+  Version pinning belongs to registry recipes and lockfile rows; Nix
+  attr/version pin syntax is deferred until it can be represented in lock schema
+  without ambiguity.
 - remove policy is intentionally not stored in the manifest in v1.  Real
   mutation requires CLI confirmation via =--allow-remove= or
   =--allow-remove-count N= so review happens against the current plan.
@@ -302,7 +303,10 @@ Scope decisions for the user-requested Nix/Guix-style surface:
   =(secret ...)= and =(private-repo ...)= explicitly.
 
 Implementation status: =nelix-environment= is implemented as a macro expanding
-to =nelix-manifest=.  Existing plist manifests remain valid.
+to =nelix-manifest=.  Existing plist manifests remain valid.  The Debian
+installed CLI gate loads a real =nelix-dsl= manifest using imports, package
+variables, OS-row backend policy, bootstrap package declarations, and pins,
+then runs =validate= and =plan --dry-run= through the public command line.
 
 * 6. Lockfile Schema Direction
 

@@ -174,10 +174,12 @@
          (nelix-environment
           (name "entrypoint")
           (emacs-packages magit consult)
-          (linux-packages "ripgrep" "fd"))))
+          (linux-packages "ripgrep" "fd")
+          (pins ripgrep))))
     (should (equal "entrypoint" (plist-get manifest :name)))
     (should (equal '(magit consult) (plist-get manifest :emacs)))
-    (should (equal '("ripgrep" "fd") (plist-get manifest :linux)))))
+    (should (equal '("ripgrep" "fd") (plist-get manifest :linux)))
+    (should (equal '("ripgrep") (plist-get manifest :pins)))))
 
 (ert-deftest nelix-manifest-test-environment-dsl-v1-rejects-duplicate-forms ()
   "DSL v1 subforms are single-assignment."
@@ -236,6 +238,28 @@
               :type 'anvil-pkg-error)))
     (should (string-match-p "either backend symbols or OS rows"
                             (cadr err)))))
+
+(ert-deftest nelix-manifest-test-environment-dsl-v1-loads-imported-package-vars ()
+  "Manifest-file DSL imports are loaded before package variable forms."
+  (let ((dir (make-temp-file "nelix-manifest-dsl-imports-" t)))
+    (unwind-protect
+        (progn
+          (nelix-manifest-test--write
+           dir "packages.el"
+           "(setq nelix-manifest-test-import-count\n      (1+ (or (and (boundp 'nelix-manifest-test-import-count)\n                  nelix-manifest-test-import-count)\n              0)))\n(setq nelix-manifest-test-import-emacs '(magit))\n(setq nelix-manifest-test-import-linux '(\"ripgrep\" \"fd\"))\n")
+          (let* ((manifest-file
+                  (nelix-manifest-test--write
+                   dir "manifest.el"
+                   "(require 'nelix-dsl)\n(nelix-environment\n (name \"imported-dsl\")\n (imports \"packages.el\")\n (emacs-packages nelix-manifest-test-import-emacs)\n (linux-packages nelix-manifest-test-import-linux)\n (pins ripgrep))\n"))
+                 (manifest (nelix-manifest-load manifest-file)))
+            (should (equal "imported-dsl" (plist-get manifest :name)))
+            (should (equal '(magit) (plist-get manifest :emacs)))
+            (should (equal '("ripgrep" "fd") (plist-get manifest :linux)))
+            (should (equal '("ripgrep") (plist-get manifest :pins)))
+            (should (= 1 nelix-manifest-test-import-count))
+            (should (equal (list (expand-file-name "packages.el" dir))
+                           (plist-get manifest :imports)))))
+      (delete-directory dir t))))
 
 (ert-deftest nelix-manifest-test-validate-is-process-free ()
   "nelix-validate loads manifests and reports counts without profile IO."

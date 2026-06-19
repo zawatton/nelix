@@ -21,6 +21,15 @@
 (defvar nelix-manifest-last nil
   "Most recently normalized manifest during `nelix-manifest-load'.")
 
+(defvar nelix-manifest--environment-preload-imports nil
+  "When non-nil, `nelix-environment' preloads imports before package forms.")
+
+(defvar nelix-manifest--preloaded-imports nil
+  "Dynamically bound import files loaded before a DSL manifest is normalized.")
+
+(defvar nelix-manifest--last-preloaded-imports nil
+  "Import files preloaded while reading the current manifest file.")
+
 (defvar nelix-lock-last nil
   "Most recently loaded lock plist during `nelix-lock-read'.")
 
@@ -296,6 +305,19 @@ NAME may be nil, \"all\", \"manifest-dsl-v1\", \"lock-v2\", or
   (nelix-environment--validate-backend-policy args)
   (list 'quote args))
 
+(defun nelix-environment--preload-imports (imports)
+  "Load DSL IMPORTS relative to `default-directory' before package variables."
+  (let ((normalized (nelix-manifest--normalize-imports imports))
+        loaded)
+    (dolist (path normalized (nreverse loaded))
+      (let ((expanded (nelix-manifest--expand-path path default-directory)))
+        (unless (anvil-pkg-compat-file-exists-p expanded)
+          (signal 'anvil-pkg-error
+                  (list (format "nelix-environment: import file does not exist: %s"
+                                expanded))))
+        (nelix-manifest--load-elisp-file expanded)
+        (push expanded loaded)))))
+
 (defun nelix-environment--validate-backend-symbol (backend)
   "Validate BACKEND against the stable environment DSL v1 backend set."
   (unless (memq backend nelix-environment-dsl-backends)
@@ -378,7 +400,7 @@ NAME may be nil, \"all\", \"manifest-dsl-v1\", \"lock-v2\", or
       ('bootstrap-apt-packages
        (list :bootstrap-apt (nelix-environment--list-value args)))
       ('pins
-       (list :pins (nelix-environment--list-value args)))
+       (list :pins (list 'quote args)))
       (_
        (signal 'anvil-pkg-error
                (list (format "nelix-environment: unknown form %S" head)))))))
@@ -413,7 +435,13 @@ arguments are treated as a literal package list."
                                 head))))
         (push head seen)
         (setq plist (append plist pair))))
-    `(nelix-manifest ,@plist)))
+    (let ((imports-expr (plist-get plist :imports)))
+      `(if nelix-manifest--environment-preload-imports
+           (let ((nelix-manifest--preloaded-imports
+                  ,(and imports-expr
+                        `(nelix-environment--preload-imports ,imports-expr))))
+             (nelix-manifest ,@plist))
+         (nelix-manifest ,@plist)))))
 
 ;;;###autoload
 (defun nelix-manifest (&rest plist)
@@ -456,11 +484,14 @@ file."
                   "nelix-manifest :pins" (plist-get plist :pins)))
            (imports (nelix-manifest--normalize-imports
                      (plist-get plist :imports)))
+           (preloaded-imports nelix-manifest--preloaded-imports)
            (backend-policy (plist-get plist :backend-policy)))
       (when (and backend-policy (not (listp backend-policy)))
         (signal 'anvil-pkg-error
                 (list (format "nelix-manifest :backend-policy: value must be a list, got %S"
                               backend-policy))))
+      (when preloaded-imports
+        (setq nelix-manifest--last-preloaded-imports preloaded-imports))
       (setq nelix-manifest-last
             (list :name name
                   :profile profile
@@ -470,7 +501,7 @@ file."
                   :debian-tools debian-tools
                   :bootstrap-apt bootstrap-apt
                   :pins pins
-                  :imports imports
+                  :imports (or preloaded-imports imports)
                   :backend-policy backend-policy)))))
 
 (defun nelix-manifest--expand-path (path base-dir)
@@ -499,7 +530,9 @@ file."
 (defun nelix-manifest-load (file)
   "Load FILE and return its normalized Nelix manifest plist."
   (let* ((expanded (expand-file-name file))
-         (nelix-manifest-last nil))
+         (nelix-manifest-last nil)
+         (nelix-manifest--environment-preload-imports t)
+         (nelix-manifest--last-preloaded-imports nil))
     (unless (anvil-pkg-compat-file-exists-p expanded)
       (signal 'anvil-pkg-error
               (list (format "nelix-manifest-load: file does not exist: %s"
@@ -513,7 +546,8 @@ file."
       (setq manifest (plist-put manifest :file expanded))
       (setq manifest
             (plist-put manifest :imports
-                       (nelix-manifest--load-imports manifest expanded)))
+                       (or nelix-manifest--last-preloaded-imports
+                           (nelix-manifest--load-imports manifest expanded))))
       manifest)))
 
 (defun nelix-manifest--dedupe (items)

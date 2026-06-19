@@ -407,6 +407,46 @@ expect_json packaged_registry '"name":"jq"'
 expect_json packaged_registry '"name":"ripgrep"'
 expect_json packaged_registry '"name":"tree"'
 
+dsl_packages="$tmp/dsl-packages.el"
+dsl_manifest="$tmp/dsl-manifest.el"
+cat >"$dsl_packages" <<'EOF'
+(setq nelix-installed-cli-emacs-packages '(magit))
+(setq nelix-installed-cli-linux-packages '("ripgrep" "fd"))
+EOF
+cat >"$dsl_manifest" <<'EOF'
+(require 'nelix-dsl)
+(nelix-environment
+ (name "installed-cli-dsl-gate")
+ (profile "default")
+ (nix-channel "nixpkgs")
+ (imports "dsl-packages.el")
+ (backend-policy (gnu/linux nix nelix-native dnf)
+                 (darwin nix homebrew)
+                 (windows-nt winget scoop))
+ (emacs-packages nelix-installed-cli-emacs-packages)
+ (linux-packages nelix-installed-cli-linux-packages)
+ (bootstrap-apt-packages build-essential devscripts)
+ (pins ripgrep))
+EOF
+run_json dsl_validate validate "$dsl_manifest"
+expect_json dsl_validate '"ok":true'
+expect_json dsl_validate '"name":"installed-cli-dsl-gate"'
+expect_json dsl_validate '"profile":"default"'
+expect_json dsl_validate '"emacs":1'
+expect_json dsl_validate '"linux":2'
+expect_json dsl_validate '"pins":1'
+
+run_json dsl_plan plan "$dsl_manifest" --dry-run
+expect_json dsl_plan '"status":"planned"'
+expect_json dsl_plan '"backend":"nix"'
+expect_json dsl_plan '"action":"install"'
+expect_json dsl_plan '"name":"ripgrep"'
+expect_json dsl_plan '"name":"fd"'
+expect_json dsl_plan '"action":"remove"'
+expect_json dsl_plan '"name":"bat"'
+reject_log 'profile install'
+reject_log 'profile remove'
+
 run_json validate validate "$manifest"
 expect_json validate '"ok":true'
 
