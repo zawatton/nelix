@@ -941,6 +941,9 @@ expect_json_any transaction_show_ok \
   '"action":"install","name":"ripgrep"' \
   '"name":"ripgrep","action":"install"'
 expect_json_any transaction_show_ok \
+  '"action":"install","name":"fd"' \
+  '"name":"fd","action":"install"'
+expect_json_any transaction_show_ok \
   '"action":"remove","name":"bat"' \
   '"name":"bat","action":"remove"'
 
