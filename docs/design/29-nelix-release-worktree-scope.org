@@ -1,0 +1,532 @@
+#+TITLE: Nelix release worktree scope
+#+AUTHOR: zawatton + Codex
+#+DATE: 2026-06-19
+#+OPTIONS: toc:t num:nil
+
+* Purpose
+
+This note classifies the large worktree diff before publishing the first
+Nelix Debian/RPM artifacts.  It is a commit planning aid, not a runtime
+specification.
+
+* Commit groups
+
+The release is split into four reviewable commit groups.  The authoritative
+pathspecs live in =tools/nelix-release-scope-stage.sh= and are audited by
+=make release-scope-audit=.
+
+** Commit A. Compatibility rename and shared tests
+
+Include the tracked compatibility changes that keep the old =anvil-pkg=
+entry points usable while exposing the new =nelix= identity.
+
+Candidate files:
+
+- =anvil-pkg.el=
+- =anvil-pkg-compat.el=
+- =anvil-pkg-dsl.el=
+- =anvil-pkg-emacs.el=
+- =anvil-pkg-state.el=
+- =README.org=
+- =docs/design/01-overview.org=
+- =docs/design/07-phase4d.org=
+- =docs/design/13-phase5.org=
+- =docs/smoke-test.org=
+- =examples/README.org=
+- =test/anvil-pkg-*.el=
+- =scripts/anvil-pkg-nelisp-*.el=
+
+Reason: these are compatibility surface and regression coverage for the
+rename.  They should not be split from the new Nelix files if aliases depend
+on both sides.
+
+** Commit B. Nelix manifest, lock, native store, and CLI
+
+Include the new Nelix source tree, CLI entry point, AOT helpers, native store
+fixtures, lock schema fixtures, and release helper tools.
+
+Candidate files:
+
+- =bin/nelix=
+- =nelix.el=
+- =nelix-backend.el=
+- =nelix-builder.el=
+- =nelix-dsl.el=
+- =nelix-emacs.el=
+- =nelix-fast.el=
+- =nelix-fetch.el=
+- =nelix-import.el=
+- =nelix-manifest.el=
+- =nelix-pkg.el=
+- =nelix-registry.el=
+- =nelix-store.el=
+- =nelix-substitute.el=
+- =scripts/nelix-cli.el=
+- =scripts/nelix-aot-manifest-engine.el=
+- =scripts/nelix-aot-native-cli-proof.el=
+- =scripts/nelix-aot-native-subset.el=
+- =test/nelix-cli-test.el=
+- =test/nelix-manifest-test.el=
+- =test/nelix-store-test.el=
+- =test/fixtures/nelix-lock-v1-legacy.el=
+- =test/fixtures/nelix-lock-v2-legacy.el=
+- =test/fixtures/nelix-lock-v2-current.el=
+- =test/fixtures/nelix-lock-v2-native-deps.el=
+- =test/fixtures/nelix-registry/=
+- =tools/nelix-lock-plan-apply-gate.sh=
+- =tools/nelix-release-scope-audit.sh=
+- =tools/nelix-release-scope-stage.sh=
+
+Reason: this is the main functional payload: manifest load/validate/lock,
+plan/apply/sync, rollback safety, DSL v1, native store scaffolding,
+hash-verified and optionally signed static remote registry sync, and JSON
+contracts.  The native registry now also has installed CLI coverage through
+=nelix registry update=, =nelix registry search=, and =nelix registry show=.
+
+** Commit C. Design docs
+
+Include design notes that explain the architecture, rollout plan, and release
+scope.  These files are intentionally separate from the implementation commit
+so the code review can be read in smaller slices.
+
+Candidate files:
+
+- =docs/design/20-nelix-package-store-system.org=
+- =docs/design/21-nelix-manifest-operations.org=
+- =docs/design/22-nelix-native-store.org=
+- =docs/design/23-nelix-distro-publication.org=
+- =docs/design/24-nelix-nelisp-fast-manifest-engine.org=
+- =docs/design/25-nelix-native-aot-manifest-engine.org=
+- =docs/design/26-nelix-lock-plan-apply.org=
+- =docs/design/27-nelix-init-migration-workflow.org=
+- =docs/design/28-nelix-apply-transaction-and-dsl-v1.org=
+- =docs/design/29-nelix-release-worktree-scope.org=
+
+Reason: this is review and publication context, not runtime code.
+
+** Commit D. Debian and repository publication
+
+Include Debian source packaging, APT repository publication scripts, Fedora/RPM
+packaging, verifier scripts, and release docs.
+
+Candidate files:
+
+- =debian/=
+- =packaging/README.org=
+- =packaging/apt/=
+- =packaging/fedora/=
+- =packaging/run-autopkgtest-debian.sh=
+- =packaging/verify-extracted-nelix-debian.sh=
+- =packaging/verify-installed-nelix-cli-gate.sh=
+- =packaging/verify-installed-nelix-debian.sh=
+- =packaging/verify-nelix-aot-cache-gate.sh=
+- =packaging/verify-nelix-native-cli-gate.sh=
+- =packaging/verify-nelix-user-environment.sh=
+- =packaging/verify-nelix-user-manifest-dsl.sh=
+- =packaging/verify-publication-urls.sh=
+
+Exclude generated Debian build outputs.  They are already ignored by
+=.gitignore= and =debian/source/options=:
+
+- =debian/.debhelper/=
+- =debian/debhelper-build-stamp=
+- =debian/elpa-nelix/=
+- =debian/files=
+- =debian/*.substvars=
+- =debian/*.debhelper=
+- =../elpa-nelix_*.deb=
+- =../nelix_*.buildinfo=
+- =../nelix_*.changes=
+- =../nelix-apt-repo/=
+- =../nelix-apt-public/=
+- =../nelix-rpmbuild/=
+- =../nelix-rpm-repo/=
+
+Reason: source packaging and publication scripts must be versioned; build
+products must not.
+
+** External user migration docs
+
+Keep user-facing migration docs outside the package commit if they live in
+=~/Notes/capture=.
+
+Candidate external file:
+
+- =~/Notes/capture/nelix-manifest-usage.org=
+
+Reason: this is personal operational documentation.  It should be synced with
+the current CLI and DSL, but it is not part of the Nelix source release unless
+copied into repo docs deliberately.
+
+* Exact staging plan
+
+The current worktree intentionally has many untracked files because Nelix is
+being split out from the old =anvil-pkg= surface.  Use explicit pathspecs
+rather than =git add .= so generated package outputs stay out of history.
+
+** Commit A — compatibility rename and shared tests
+
+#+begin_src sh
+git add \
+  .gitignore \
+  Makefile \
+  README.org \
+  anvil-pkg-compat.el \
+  anvil-pkg-dsl.el \
+  anvil-pkg-emacs.el \
+  anvil-pkg-state.el \
+  anvil-pkg.el \
+  docs/design/01-overview.org \
+  docs/design/07-phase4d.org \
+  docs/design/13-phase5.org \
+  docs/smoke-test.org \
+  examples/README.org \
+  scripts/anvil-pkg-nelisp-ert-shim.el \
+  scripts/anvil-pkg-nelisp-smoke.el \
+  test/anvil-pkg-compat-test.el \
+  test/anvil-pkg-doctor-test.el \
+  test/anvil-pkg-dsl-test.el \
+  test/anvil-pkg-emacs-test.el \
+  test/anvil-pkg-state-test.el \
+  test/anvil-pkg-test.el \
+  test/anvil-pkg-uninstall-test.el \
+  test/anvil-pkg-upgrade-test.el
+#+end_src
+
+** Commit B — Nelix manifest, lock, native store, and CLI
+
+#+begin_src sh
+git add \
+  bin/nelix \
+  nelix.el \
+  nelix-backend.el \
+  nelix-builder.el \
+  nelix-dsl.el \
+  nelix-emacs.el \
+  nelix-fast.el \
+  nelix-fetch.el \
+  nelix-import.el \
+  nelix-manifest.el \
+  nelix-pkg.el \
+  nelix-registry.el \
+  nelix-store.el \
+  nelix-substitute.el \
+  scripts/nelix-aot-manifest-engine.el \
+  scripts/nelix-aot-native-cli-proof.el \
+  scripts/nelix-aot-native-subset.el \
+  scripts/nelix-cli.el \
+  test/fixtures/nelix-lock-v1-legacy.el \
+  test/fixtures/nelix-lock-v2-legacy.el \
+  test/fixtures/nelix-lock-v2-current.el \
+  test/fixtures/nelix-lock-v2-native-deps.el \
+  test/fixtures/nelix-registry \
+  test/nelix-cli-test.el \
+  test/nelix-manifest-test.el \
+  test/nelix-store-test.el \
+  tools/nelix-lock-plan-apply-gate.sh \
+  tools/nelix-release-scope-audit.sh \
+  tools/nelix-release-scope-stage.sh
+#+end_src
+
+** Commit C — design docs
+
+#+begin_src sh
+git add \
+  docs/design/20-nelix-package-store-system.org \
+  docs/design/21-nelix-manifest-operations.org \
+  docs/design/22-nelix-native-store.org \
+  docs/design/23-nelix-distro-publication.org \
+  docs/design/24-nelix-nelisp-fast-manifest-engine.org \
+  docs/design/25-nelix-native-aot-manifest-engine.org \
+  docs/design/26-nelix-lock-plan-apply.org \
+  docs/design/27-nelix-init-migration-workflow.org \
+  docs/design/28-nelix-apply-transaction-and-dsl-v1.org \
+  docs/design/29-nelix-release-worktree-scope.org
+#+end_src
+
+** Commit D — Debian and repository publication
+
+#+begin_src sh
+git add \
+  debian/README.Debian \
+  debian/changelog \
+  debian/control \
+  debian/copyright \
+  debian/elpa-nelix.docs \
+  debian/elpa-nelix.elpa \
+  debian/elpa-nelix.examples \
+  debian/elpa-nelix.install \
+  debian/elpa-nelix.manpages \
+  debian/nelix.1 \
+  debian/rules \
+  debian/source/format \
+  debian/source/options \
+  debian/tests/control \
+  debian/tests/load \
+  packaging/README.org \
+  packaging/apt/make-repo.sh \
+  packaging/apt/public-url-smoke.sh \
+  packaging/apt/publish-static.sh \
+  packaging/apt/serve-and-smoke.sh \
+  packaging/apt/sign-repo.sh \
+  packaging/apt/verify-public-tree.sh \
+  packaging/apt/verify-repo.sh \
+  packaging/apt/verify-signed-repo.sh \
+  packaging/verify-publication-urls.sh \
+  packaging/fedora/README.org \
+  packaging/fedora/build-rpm.sh \
+  packaging/fedora/container-gate.sh \
+  packaging/fedora/dnf-smoke.sh \
+  packaging/fedora/make-repo.sh \
+  packaging/fedora/make-source.sh \
+  packaging/fedora/nelix.spec \
+  packaging/fedora/publish-static.sh \
+  packaging/fedora/public-url-smoke.sh \
+  packaging/fedora/rpmlint.sh \
+  packaging/fedora/verify-public-tree.sh \
+  packaging/fedora/verify-source.sh \
+  packaging/run-autopkgtest-debian.sh \
+  packaging/verify-extracted-nelix-debian.sh \
+  packaging/verify-installed-nelix-cli-gate.sh \
+  packaging/verify-installed-nelix-debian.sh \
+  packaging/verify-nelix-aot-cache-gate.sh \
+  packaging/verify-nelix-native-cli-gate.sh \
+  packaging/verify-nelix-user-environment.sh \
+  packaging/verify-nelix-user-manifest-dsl.sh
+#+end_src
+
+** Do not stage
+
+These are build artifacts or local output directories.  They are ignored and
+must stay uncommitted.
+
+- =.cache/=
+- =debian/.debhelper/=
+- =debian/debhelper-build-stamp=
+- =debian/elpa-nelix/=
+- =debian/files=
+- =debian/*.substvars=
+- =debian/*.debhelper=
+- =../elpa-nelix_*.deb=
+- =../nelix_*.buildinfo=
+- =../nelix_*.changes=
+- =../nelix-apt-repo/=
+- =../nelix-apt-public/=
+- =../nelix-rpmbuild/=
+- =../nelix-rpm-repo/=
+
+Automated audit:
+
+#+begin_src sh
+make release-scope-audit
+#+end_src
+
+Staging preview:
+
+#+begin_src sh
+make release-scope-stage
+make release-scope-status
+tools/nelix-release-scope-stage.sh --dry-run B
+#+end_src
+
+Explicit staging for one group:
+
+#+begin_src sh
+make release-scope-stage-b
+# Equivalent low-level form:
+tools/nelix-release-scope-stage.sh --stage B
+#+end_src
+
+The =--stage= mode refuses to run if the index already contains staged
+changes.  Commit or unstage the previous group first.  To intentionally add
+another group into the same staged set, set
+=NELIX_RELEASE_SCOPE_ALLOW_DIRTY_INDEX=1= for that command.
+
+Commit execution checklist:
+
+#+begin_src sh
+git diff --cached --name-status
+make release-scope-status
+make release-scope-audit
+make check
+make deb-local-gate
+
+make release-scope-stage-a
+git diff --cached --name-status
+git commit -m "Keep anvil-pkg compatibility while introducing Nelix"
+
+make release-scope-stage-b
+git diff --cached --name-status
+git commit -m "Add Nelix manifest CLI and native store"
+
+make release-scope-stage-c
+git diff --cached --name-status
+git commit -m "Document Nelix architecture and release scope"
+
+make release-scope-stage-d
+git diff --cached --name-status
+git commit -m "Add Debian RPM and repository publication packaging"
+
+make release-scope-audit
+git status --short
+#+end_src
+
+Do not run the audit and staging helpers concurrently.  Both use =git add -n=
+or =git add= and therefore contend for =.git/index.lock=.  If the staged
+status does not match the intended commit group, reset only the index with
+=git reset=, inspect the worktree, and rerun the relevant =--stage= command.
+The =--stage= helper also refuses a dirty index by default so adjacent commit
+groups are not merged accidentally.
+
+Do not run source tarball gates concurrently with compile/test targets.
+=make check= creates and removes =*.elc= files, while =make fedora-source-gate=
+archives the live worktree; running them in parallel can make =tar= fail with
+=file changed as we read it=.  Run =make clean= before source-package gates.
+
+This target prints the exact =git add -n= staging groups, verifies ignored
+build output patterns, checks executable bits on CLI/verifier scripts, and
+fails when any modified/deleted/untracked non-ignored path is not classified
+into the release scope.  It also verifies Debian revision consistency across
+=Makefile=, =debian/changelog=, Debian verifier defaults, and current release
+documentation, and checks that the Debian autopkgtest is not marked
+=superficial= while still invoking the installed CLI gate.
+
+The staging helper uses the same A/B/C/D grouping as this document and defaults
+to dry-run.  It stages files only when =--stage= is passed explicitly.
+
+* Current release facts
+
+- Debian revision: =0.1.0-4=
+- Local Debian artifact: =../elpa-nelix_0.1.0-4_all.deb=
+- Debian source gate passed: =make deb-source-gate= produced
+  =../nelix_0.1.0.orig.tar.gz=, =../nelix_0.1.0-4.dsc=,
+  =../nelix_0.1.0-4.debian.tar.xz=, and
+  =../nelix_0.1.0-4_source.changes=, then linted the source changes.
+- Local gate passed: =make deb-local-gate=
+- Local APT repository gate passed: =make apt-repo-gate=
+- Signed/static/HTTP APT gate passed: =make apt-http-gate=
+- Fedora source gate passed: =make fedora-source-gate=
+- Rootless local pre-publication gate passed: =make publication-local-gate=
+- Fedora container gate passed: =make fedora-container-gate=
+  The current run used =fedora:latest=, built =nelix= and =emacs-nelix=
+  RPMs, ran =rpmlint= with 0 errors/0 warnings, created a local dnf
+  repository, installed both packages from that repository, and verified
+  Emacs/CLI load smoke.
+- Combined publication entry points: =make publication-url-check= rejects
+  placeholder or insecure public repository URLs before upload work starts.
+  =make publication-preflight= runs that guard and then verifies the APT and
+  Fedora static publication trees before upload.  =make publication-public-smoke=
+  runs the same guard before verifying the final published URLs after
+  upload.  The combined smoke is the umbrella for
+  =make apt-public-url-smoke= and =make fedora-public-url-smoke=.
+- Autopkgtest restriction: =allow-stderr= only; =superficial= has been removed
+  because the test now runs installed CLI lock/plan/apply dry-run coverage.
+  =make release-scope-audit= verifies this does not regress.
+- Manifest DSL: real =~/.emacs.d/nelix-package.el= uses =nelix-environment=
+- Manifest validation: real manifest validates with =emacs=190=,
+  =linux=14=, =bootstrap-apt=3=, =imports=2=
+- Lock schema: =nelix-lock= schema version =2=, with legacy v1/v2,
+  current v2, native dependency closure fixture coverage, and CLI JSON
+  round-trip coverage for Nix and native dependency locks.
+- Current real manifest dry-run: =install=0=, =remove=0=, =lock-drift=nil=
+- Current real manifest AOT plan: =NELIX_USER_MANIFEST_NELISP=required make
+  verify-user-manifest-dsl= verifies =nelix --runtime nelisp --json validate=
+  plus the read-only AOT cache fast lane for =audit=, =plan=, and
+  =upgrade-plan=.  The real manifest currently reports =install=0=,
+  =remove=0=, =keep=204=, and =:nelisp-aot-cache= for the read-only
+  NeLisp-runtime path.
+- Staging audit: =make release-scope-audit= passes.  The pathspecs in
+  [[*Exact staging plan][Exact staging plan]] are checked with =git add -n= and select only
+  source/doc/test/packaging files, not generated Debian outputs.  The same
+  audit checks that =DEB_VERSION= and the top =debian/changelog= version both
+  remain =0.1.0-4=.
+- Debian source packaging uses =debian/source/options= to ignore local
+  generated caches and repository outputs during source diff generation.
+- Native registry: static remote indexes and package recipe rows are
+  hash-verified and can require trusted signatures through the substitute
+  signature verifier path.
+- Native registry parser: local and remote recipe/index files are read as
+  data-only forms, so unsupported Elisp forms are rejected without execution.
+- Native archive install: =nelix-native= unpack and substitute materialization
+  handle portable zip payloads with =:strip-components=, covering
+  top-directory release assets common on Windows/macOS.
+- Native GitHub release mirrors: =github-release= sources accept =:base-url=,
+  so recipes can use a GitHub-compatible mirror or future self-hosted release
+  server without changing the =:repo= / =:tag= / =:asset= shape.
+- Native script shims: =script-shim= recipes create fetch-free POSIX shell
+  shims or Windows =.cmd= wrappers in the native store and expose them through
+  profile runtime metadata.  Source-free =script-shim= lock rows replay from
+  =nelix-apply :locked t= because the install metadata is the complete
+  generated-wrapper recipe.
+- Native dependencies: native installs now create additive profile generations,
+  preserve existing entries, install registry =:dependencies= before the
+  requested package, reject dependency cycles, and replay native dependency
+  closure rows from lockfiles without trusting current registry state.
+- Native manifest planning: =nelix plan= and =nelix apply --dry-run= now
+  return read-only install/remove review rows for =nelix-native= without
+  requiring Nix or invoking native install.  The native CLI fixture gate
+  verifies both =plan= and locked =apply --dry-run= and checks that the
+  dry-run does not create a native profile generation.
+- Native CLI: =nelix native audit/install/list/profile/activate/rollback/gc=
+  exposes registry-backed install, profile activation, profile inspection,
+  profile generation rollback, and native store GC without requiring Nix.
+- Native CLI gate: =make smoke-nelix-native-cli= runs
+  =packaging/verify-nelix-native-cli-gate.sh= against an isolated local
+  registry/store/profile and verifies install, list, profile, activate, shim
+  execution, =active/profile= link/copy tree execution, native rollback with
+  reactivation, registry dependency install through =nelix native install=,
+  and GC dry-run.  =verify-installed-cli-gate= runs the same gate through installed
+  =/usr/bin/nelix=.
+- AOT cache CLI gate: =make smoke-nelix-aot-cache-cli= runs
+  =packaging/verify-nelix-aot-cache-gate.sh= with isolated fake Nix and fake
+  NeLisp fixtures.  It verifies that =nelix --runtime nelisp list=, =audit=,
+  =plan=, =upgrade-plan=, and their JSON variants use the
+  default =:nelisp-aot-cache= shell lane without falling back to the slow
+  standalone NeLisp engine.  The direct fallback remains available with
+  =NELIX_NELISP_AOT=0= for debugging.  The installed CLI gate runs the same
+  verifier through installed =/usr/bin/nelix=.
+- Debian payload gate: =make deb-local-gate= verifies that the built
+  =/usr/bin/nelix= payload contains the default AOT cache switch
+  =NELIX_NELISP_AOT:-auto= and the direct-path opt-out diagnostic before
+  lintian runs.
+- APT public preflight: =make apt-publication-preflight
+  APT_PUBLIC_URL=https://...= verifies the static signed publication tree
+  against the real URL before upload.  It refuses the default
+  =example.invalid= URL, checks =sources.list.https=, rejects GPG test or
+  secret material, compares =Packages.gz= with =Packages=, confirms the
+  referenced =elpa-nelix= payload exists, and verifies that both repository
+  metadata and the payload match =DEB_VERSION=.
+- Fedora source/RPM gate: =make fedora-source-gate= verifies that the
+  generated source tarball contains the same =bin/nelix= default AOT cache
+  switch and direct-path opt-out diagnostic.  The RPM spec =%check= also
+  runs =NELIX_LISPDIR="$PWD" bin/nelix --json version=.
+- Fedora public preflight: =make fedora-publication-preflight
+  FEDORA_PUBLIC_URL=https://...= verifies the static dnf repository tree
+  against the real URL before upload.  It refuses the default
+  =example.invalid= URL, checks =nelix-fedora.repo=, rejects GPG test or
+  secret material, and confirms the =nelix= and =emacs-nelix= RPM payloads
+  are present at =FEDORA_VERSION=.
+- Fedora local/container gate verifies that installed =nelix= and
+  =emacs-nelix= RPM versions match =FEDORA_VERSION= before accepting the
+  dnf smoke result.
+
+* Remaining before public release
+
+- Install =../elpa-nelix_0.1.0-4_all.deb= and run =make deb-full-gate= on the
+  target Debian host.
+- Expand native store from functional skeleton to practical registry coverage:
+  add real package recipes, platform-specific fetch/build cases, and
+  Windows/macOS activation checks.
+- Continue NeLisp runtime speed work beyond the current AOT cache fast lane:
+  native artifact execution should consume the same numeric-ID cache contract
+  in-process, and lock/apply transaction paths still need equivalent fast
+  planning without weakening safety checks.
+- Publish the signed APT repository to a real HTTPS host after
+  =make publication-url-check= and =make publication-preflight= pass with
+  the final APT/Fedora URLs, then run =make publication-public-smoke=
+  against those URLs.
+- Optionally rerun the Fedora/RPM package gate on a persistent Fedora host.
+  The Debian host used for this note is missing =rpmbuild=, =rpmlint=,
+  =createrepo_c=, and =dnf=, but =make fedora-container-gate= has passed.
+- Publish the Fedora repository to a real HTTPS host as part of the same
+  =make publication-preflight= / =make publication-public-smoke= workflow.

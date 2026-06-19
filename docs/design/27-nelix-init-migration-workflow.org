@@ -1,0 +1,204 @@
+#+TITLE: Doc 27 - Nelix init.el Migration Workflow
+#+DATE: 2026-06-19
+#+STATUS: ACTIVE
+
+* 1. Purpose
+
+This document defines the practical workflow for migrating a real user
+=init.el= package setup to Nelix =lock / plan / apply=.
+
+The target state is:
+
+- Nelix itself is installed from a Debian package;
+- the user's desired package state lives in one manifest entry point;
+- Emacs package names and Linux/Nix tools are read from lightweight index files;
+- =nelix lock= records the resolved package state;
+- =nelix plan= and =nelix apply --dry-run= show the profile diff before any
+  mutation;
+- real =apply= is only run after reviewing install/remove commands.
+
+This stage remains Nix-backend first.  The native store design is separate.
+
+* 2. Standard User Manifest
+
+For init migration, the standard user entry point is:
+
+#+begin_example
+~/.emacs.d/nelix-package.el
+#+end_example
+
+The file must be state-only.  It should not configure editor behavior, define
+keybindings, start timers, install packages on load, or require full init
+modules.  The current personal manifest shape is:
+
+#+begin_src emacs-lisp
+;;; nelix-package.el --- Personal Nelix desired-state manifest -*- lexical-binding: t; -*-
+
+(require 'nelix)
+
+(defvar nelix-package-emacs-packages)
+(defvar nelix-linux-base-nix-packages)
+(defvar nelix-linux-bootstrap-apt-packages)
+
+(defconst nelix-package-user-emacs-directory
+  "/home/madblack-21/.emacs.d/")
+
+(load (expand-file-name "custom-lisp/nelix-package-index.el"
+                        nelix-package-user-emacs-directory)
+      nil nil t)
+(load (expand-file-name "custom-lisp/nelix-linux.el"
+                        nelix-package-user-emacs-directory)
+      nil nil t)
+
+(nelix-environment
+ (name "madblack-21")
+ (profile "default")
+ (nix-channel "nixpkgs")
+ (imports "custom-lisp/nelix-package-index.el"
+          "custom-lisp/nelix-linux.el")
+ (backend-policy
+  (gnu/linux nix nelix-native)
+  (darwin nix nelix-native)
+  (windows-nt nix))
+ (emacs-packages nelix-package-emacs-packages)
+ (linux-packages nelix-linux-base-nix-packages)
+ (bootstrap-apt-packages nelix-linux-bootstrap-apt-packages))
+#+end_src
+
+The explicit =nelix-package-user-emacs-directory= is intentional for now:
+standalone NeLisp validates this form reliably, while =user-emacs-directory=
+is not yet a stable runtime assumption.
+
+The verifier requires exactly one top-level =nelix-environment= form and rejects
+returning to a top-level =nelix-manifest= form for this real user manifest.
+
+* 3. init.el Extraction Rule
+
+The migration does not copy the whole =init.el=.  It extracts only package
+identity into generated state files:
+
+- =~/.emacs.d/custom-lisp/nelix-package-index.el= contains the lightweight
+  Emacs package name list and Nix attribute aliases;
+- =~/.emacs.d/custom-lisp/nelix-linux.el= contains Linux/Nix package groups and
+  bootstrap APT anchors;
+- the old full recipe file can remain separate for manual recipe work, but it
+  is not the default manifest dependency.
+
+Extraction should scan only package declaration/install surfaces, such as
+=package-install=, =use-package= package names, generated recipe names, and
+Linux tool groups.  It must not import arbitrary init side effects.
+
+* 4. Required Commands
+
+The basic real-user flow is:
+
+#+begin_src sh
+manifest="$HOME/.emacs.d/nelix-package.el"
+
+make verify-user-manifest-dsl
+nelix --runtime nelisp --json validate "$manifest"
+nelix --json lock "$manifest"
+nelix --json plan "$manifest"
+nelix --json apply "$manifest" --dry-run
+#+end_src
+
+=make verify-user-manifest-dsl= is the source-tree regression guard for this
+real manifest.  It checks the top-level DSL shape and validates through normal
+Nelix.  Its default auto mode also attempts standalone NeLisp validation when
+the runtime is available.  The =nelix --runtime nelisp --json validate=
+wrapper keeps the standard manifest off the slow full standalone NeLisp
+manifest load path.  The CLI exposes =nelix-fast-validate-json= as the
+source-only validate API, and the wrapper may delegate that validation to Emacs
+batch until the native reader/count scanner is fast enough for the 200-package
+manifest.
+
+=NELIX_USER_MANIFEST_NELISP=required= also requires the read-only AOT cache lane
+for =audit=, =plan=, and =upgrade-plan=.  Those commands must report
+=:nelisp-aot-cache= as the fallback and must not enter the slow full standalone
+manifest path.  =lock / apply --dry-run= may still run through Emacs batch until
+the NeLisp process/runtime path is complete enough for those commands.
+
+The lock file path is:
+
+#+begin_example
+~/.emacs.d/nelix-package.el.nelix-lock
+#+end_example
+
+The lock records manifest/import digests and per-package target resolution.
+
+* 5. Plan Review
+
+=nelix plan= is read-only.  =nelix apply --dry-run= returns the same action
+model with =:status dry-run= and does not mutate the profile.
+
+Before real =apply=, review at least:
+
+- =install= count and command rows;
+- =remove= count and command rows;
+- =protected= rows from pins;
+- whether transitional wrapper packages should be kept in =:linux= or removed;
+- whether any one-off profile tools should be added to the manifest.
+
+On 2026-06-19, the current personal profile dry-run result was:
+
+#+begin_example
+install=0
+remove=0
+keep=203
+protected=0
+commands=0
+#+end_example
+
+The earlier remove candidates were kept explicitly in
+=~/.emacs.d/custom-lisp/nelix-linux.el=:
+
+#+begin_example
+nelix-system-autopkgtest -> transitional Debian tool wrapper
+nelix-system-debhelper   -> transitional Debian tool wrapper
+nelix-system-dh-elpa     -> transitional Debian tool wrapper
+nelix-system-lintian     -> transitional Debian tool wrapper
+ripgrep                  -> core search/development tool
+#+end_example
+
+This keeps the profile converged without removing currently useful tools.
+
+* 6. Debian Package Verification
+
+Installed package verification requires =elpa-nelix >= 0.1.0-4= because older
+packages did not ship =/usr/bin/nelix=.
+
+After installing the rebuilt package:
+
+#+begin_src sh
+sudo apt install --reinstall ../elpa-nelix_0.1.0-4_all.deb
+
+NELIX_USER_MANIFEST="$HOME/.emacs.d/nelix-package.el" \
+NELIX_USER_MANIFEST_NELISP=1 \
+NELISP=/home/madblack-21/Cowork/Notes/dev/nelisp/target/nelisp \
+NELISP_ROOT=/home/madblack-21/Cowork/Notes/dev/nelisp \
+packaging/verify-installed-nelix-debian.sh 0.1.0-4
+#+end_src
+
+Without root access, the package payload can still be verified by extraction:
+
+#+begin_src sh
+NELIX_USER_MANIFEST="$HOME/.emacs.d/nelix-package.el" \
+NELIX_USER_MANIFEST_NELISP=1 \
+NELISP=/home/madblack-21/Cowork/Notes/dev/nelisp/target/nelisp \
+NELISP_ROOT=/home/madblack-21/Cowork/Notes/dev/nelisp \
+packaging/verify-extracted-nelix-debian.sh ../elpa-nelix_0.1.0-4_all.deb 0.1.0-4
+#+end_src
+
+* 7. Open Edges
+
+- =lock / apply --dry-run= still run through Emacs batch in the default CLI
+  path.  =nelix --runtime nelisp --json validate= works for the standard
+  manifest without entering the full standalone NeLisp manifest loader, and the
+  read-only =audit / plan / upgrade-plan= path is covered by the AOT cache fast
+  lane.  Full lock/apply transaction execution on NeLisp remains part of the
+  runtime/process maturity track.
+- =apply= converges the profile and can remove unmanaged entries.  This is
+  intentional, but docs and UI must keep the review step prominent.
+- Transitional Debian wrapper packages need a final policy: either keep them in
+  =:linux= while they are still expected, or let =apply= remove them.
+- The native store is not part of this workflow yet.

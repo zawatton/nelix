@@ -1,0 +1,1166 @@
+#+TITLE: Doc 22 — Nelix native store and registry
+#+AUTHOR: zawatton + Codex
+#+DATE: 2026-06-17
+#+STATUS: INITIAL-DELIVERABLES-IMPLEMENTED
+#+OPTIONS: num:nil toc:t
+
+* Status
+
+INITIAL-DELIVERABLES-IMPLEMENTED.  This document defines the next
+architectural step after Doc 20 and Doc 21: making Nelix usable on
+Windows, macOS, and machines where Nix is not installed.
+
+The initial deliverables are implemented:
+
+- =nelix-backend.el=
+- =nelix-store.el=
+- =nelix-registry.el=
+- =nelix-fetch.el=
+- =nelix-builder.el=
+- =test/nelix-store-test.el=
+- local registry fixtures for =ripgrep= and =magit=
+- =nelix-native-audit=, which works without Nix installed
+- hash-verified local/file/HTTP/ELPA/Git fetch source path
+- native =unpack= builder that extracts verified archives into the
+  native store and creates profile generations
+
+This implementation can install simple archive recipes into the native
+store through =nelix-native-install-recipe= / =nelix-native-install= /
+=nelix-backend-install=.  =nelix-apply= / =nelix-audit= now choose a
+manifest backend and fall back to =nelix-native= when Nix is not
+available.  Native installs preserve existing profile entries across
+generations and resolve registry =:dependencies= before installing the
+requested package, with dependency-cycle detection.
+
+The intent is not to clone Nix byte-for-byte.  The intent is to
+recreate the useful Nix mechanisms in Nelisp/Elisp:
+
+- declarative package recipes
+- source/substitute hashes
+- content-addressed store entries
+- immutable package outputs
+- user profiles
+- generations and rollback
+- manifest + lock based reproducibility
+- remote registry and optional binary substitutes
+
+Existing Nix support remains valuable.  Nix should become one backend
+among several:
+
+#+begin_example
+Nelix manifest
+  ↓
+resolver
+  ↓
+backend:
+  - nix           existing Linux/macOS users with Nix installed
+  - nelix-native Windows/macOS/Linux without Nix
+  - external     apt/dnf/homebrew/winget/scoop as bootstrap or fallback
+#+end_example
+
+* Goal
+
+Make this workflow possible on any supported OS:
+
+#+begin_src shell
+nelix apply ~/.config/nelix/manifest.el
+nelix audit ~/.config/nelix/manifest.el
+nelix upgrade-plan ~/.config/nelix/manifest.el
+nelix sync ~/.config/nelix/manifest.el
+#+end_src
+
+With these constraints:
+
+- The user should not need to install Nix.
+- The same manifest should work across Linux, macOS, and Windows as
+  far as package availability allows.
+- Nelix should prefer immutable store entries over mutating random
+  directories.
+- Lock files must record exact sources and hashes.
+- The initial package server can reuse public upstreams and selected
+  Nix metadata, but Nelix must be able to migrate to its own registry
+  and cache later.
+
+* Non-goals
+
+- Nix language compatibility.
+- Full =nixpkgs= evaluation inside Nelisp.
+- Full =cache.nixos.org= compatibility in the first version.
+- Rebuilding all packages from source.
+- Sandboxed build parity with Nix on Windows/macOS in the first
+  native backend.
+- System package manager replacement for kernel drivers, services,
+  and privileged OS components.
+
+* Relationship To Existing Docs
+
+Doc 20 defines the broad Nelisp-backed package/store system.
+
+Doc 21 implements the first manifest operations on top of the current
+Nix profile backend.
+
+Doc 22 narrows the next work:
+
+- add a =nelix-native= backend
+- keep Doc 21 manifest APIs stable
+- introduce registry/recipe/substitute data
+- make Nix optional
+- plan a path from public upstream reuse to a self-hosted Nelix
+  package server
+
+* Core Architecture
+
+#+begin_example
+manifest.el
+  ↓
+nelix-manifest-load
+  ↓
+nelix-resolve
+  ↓
+lock.el
+  ↓
+backend dispatcher
+  ├─ nix backend
+  ├─ nelix-native backend
+  ├─ git/elpa backend
+  └─ OS fallback backend
+        ↓
+store + profile + generations
+#+end_example
+
+The current =nelix-apply= already knows how to load a manifest and
+find missing targets.  The next abstraction is to make "install this
+target" backend-neutral.
+
+#+begin_src emacs-lisp
+(nelix-install-target
+ :target 'ripgrep
+ :system 'x86_64-linux
+ :backend 'nelix-native
+ :profile "default")
+#+end_src
+
+* Backend Model
+
+** Backend roles
+
+| Backend | Purpose |
+|---------+---------|
+| =nix= | Use existing =nix profile= commands. Current implementation. |
+| =nelix-native= | Fetch/build/unpack into Nelix store without requiring Nix. |
+| =elpa= | Install or vendor Emacs Lisp packages from ELPA/MELPA-style archives. |
+| =git= | Fetch source trees directly from Git. |
+| =os= | Delegate bootstrap or fallback packages to apt/dnf/homebrew/winget/scoop. |
+
+** Backend policy
+
+Backend selection must be explicit and inspectable.
+
+#+begin_src emacs-lisp
+(setq nelix-backend-policy
+      '((gnu/linux . (nelix-native nix apt git elpa))
+        (darwin    . (nelix-native nix homebrew git elpa))
+        (windows   . (nelix-native scoop winget git elpa))))
+#+end_src
+
+The policy is ordered.  The resolver tries the first backend that has
+a recipe for the target and current system.
+
+** Backend capability record
+
+Each backend advertises capabilities.
+
+#+begin_src emacs-lisp
+(:backend nelix-native
+ :systems (x86_64-linux aarch64-linux x86_64-darwin aarch64-darwin
+           x86_64-windows)
+ :fetchers (url git github-release elpa)
+ :store t
+ :generations t
+ :rollback t
+ :build nil
+ :binary-substitutes t)
+#+end_src
+
+Audit must report backend availability before mutating anything.
+
+* System Triples
+
+Nelix needs stable system identifiers independent of Nix.
+
+#+begin_src emacs-lisp
+(nelix-current-system)
+;; => x86_64-linux
+;; => aarch64-darwin
+;; => x86_64-windows
+#+end_src
+
+Initial supported systems:
+
+| Nelix system | OS | CPU |
+|--------------+----+-----|
+| =x86_64-linux= | Linux | x86_64 |
+| =aarch64-linux= | Linux | ARM64 |
+| =x86_64-darwin= | macOS | Intel |
+| =aarch64-darwin= | macOS | Apple Silicon |
+| =x86_64-windows= | Windows | x86_64 |
+
+Future:
+
+- =aarch64-windows=
+- =i686-linux=
+- =wasm32= for limited script/package cases
+
+* Store Layout
+
+** Linux/macOS
+
+#+begin_example
+~/.local/share/nelix/store/
+  sha256-abc123-ripgrep-14.1.1/
+  sha256-def456-magit-4.3.0/
+
+~/.local/state/nelix/profiles/default/
+  current -> generations/42
+  generations/
+    41/
+    42/
+#+end_example
+
+** Windows
+
+#+begin_example
+%LOCALAPPDATA%/nelix/store/
+  sha256-abc123-ripgrep-14.1.1/
+  sha256-def456-magit-4.3.0/
+
+%LOCALAPPDATA%/nelix/profiles/default/
+  current.json
+  generations/
+    41/
+    42/
+#+end_example
+
+Windows must not rely on POSIX symlink behavior.  Profile activation
+uses one of:
+
+- shim scripts
+- copied launchers
+- directory junctions where available
+- generated =PATH= fragments
+- Emacs =load-path= augmentation for Elisp packages
+
+** Store path naming
+
+Initial native store path:
+
+#+begin_example
+<hash>-<name>-<version>
+#+end_example
+
+Example:
+
+#+begin_example
+sha256-lnv3k...-ripgrep-14.1.1
+#+end_example
+
+The hash is the normalized output hash when available.  If only a
+source hash is known, the store entry must record that it is
+source-addressed, not output-addressed.
+
+* Store Entry Metadata
+
+Each store entry has a metadata file.
+
+#+begin_example
+store/sha256-...-ripgrep-14.1.1/.nelix/store-entry.el
+#+end_example
+
+Shape:
+
+#+begin_src emacs-lisp
+(nelix-store-entry
+ :schema 1
+ :name "ripgrep"
+ :version "14.1.1"
+ :system x86_64-linux
+ :backend nelix-native
+ :source
+ '(:type github-release
+   :repo "BurntSushi/ripgrep"
+   :tag "14.1.1"
+   :asset "ripgrep-14.1.1-x86_64-unknown-linux-musl.tar.gz"
+   :sha256 "sha256-...")
+ :output-hash "sha256-..."
+ :files '("bin/rg" "share/man/man1/rg.1")
+ :runtime-paths '("bin")
+ :features nil
+ :created-at "2026-06-17T13:00:00+09:00")
+#+end_src
+
+* Profile Model
+
+A profile is an ordered set of store entries plus activation metadata.
+
+#+begin_src emacs-lisp
+(nelix-profile
+ :schema 1
+ :name "default"
+ :generation 42
+ :system x86_64-linux
+ :entries
+ '((:name "ripgrep"
+    :store-path ".../sha256-...-ripgrep-14.1.1"
+    :runtime-paths ("bin"))
+   (:name "magit"
+    :store-path ".../sha256-...-magit-4.3.0"
+    :emacs-load-paths ("share/emacs/site-lisp/magit"))))
+#+end_src
+
+Activation writes:
+
+- =PATH= fragments
+- Emacs =load-path= fragments
+- shell profile snippets where requested
+- POSIX shell shims and Windows =.cmd= shim scripts or launcher directories
+- an =active/profile= file tree: POSIX profiles use symlinks when
+  available, and Windows profiles copy files so activation does not
+  require privileged symlink creation
+
+Activation is built in a temporary directory and committed by replacing
+the previous =active= tree only after all shims, path fragments, and
+profile links/copies have been written.  If activation fails before the
+commit step, the previous =active= tree remains intact.
+
+Rollback changes =current= or =current.json= to an earlier generation.
+Store entries are garbage-collected only when no profile generation
+references them.
+
+* Recipe Model
+
+** Package recipe
+
+The native backend needs package recipes independent of Nix language.
+
+#+begin_src emacs-lisp
+(nelix-package
+ :name "ripgrep"
+ :version "14.1.1"
+ :class system-tool
+ :license "MIT OR Unlicense"
+ :systems
+ '((x86_64-linux
+    :source (:type github-release
+             :repo "BurntSushi/ripgrep"
+             :tag "14.1.1"
+             :asset "ripgrep-14.1.1-x86_64-unknown-linux-musl.tar.gz"
+             :sha256 "sha256-...")
+    :install (:type unpack
+              :bin ("rg")))
+   (x86_64-windows
+    :source (:type github-release
+             :repo "BurntSushi/ripgrep"
+             :tag "14.1.1"
+             :asset "ripgrep-14.1.1-x86_64-pc-windows-msvc.zip"
+             :sha256 "sha256-...")
+    :install (:type unpack
+              :bin ("rg.exe")))))
+#+end_src
+
+** Emacs Lisp recipe
+
+#+begin_src emacs-lisp
+(nelix-package
+ :name "magit"
+ :version "4.3.0"
+ :class emacs-lisp
+ :source (:type elpa
+          :archive gnu
+          :package "magit"
+          :version "4.3.0"
+          :sha256 "sha256-...")
+ :dependencies '("transient" "with-editor")
+ :install (:type emacs-lisp
+           :features (magit)))
+#+end_src
+
+** Recipe invariants
+
+- Every network source must have a hash.
+- Every binary substitute must have a hash and system id.
+- Every package must declare class and system support.
+- A recipe can be incomplete for some systems, but resolver must make
+  that explicit.
+- A recipe is data, not arbitrary code, unless explicitly marked
+  =:trusted-code t=.
+
+* Registry
+
+** Local registry
+
+Initial local path:
+
+#+begin_example
+~/.local/share/nelix/registry/
+  index.el
+  index.json
+  packages/
+    ripgrep.el
+    fd.el
+    emacs/
+      magit.el
+#+end_example
+
+The Elisp index is convenient for Emacs/Nelisp.
+The JSON index is convenient for tooling, search, and future servers.
+
+** Remote registry
+
+Initial server can be static files.
+
+#+begin_example
+https://packages.nelix.example/index.json
+https://packages.nelix.example/packages/ripgrep.el
+https://packages.nelix.example/packages/emacs/magit.el
+https://packages.nelix.example/substitutes/x86_64-linux/ripgrep-14.1.1.json
+#+end_example
+
+Required commands:
+
+#+begin_src shell
+nelix registry update
+nelix registry index ~/.local/share/nelix/registry ./index.el
+nelix registry list
+nelix registry list --system x86_64-linux
+nelix registry search ripgrep
+nelix registry search ripgrep --system x86_64-linux
+nelix registry show ripgrep
+#+end_src
+
+Status: implemented in the installed CLI as =nelix registry update=,
+=nelix registry index ROOT OUTPUT=, =nelix registry list [--system SYSTEM]=,
+=nelix registry search QUERY [--system SYSTEM]=, and =nelix registry show
+NAME=.  List/search/show refresh the local registry cache before reading
+recipes so the CLI behaves like a package-manager front end rather than a raw
+in-memory Elisp helper.  The index command emits a static
+=nelix-registry-index= file with recipe paths and SHA-256 hashes so a local
+recipe tree can become a hash-verified remote registry.
+
+Elisp API:
+
+#+begin_src emacs-lisp
+(nelix-registry-update)
+(nelix-registry-write-index "~/.local/share/nelix/registry" "./index.el")
+(nelix-registry-search "ripgrep")
+(nelix-registry-get "ripgrep")
+#+end_src
+
+** Registry trust
+
+Minimum trust model:
+
+- registry root URL is configured by the user
+- registry index has a hash in local state
+- package recipes carry source hashes
+- downloaded archives are verified before store insertion
+- remote registry indexes can require a trusted signature through
+  =:require-signature=, =:sig=, =:trusted-signers=, and =:public-keys=
+- remote package recipe rows can require a trusted signature through the
+  same row-level policy fields
+- registry recipe files are parsed as data; only =require nelix-registry=
+  and a single =nelix-package= form are accepted, and unsupported forms are
+  rejected without evaluation
+
+Future trust model:
+
+- transparency log for recipe revisions
+- multiple registry mirrors
+
+Registry index and package recipe signatures reuse the native substitute
+signature policy.  Index signed messages are produced by
+=nelix-registry-index-signature-message= and cover the remote name, index
+URL, index sha256, index schema version, and package count.  Recipe row
+messages are produced by =nelix-registry-recipe-signature-message= and
+cover the remote name, row path/url, recipe sha256, recipe name, version,
+and class.  This keeps the initial static registry bootstrap OpenSSL-free
+when using =nelix-sha256-digest=, while still allowing the same
+RSA/Ed25519 verifier registry used by substitutes.
+
+* Nix Metadata Reuse
+
+The user goal includes using Nix package servers initially.  This is
+possible only in carefully scoped ways.
+
+** What can be reused early
+
+- Package names and descriptions from =nix search --json= when Nix is
+  available on a maintainer machine.
+- Nixpkgs version metadata exported into Nelix registry recipes.
+- Upstream URLs and hashes extracted from selected nixpkgs derivations.
+- Precomputed substitute metadata for specific store paths, if a
+  maintainer exports it into Nelix format.
+
+** What should not be attempted first
+
+- Evaluating arbitrary nixpkgs expressions inside Nelisp.
+- Fetching =cache.nixos.org= artifacts by package name alone.
+- Assuming Linux Nix store outputs work on Windows.
+- Treating =narinfo= as a generic package metadata API.
+
+** Nix substitute bridge
+
+Nelix supports a precomputed Nix substitute metadata bridge:
+
+#+begin_src emacs-lisp
+(nelix-substitute
+ :name "ripgrep"
+ :version "14.1.1"
+ :system x86_64-linux
+ :source nix-cache
+ :cache "https://cache.nixos.org"
+ :store-path "/nix/store/..."
+ :nar-hash "sha256-..."
+ :nar-size 123456
+ :references '(...)
+ :sig "cache.nixos.org-1:...")
+#+end_src
+
+The bridge is intentionally scoped:
+
+- it does not evaluate arbitrary nixpkgs expressions
+- it does not query =cache.nixos.org= by package name
+- it accepts maintainer-exported metadata only
+- it requires explicit cache URL, Nix store path, nar hash, system, and
+  package identity
+- it uses the same substitute signature policy as native substitute
+  metadata
+
+N8 includes materialization and install:
+
+- =nelix-substitute-materialize= downloads the payload, verifies the
+  declared hash, restores true NAR payloads with =nix-store --restore=,
+  and unpacks portable tar/zip payloads through the native builder.
+- =nelix-substitute-install= creates a native profile generation from
+  the materialized store entry.
+- Registry/package servers can publish the same stable descriptor
+  contract for native substitutes and maintainer-exported Nix cache
+  metadata.
+
+** Substitute signature policy
+
+N8 implements signature policy and initial cryptographic verification:
+
+#+begin_src emacs-lisp
+(setq nelix-substitute-trusted-signers '("nelix.example-1"))
+(setq nelix-substitute-public-keys
+      '((:key "nelix.example-1"
+         :algorithm openssl-rsa-sha256
+         :public-key-file "/etc/nelix/keys/nelix.example-1.pem")))
+(nelix-substitute-verify-trust substitute)
+#+end_src
+
+This confirms that a descriptor has a signature, that the key name is
+trusted locally, and, when the descriptor declares
+=:algorithm openssl-rsa-sha256=, that OpenSSL can verify the signature
+over =nelix-substitute-canonical-message=.  Unsigned descriptors,
+unknown signers, missing public keys, unsupported algorithms, and
+invalid signatures are reported as blocked and must not be treated as
+trusted substitutes.
+
+Cryptographic verification is dispatched through
+=nelix-substitute-crypto-verifiers=.  Native NeLisp crypto can register
+future Ed25519/RSA verifiers without changing the trust-policy entry
+points.  Nelix currently ships an OpenSSL-free
+=nelix-sha256-digest= verifier that compares the SHA-256 digest of the
+canonical descriptor message against a trusted signer entry.  This is a
+native integrity verifier for bootstrap/cache experiments, not a
+public-key signature replacement.
+
+The Nix bridge also parses =.narinfo= text and converts it into the
+same substitute descriptor contract.  =nelix-substitute-narinfo-fingerprint=
+builds the Nix valid-path signature message:
+
+#+begin_example
+1;<store-path>;<nar-hash>;<nar-size>;<comma-separated full references>
+#+end_example
+
+Narinfo =Sig:= rows are recognized as Nix Ed25519 signatures.  The
+current verifier accepts Nix public keys in =key-name:base64(raw32)= or
+raw base64 form, wraps them as Ed25519 SubjectPublicKeyInfo DER, and
+verifies the signature with OpenSSL =pkeyutl -verify -rawin=.  Invalid
+or tampered fingerprints are blocked as
+=:cryptographic-signature-invalid=.
+
+Remaining future bridge work:
+
+- native nelisp public-key crypto backend without OpenSSL dependency
+- reference recording
+- path relocation policy
+
+Because Nix outputs may contain embedded =/nix/store= paths, this
+bridge is a later optimization, not the foundation of native Nelix.
+
+* Fetchers
+
+Initial fetchers:
+
+| Fetcher | Use |
+|---------+-----|
+| =url= | Direct tarball/zip downloads. |
+| =github-release= | Cross-platform binary release assets, with optional =:base-url= for GitHub-compatible mirrors. |
+| =git= | Source checkout at exact rev. |
+| =elpa= | Emacs package archives. |
+| =melpa-recipe= | Recipe metadata import. |
+
+Required primitives in Nelisp:
+
+- HTTP GET binary
+- streaming download to file
+- SHA-256 hashing
+- archive extraction: tar.gz, tar.xz, zip
+- zip archives with top-level directories can use =:strip-components= in the
+  native builder, matching the tar recipe shape used for GitHub release
+  assets.
+- file permissions on Linux/macOS
+- executable bit handling or shim generation on Windows
+
+* Builders
+
+** Initial builder set
+
+The first native backend should avoid complex builds.
+
+| Builder | Description |
+|---------+-------------|
+| =unpack= | Download archive, verify hash, unpack selected files. |
+| =copy= | Copy local files into store. |
+| =emacs-lisp= | Install Elisp files, generate autoload/load-path metadata. |
+| =script-shim= | Generate shell/batch/powershell wrappers. |
+
+** Later builder set
+
+- =cargo=
+- =go=
+- =python-wheel=
+- =node=
+- =make=
+- =cmake=
+
+Those require sandbox and dependency management decisions.  They
+should come after store/profile/registry are stable.
+
+* Resolver
+
+The resolver turns manifest targets into concrete install plans.
+
+Input:
+
+#+begin_src emacs-lisp
+(nelix-manifest
+ :name "default"
+ :emacs '(magit)
+ :linux '("ripgrep")
+ :windows '("ripgrep")
+ :backend-policy '((windows . (nelix-native scoop winget))
+                   (gnu/linux . (nelix-native nix))))
+#+end_src
+
+Output:
+
+#+begin_src emacs-lisp
+(:system x86_64-linux
+ :targets
+ ((:name "ripgrep"
+   :backend nelix-native
+   :recipe ".../packages/ripgrep.el"
+   :version "14.1.1"
+   :source-hash "sha256-..."
+   :dependencies nil)
+  (:name "magit"
+   :backend nelix-native
+   :recipe ".../packages/emacs/magit.el"
+   :version "4.3.0"
+   :dependencies ("transient" "with-editor"))))
+#+end_src
+
+Resolver rules:
+
+- Respect backend policy order.
+- Prefer locked versions when lock exists.
+- Error on ambiguous provider unless policy resolves it.
+- Report unsupported systems as audit errors, not silent skips.  Implemented
+  for manifest-requested native targets: =nelix-audit= passes the desired
+  target list into =nelix-native-audit=, which returns
+  =:unsupported-systems= rows and marks the audit not OK when a requested
+  recipe lacks current-system data.
+- Always produce an install plan before mutation.
+
+* Lock File
+
+Doc 21 lock files now record a combined manifest/import digest,
+per-file digest rows, backend/system metadata, and resolved targets.
+Native Nelix still needs stronger source/build entries before network
+source replay can be treated as fully reproducible.
+
+#+begin_src emacs-lisp
+(nelix-lock
+ :version 2
+ :manifest-digest "sha256-..."
+ :manifest-files
+ '((:role manifest
+    :path "/home/me/.config/nelix/manifest.el"
+    :digest "sha256-...")
+   (:role import
+    :path "/home/me/.emacs.d/custom-lisp/nelix-package.el"
+    :digest "sha256-..."))
+ :backend nelix-native
+ :system x86_64-linux
+ :registry
+ '((:url "https://packages.nelix.example/index.json"
+    :revision "2026-06-17T00:00:00Z"
+    :sha256 "sha256-..."))
+ :packages
+ '((:name "ripgrep"
+    :version "14.1.1"
+    :backend nelix-native
+    :source (:type github-release
+             :url "https://github.com/..."
+             :sha256 "sha256-...")
+    :output-hash "sha256-..."
+    :store-path "sha256-...-ripgrep-14.1.1")
+   (:name "magit"
+    :version "4.3.0"
+    :backend nelix-native
+    :source (:type elpa
+             :archive gnu
+             :sha256 "sha256-...")
+    :dependencies ("transient" "with-editor"))))
+#+end_src
+
+Lock policy:
+
+- Apply may run without lock in early versions.
+- =apply --locked= and =sync --locked= require a clean Doc 21 lock
+  check and package row enforcement before mutation.  Native rows
+  replay source/install/dependencies from the lock file without
+  trusting the current registry.
+- Native install from network must require source hash.
+- Audit warns on manifest/import digest drift.
+- Sync may refuse to prune when lock and manifest disagree unless
+  =:allow-lock-drift t= is supplied.
+
+* CLI Surface
+
+Doc 21 CLI commands remain the user surface.
+
+#+begin_src shell
+nelix apply MANIFEST
+nelix audit MANIFEST
+nelix plan MANIFEST
+nelix sync MANIFEST
+nelix prune-plan MANIFEST
+nelix lock MANIFEST
+nelix rollback [GENERATION]
+#+end_src
+
+Native-specific commands:
+
+#+begin_src shell
+nelix native audit
+nelix native install NAME [--profile PROFILE] [--system SYSTEM]
+nelix native remove NAME [--profile PROFILE] [--system SYSTEM]
+nelix native list
+nelix native profile [--profile PROFILE] [--generation GENERATION]
+nelix native activate [--profile PROFILE] [--generation GENERATION]
+nelix native rollback [--profile PROFILE] [--generation GENERATION]
+nelix native gc [--dry-run] [--profile PROFILE]
+nelix registry update
+nelix registry list [--system SYSTEM]
+nelix registry search QUERY [--system SYSTEM]
+nelix registry show NAME
+#+end_src
+
+* Elisp API
+
+New public APIs:
+
+#+begin_src emacs-lisp
+(nelix-current-system)
+(nelix-backend-capabilities)
+(nelix-resolve MANIFEST)
+(nelix-plan MANIFEST)
+
+(nelix-store-add RECIPE)
+(nelix-store-list)
+(nelix-store-verify &optional STORE-PATH)
+(nelix-store-gc)
+
+(nelix-profile-current &optional PROFILE)
+(nelix-profile-activate PROFILE GENERATION)
+(nelix-profile-rollback &optional PROFILE GENERATION)
+
+(nelix-registry-update)
+(nelix-registry-list &optional SYSTEM)
+(nelix-registry-search QUERY)
+(nelix-registry-get NAME)
+#+end_src
+
+Existing APIs continue to work:
+
+#+begin_src emacs-lisp
+(nelix-apply MANIFEST)
+(nelix-audit MANIFEST)
+(nelix-sync MANIFEST :prune t)
+(nelix-upgrade-plan MANIFEST)
+#+end_src
+
+* Security Model
+
+Minimum:
+
+- verify hashes before store insertion
+- never execute downloaded code during recipe parsing
+- recipes are data by default
+- warn when a recipe requires arbitrary build code
+- materialize/rebuild directly from native lock source/install rows
+  without trusting the mutable registry after lock generation
+- replay source-free =script-shim= lock rows because the install metadata is
+  the complete recipe for generated wrapper packages
+- separate temporary download/build directory from final store path
+- verify remote registry index signatures when policy requires them
+- verify remote package recipe signatures when policy requires them
+
+Future:
+
+- sandboxed builders
+- per-backend trust policy
+- binary transparency log
+- reproducible build attestation
+
+* Windows Notes
+
+Windows needs first-class design, not Linux assumptions.
+
+Key decisions:
+
+- Store paths live under =%LOCALAPPDATA%=.
+- Profile activation uses generated shims and JSON metadata.
+- Executables may be =.exe=, =.cmd=, or PowerShell wrappers.
+- Symlink creation may require privileges; avoid depending on it.
+- PATH activation should be shell-specific:
+  - PowerShell
+  - cmd.exe
+  - Git Bash/MSYS2
+  - Emacs process environment
+- Line endings must not affect hashes unless normalized by builder.
+
+Initial Windows package classes:
+
+- GitHub release binaries
+- zip archives
+- Emacs Lisp packages
+- Scoop/winget fallback declarations
+
+* macOS Notes
+
+macOS can share more with Linux:
+
+- symlinks are available
+- executable bits matter
+- aarch64/x86_64 split is important
+- quarantine attributes may need cleanup for downloaded binaries
+
+Initial macOS package classes:
+
+- GitHub release binaries
+- tar.gz/zip archives
+- Emacs Lisp packages
+- Homebrew fallback declarations
+- Nix backend when Nix is installed
+
+* Migration Path From Current Nelix
+
+** Step 1 — backend interface
+
+Introduce a backend protocol while keeping =nix= as default.
+
+#+begin_src emacs-lisp
+(nelix-backend-install BACKEND TARGETS)
+(nelix-backend-list BACKEND)
+(nelix-backend-upgrade-plan BACKEND TARGETS)
+#+end_src
+
+Status: implemented for read-only planning.  The native backend
+compares current profile entries with local registry recipes and
+reports upgrade, pinned, missing, blocked, and current rows without
+mutating profile generations.
+
+** Step 2 — native store skeleton
+
+Implement:
+
+- store root detection
+- store metadata read/write
+- profile metadata read/write
+- generation creation
+- rollback
+
+No network fetch yet.
+
+** Step 3 — fetch + unpack
+
+Implement hash-verified download and unpack into store for simple
+binary archives.
+
+First packages:
+
+- =ripgrep=
+- =fd=
+- =jq=
+- =bat=
+
+** Step 4 — Emacs Lisp package native install
+
+Install Elisp archives into store and activate through profile
+=load-path= metadata.
+
+First packages:
+
+- =dash=
+- =s=
+- =transient=
+- =magit=
+
+** Step 5 — registry update/search
+
+Add local registry and static remote registry support.
+
+** Step 6 — manifest backend policy
+
+Make Doc 21 =nelix-apply= choose =nelix-native= when Nix is absent.
+
+** Step 7 — package server
+
+Static package server first.  Dynamic server later.
+
+* Implementation Phases
+
+** Phase N1 — backend protocol
+
+Status: implemented as initial backend protocol in =nelix-backend.el=.
+
+- Define backend capability records.
+- Add backend policy resolution.
+- Keep Nix backend behavior unchanged.
+- Add ERT for backend choice.
+
+** Phase N2 — native store metadata
+
+Status: implemented as metadata skeleton in =nelix-store.el=.
+
+- Implement store root discovery.
+- Implement store entry metadata.
+- Implement profile generation metadata.
+- Implement rollback without fetching packages.
+
+** Phase N3 — hash-verified fetchers
+
+Status: implemented as initial source fetch/verify path in
+=nelix-fetch.el= for =url=, =github-release=, =elpa=, and =git=
+sources.  Git sources clone a repository, check out an exact =:rev=,
+export that checkout through =git archive= as a tar stream, and verify
+the resulting archive hash before builder extraction.  =github-release=
+sources default to =https://github.com= and accept =:base-url= for GitHub-compatible mirrors or a future self-hosted recipe/substitute server.
+
+- Add URL/GitHub release/ELPA archive/Git rev fetch.
+- Add SHA-256 verification.
+- Add zip/tar extraction.
+- Add tests with local fixture archives.
+
+** Phase N4 — unpack builder
+
+Status: implemented as initial =unpack=, =copy=, and =script-shim=
+builders in =nelix-builder.el=.  The =copy= builder verifies a local
+=:source (:type local :path ... :sha256 ...)= file/directory first,
+then copies either the whole source or explicit =:files= mappings into
+the native store.  The =script-shim= builder creates fetch-free
+store entries from =:command= and =:target= metadata, emitting POSIX
+shell shims or Windows =.cmd= wrappers into =bin/=.  Runtime package
+entries preserve =:runtime-bins=, and =nelix-profile-activate-runtime=
+regenerates profile-local
+=active/bin= shims plus =path.sh= or =path.cmd= activation fragments.
+Native install creates additive profile generations: an install replaces
+the same package name when present, otherwise it keeps prior entries and
+appends the new one.  Registry =:dependencies= are installed first so the
+final generation contains both dependency entries and the requested package.
+Native lock files include dependency closure rows, and locked apply replays
+those rows without consulting the current mutable registry.
+It also materializes =active/profile= as a Nix/Guix-like profile tree:
+POSIX systems use symlinks in =auto= mode when available, while
+Windows profile systems use copied files.
+Native builders populate a =.tmp-*= store build directory first, write
+store-entry metadata there, and only then commit it to the final
+store path.  Failed fetch/verify/unpack/copy/script-shim installs do
+not expose partial store entries and do not create profile generations.
+Activation is staged under =active.tmp-*= and only then swapped into
+=active=, so a failed activation does not remove the previously active
+runtime profile.
+
+- Install simple binary archives into store.
+- Copy verified local file/directory sources into store.
+- Generate runtime path/profile metadata.
+- Support Linux/macOS executable bit handling.
+- Support POSIX shell shims and Windows =.cmd= shims.
+- Install fetch-free =script-shim= packages into the native store.
+- Preserve existing profile entries and install registry =:dependencies=
+  before requested native packages.
+- Reject native dependency cycles before mutating the repeated package.
+- Commit native store entries from temporary build directories only after
+  payload and metadata generation have succeeded.
+- Support profile link/copy tree activation without requiring symlinks
+  on Windows.
+
+** Phase N5 — Elisp package builder
+
+Status: implemented as initial =emacs-lisp= builder in
+=nelix-builder.el= with profile activation helpers in =nelix-store.el=.
+
+- Install Elisp packages into store.
+- Generate load-path and feature metadata.
+- Integrate with Emacs startup.
+
+** Phase N6 — registry
+
+Status: implemented as local registry, installed CLI commands, hash-verified
+static remote registry sync, optional signed remote index policy, and optional
+signed package recipe row policy in =nelix-registry.el=, with fixture recipes
+for =ripgrep= and =magit=.
+
+- Local registry format.
+- Remote static registry update through =nelix-registry-remotes=.
+- Hash-verified index and recipe cache under the local registry root.
+- Optional trusted signature checks for remote indexes.
+- Optional trusted signature checks for remote package recipe rows.
+- Data-only parser for registry recipes and indexes.
+- List/search/show APIs and =nelix registry update/list/search/show= CLI.
+- Registry lock digest.
+
+** Phase N7 — manifest integration
+
+Status: implemented as initial manifest backend dispatch in
+=nelix-manifest.el=.
+
+- =nelix-apply= chooses native backend when Nix unavailable.
+- =nelix-audit= reports native store/profile state.
+- =nelix-sync= prunes native profile entries through a new generation.
+- =nelix native remove NAME...= prunes named native profile entries through a
+  new generation without deleting store paths, preserving rollback.
+- =nelix-store-gc= removes only store paths unreachable from every
+  native profile generation, preserving rollback.
+- =nelix native rollback= sets the current native profile generation and
+  reactivates runtime shims/profile links for that generation.
+
+** Phase N8 — substitute/cache
+
+Status: implemented in =nelix-substitute.el= as substitute metadata,
+hash-verified materialization/install, precomputed Nix substitute bridge
+metadata, Nix =.narinfo= parsing/fingerprint generation, signature
+trust-policy verification, OpenSSL-backed Nix Ed25519 verification for
+narinfo signatures, and OpenSSL RSA-SHA256 descriptor signature
+verification.  It also includes the verifier registry used by future
+NeLisp native crypto and the OpenSSL-free =nelix-sha256-digest=
+descriptor integrity verifier.
+
+- Nelix-native binary substitute metadata.
+- Optional Nix substitute bridge for precomputed store paths.
+- Nix =.narinfo= parser and valid-path fingerprint generation.
+- NAR restore via =nix-store --restore= and portable tar/zip payload
+  unpack through the native builder.  Portable zip substitutes also honor
+  =:strip-components= for top-directory release assets.
+- Native profile generation activation from substitute entries.
+- Signature verification policy, OpenSSL RSA-SHA256 verifier, and
+  OpenSSL-backed Nix Ed25519 verifier.
+- Pluggable verifier dispatch plus OpenSSL-free SHA-256 descriptor
+  digest verification for native bootstrap integrity checks.
+
+* Test Strategy
+
+Unit tests:
+
+- system detection
+- backend policy choice
+- recipe validation
+- lock read/write
+- store path naming
+- profile generation creation
+- rollback metadata
+
+Fixture tests:
+
+- local tar.gz install
+- local zip install with =:strip-components=
+- Elisp package install
+- native =script-shim= install for POSIX and Windows package recipes
+- source-free native =script-shim= lock replay
+- native dependency closure lock replay without trusting current registry state
+- additive native profile generations across multiple installs
+- native registry dependency install and cycle rejection
+- POSIX shim rendering as plain file content
+- profile runtime activation into =active/bin=
+- profile link/copy tree activation into =active/profile=
+- failed runtime activation preserves the previous =active= tree
+- Windows =.cmd= shim rendering as plain file content
+
+Integration tests:
+
+- apply manifest with native backend
+- audit clean profile
+- prune-plan extra entry
+- rollback generation
+- CLI native audit/install/list/profile/activate/gc dispatch
+- CLI native rollback dispatch with runtime reactivation
+- shell-level CLI fixture gate using an isolated registry, store, and profile
+
+NeLisp smoke:
+
+- load registry parser
+- parse recipe
+- hash fixture file
+- render plan
+- no native process dependency for read-only operations
+
+* Open Questions
+
+- Should native store path hashes be source-addressed first, then
+  output-addressed later?
+- How much recipe code should be allowed before sandboxing exists?
+- Should registry recipes be Elisp only, JSON only, or dual format?
+- Should Windows profile activation prefer shims or copied binaries?
+- How aggressively should Nelix try to import nixpkgs metadata?
+- How far should the Nix substitute bridge advance beyond precomputed
+  metadata before self-hosted substitutes exist?
+
+* Initial Deliverables
+
+The next concrete deliverables should be:
+
+1. =nelix-backend.el= — implemented.
+2. =nelix-store.el= — implemented.
+3. =nelix-registry.el= — implemented.
+4. =test/nelix-store-test.el= — implemented.
+5. A local registry fixture with =ripgrep= and =magit= — implemented.
+6. A native backend audit command that works without Nix installed —
+   implemented as =nelix-native-audit=.
+7. Native store CLI surface — implemented as =nelix native audit=,
+   =nelix native install=, =nelix native remove=, =nelix native list=,
+   =nelix native profile=, =nelix native activate=,
+   =nelix native rollback=, and =nelix native gc=.
+8. Native CLI end-to-end fixture gate — implemented as
+   =packaging/verify-nelix-native-cli-gate.sh= and wired into
+   =make smoke-nelix-native-cli=, =make check=, and the installed CLI gate.
+9. Native manifest =plan= and =apply --dry-run= — implemented as read-only
+   review paths that do not require Nix and do not invoke native install.
+
+=nelix-apply= can now review native backend changes with =--dry-run= before
+mutating native store profiles.  Full real-recipe registry coverage is still
+required before this is treated as a general Nix-free production path.

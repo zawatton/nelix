@@ -1,0 +1,549 @@
+#+TITLE: Doc 20 — Nelix package/store system via nelisp
+#+AUTHOR: zawatton + Codex
+#+DATE: 2026-06-16
+#+STATUS: DESIGN
+#+OPTIONS: num:nil toc:t
+
+* Status
+
+DESIGN.  This document defines the target architecture for =Nelix=:
+a Nix-inspired environment manager whose user-facing configuration is
+Emacs Lisp, while heavy package/store/build operations are implemented
+by =nelisp=.
+
+This is not a plan to clone Nix byte-for-byte.  The goal is to carry
+the important Nix ideas into the Emacs/nelisp ecosystem:
+
+- declarative package/environment definitions
+- pinned source hashes and lock files
+- content-addressed store paths
+- dependency closure recording
+- profile generations and rollback
+- optional binary cache/substitute support
+- backend dispatch for Nix, apt, dnf, pacman, winget, scoop, Git, ELPA
+
+* Goal
+
+Build a cross-platform environment manager that can create the same
+Emacs-centered working environment across Linux distributions and, as
+far as possible, Windows.
+
+Final shape:
+
+#+begin_example
+init.org / nelix-package.el
+  ↓
+Nelix Elisp frontend
+  ↓
+nelisp package/store/build engine
+  ↓
+backends:
+  - nelix native store
+  - nix
+  - apt / dnf / pacman
+  - winget / scoop / choco / msys2-pacman
+  - git / elpa / package-vc
+#+end_example
+
+The practical first target is:
+
+1. Install =nelisp= and =elpa-nelix= from OS packages.
+2. Load =~/.emacs.d/custom-lisp/nelix-package.el= or a tangled block
+   from =init.org=.
+3. Install/activate Emacs Lisp packages and required OS commands from
+   one declaration.
+4. Keep profiles/generations reproducible enough to rollback or move
+   between machines.
+
+* Non-goals
+
+- Nix language compatibility.
+- Reusing =cache.nixos.org= without Nix-compatible store semantics.
+- Rebuilding the entire Linux distribution from source in the first
+  version.
+- Perfect sandbox parity across Linux, macOS, and Windows.
+- Making every OS backend transactional when the native package manager
+  is not transactional.
+
+* Core principle
+
+Nelix has two layers:
+
+| Layer          | Language | Responsibility                                      |
+|----------------+----------+-----------------------------------------------------|
+| frontend       | Elisp    | user DSL, Emacs integration, UI, init.org bridge    |
+| engine         | nelisp   | fetch, hash, lock, store, build, cache, profile     |
+| OS integration | nelisp   | process, filesystem, signatures, sandbox primitives |
+| backend        | external | nix/apt/dnf/pacman/winget/scoop/choco/git/elpa      |
+
+The Elisp layer must stay small and pleasant to edit.  It should not
+perform heavy file traversal, hashing, archive extraction, signature
+verification, or parallel downloads.  Those operations belong to
+=nelisp=.
+
+* Public configuration model
+
+The user writes environment intent, not backend commands.
+
+#+begin_src emacs-lisp
+(nelix-package emacs-evil
+  :type 'elisp
+  :source '(github :repo "emacs-evil/evil"
+                   :rev "ad3e95f6e3253ddf2d33377ebbff7c82082ab75a"
+                   :sha256 "sha256-...")
+  :features '(evil))
+
+(nelix-package ripgrep
+  :type 'system
+  :providers '((nix    . "ripgrep")
+               (apt    . "ripgrep")
+               (dnf    . "ripgrep")
+               (pacman . "ripgrep")
+               (winget . "BurntSushi.ripgrep.MSVC")
+               (scoop  . "ripgrep")))
+
+(nelix-environment default
+  :packages '(emacs-evil ripgrep)
+  :profile "default")
+#+end_src
+
+Backend selection is policy:
+
+#+begin_src emacs-lisp
+(setq nelix-backend-policy
+      '((linux   . (nelix-store nix apt dnf pacman git elpa))
+        (windows . (nelix-store scoop winget msys2-pacman git elpa))
+        (darwin  . (nelix-store nix homebrew macports git elpa))))
+#+end_src
+
+* Package classes
+
+** Elisp packages
+
+Elisp packages are the first-class use case.
+
+Sources:
+
+- GitHub/GitLab/Codeberg/git URL
+- GNU ELPA / NonGNU ELPA / MELPA archive metadata
+- package-vc compatible recipes
+- local directory
+- tarball/zip archive
+
+Build behavior:
+
+- fetch source into the store
+- verify source hash
+- synthesize or read package metadata
+- byte-compile when requested
+- optional native compilation when available
+- expose load-path through the active profile
+
+** System packages
+
+System packages are resolved through backend providers.
+
+Examples:
+
+| Nelix package | Linux/Nix | Debian apt | Fedora dnf | Windows         |
+|---------------+-----------+------------+------------+-----------------|
+| =ripgrep=     | ripgrep   | ripgrep    | ripgrep    | winget/scoop id |
+| =fd=          | fd        | fd-find    | fd-find    | winget/scoop id |
+| =git=         | git       | git        | git        | Git.Git         |
+
+The declaration is stable; backend names may differ.
+
+** Native Nelix packages
+
+Native Nelix packages are built by the nelisp engine into
+=~/.nelix/store=.  This is where Nix-like behavior grows over time.
+
+Initial target:
+
+- simple source fetch
+- fixed-output derivations
+- shell-command build phases
+- install into immutable store directory
+- profile symlink activation
+- substitute metadata
+- hash-verified substitute materialization for NAR, tar, and zip
+- substitute profile activation
+- OpenSSL RSA-SHA256 substitute descriptor signature verification
+- pluggable descriptor verifier registry with OpenSSL-free SHA-256
+  digest verification
+
+Later target:
+
+- sandboxed build
+- dependency closure
+- binary cache
+- signatures for lock files, registry indexes, and package manifests
+- native nelisp public-key crypto backend for Ed25519/RSA
+
+* Store layout
+
+The native store lives outside Emacs package directories.
+
+#+begin_example
+~/.nelix/
+  store/
+    sha256-<hash>-evil-20260616/
+    sha256-<hash>-ripgrep-14.1.1/
+  profiles/
+    default -> ../generations/default-17
+  generations/
+    default-16/
+    default-17/
+  locks/
+    default.lock
+  cache/
+    downloads/
+    metadata/
+    nar/
+  logs/
+    build/
+#+end_example
+
+Store entries are immutable after successful registration.  A failed
+build must remain outside the final store path until it has passed hash
+and metadata checks.
+
+* Lock file
+
+The lock file records exact resolved inputs.
+
+#+begin_src emacs-lisp
+(:nelix-lock-version 1
+ :environment default
+ :created-at "2026-06-16T00:00:00+09:00"
+ :packages
+ ((emacs-evil
+   :type elisp
+   :source (:kind github
+            :repo "emacs-evil/evil"
+            :rev "ad3e95f6e3253ddf2d33377ebbff7c82082ab75a"
+            :sha256 "sha256-...")
+   :store-path "sha256-...-emacs-evil")
+  (ripgrep
+   :type system
+   :backend apt
+   :name "ripgrep"
+   :version "14.1.1-1")))
+#+end_src
+
+The lock file is portable intent plus resolution result.  It must not
+assume every backend can install the same binary artifact.
+
+* Profile and generation model
+
+Activation is generation-based:
+
+1. Resolve package graph.
+2. Fetch/build/install into store or backend.
+3. Create a new generation directory.
+4. Atomically switch profile symlink.
+5. Refresh Emacs load-path and executable PATH.
+
+Rollback switches the profile symlink back to an earlier generation.
+
+For external package managers such as apt/dnf/winget, rollback can only
+be best-effort unless the backend supports downgrades and version pins.
+Nelix must mark these generation entries as =external= and record the
+exact command/result.
+
+* Dependency closure
+
+Nelix records three dependency kinds:
+
+| Kind        | Meaning                                      |
+|-------------+----------------------------------------------|
+| =build=     | needed to build package                      |
+| =runtime=   | needed to run/load package                   |
+| =external=  | supplied by OS/backend outside Nelix store   |
+
+For Elisp packages, dependency sources are:
+
+- =Package-Requires= headers
+- archive metadata
+- explicit =:depends= in =nelix-package=
+- generated dependency hints from existing =init.org= migration
+
+The first implementation may require explicit dependencies.  Automatic
+dependency discovery should be treated as an optimization, not as a
+semantic foundation.
+
+* Fetch and hash subsystem
+
+The nelisp engine owns:
+
+- HTTP(S) download
+- git clone/fetch
+- archive unpacking
+- SHA-256/SHA-512 hashing
+- SRI hash rendering
+- cache reuse
+- checksum mismatch reporting
+
+Required APIs:
+
+#+begin_src emacs-lisp
+(nelix-fetch-source SOURCE-SPEC)
+(nelix-hash-file PATH :algo 'sha256 :format 'sri)
+(nelix-unpack ARCHIVE DEST)
+#+end_src
+
+* Binary cache and substitute model
+
+Native Nelix cache is optional and comes after the local store works.
+
+Minimum viable cache metadata:
+
+#+begin_example
+store-path: sha256-...-evil-20260616
+nar-hash: sha256-...
+nar-size: 123456
+references:
+  - sha256-...-compat
+signature: nelix-cache-1:...
+url: https://example.invalid/nelix-cache/...
+#+end_example
+
+The cache protocol should be inspired by Nix =.narinfo=, but not
+pretend to be Nix-compatible unless store paths, references, and
+signature verification are intentionally made compatible.
+
+* Signature verification
+
+Nelix should support signatures for:
+
+- lock files
+- binary cache metadata
+- binary cache payloads
+- optional package manifests
+
+Initial substitute descriptor verification is implemented in
+=nelix-substitute.el= through the local =openssl= command for
+=openssl-rsa-sha256= signatures.  Descriptors are signed over their
+canonical Elisp metadata with =:sig= / =:signature= excluded, so changes
+to version, system, source, payload hash, cache URL, or install
+metadata invalidate the signature.
+
+The same trust-policy path also supports registered verifier functions
+through =nelix-substitute-crypto-verifiers=.  The built-in
+=nelix-sha256-digest= verifier hashes the canonical descriptor message
+with Nelix's SHA-256 backend and does not call OpenSSL.  This provides
+an OpenSSL-free integrity verifier for bootstrap/native-cache
+experiments, but it is not a public-key signature replacement.
+
+Nix =.narinfo= parsing, valid-path fingerprint generation, and
+OpenSSL-backed Nix Ed25519 verification are also implemented in
+=nelix-substitute.el=.  Narinfo signatures are verified against Nix
+public keys in =key-name:base64(raw32)= form before a descriptor is
+treated as trusted.
+
+The long-term public-key implementation should live in nelisp, using
+either native crypto primitives or a small audited crypto backend.
+Elisp should keep exposing policy and key selection:
+
+#+begin_src emacs-lisp
+(setq nelix-substitute-trusted-signers '("nelix-cache-1"))
+(setq nelix-substitute-public-keys
+      '((:key "nelix-cache-1"
+         :algorithm openssl-rsa-sha256
+         :public-key-file "/etc/nelix/keys/nelix-cache-1.pem")))
+#+end_src
+
+* Sandboxing
+
+Sandboxing is platform-specific and must be optional at first.
+
+** Linux
+
+Long-term Linux backend:
+
+- user namespace
+- mount namespace
+- chroot/pivot_root
+- bind mounts for declared inputs
+- tmpfs build directory
+- seccomp profile
+- network off by default
+
+** Windows
+
+Windows native sandboxing is not equivalent to Linux namespaces.
+Possible layers:
+
+- low-integrity process
+- restricted token
+- job object
+- temporary isolated directory
+- optional Windows Sandbox/WSL backend
+
+Windows support should first target fetch/install/profile behavior,
+then add isolation incrementally.
+
+* Backend boundary
+
+Backends implement a small protocol.
+
+#+begin_src emacs-lisp
+(nelix-backend-detect BACKEND)
+(nelix-backend-resolve BACKEND PACKAGE-SPEC)
+(nelix-backend-install BACKEND RESOLVED-SPEC)
+(nelix-backend-remove BACKEND RESOLVED-SPEC)
+(nelix-backend-query BACKEND PACKAGE-NAME)
+#+end_src
+
+Backends must report:
+
+- executable path
+- installed version when available
+- whether version pinning is supported
+- whether rollback is supported
+- whether install requires privilege escalation
+
+* Windows strategy
+
+Windows is a first-class portability target, but not by forcing Nix.
+
+Preferred backend order:
+
+1. =nelix-store= for Elisp and portable archives.
+2. =scoop= for developer tools when available.
+3. =winget= for common applications and tools.
+4. =msys2-pacman= for Unix-like command-line packages.
+5. =choco= as fallback.
+
+Nix can remain an optional backend for WSL or environments where it is
+already practical.
+
+* Relationship to existing anvil-pkg/Nelix work
+
+Current =anvil-pkg= is the seed implementation:
+
+- Elisp DSL with =pkg-define= / =pkg-install=.
+- Nix-backed build/install.
+- Emacs package build-system support.
+- Debian package =elpa-nelix= bootstraps the Elisp frontend.
+
+Migration direction:
+
+| Current                         | Target                                  |
+|---------------------------------+-----------------------------------------|
+| =anvil-pkg= internal name       | =nelix= public project                   |
+| Nix-only backend assumption     | backend protocol                         |
+| direct =nix profile= install    | profile/generation abstraction           |
+| placeholder hashes in recipes   | lock/prefetch workflow                   |
+| Emacs-only execution            | nelisp engine for heavy operations       |
+
+* Phased plan
+
+** Phase 0 — naming and packaging baseline
+
+- ship =elpa-nelix= Debian package
+- keep compatibility aliases for old =anvil-pkg= symbols
+- document Debian =emacs -Q= load-path behavior
+- add autopkgtest load smoke
+
+** Phase 1 — user package declaration
+
+- create =~/.emacs.d/custom-lisp/nelix-package.el=
+- import current =init.org= package declarations
+- support GitHub/Git fixed revisions
+- record missing hashes as explicit TODOs
+- do not auto-install on load
+
+** Phase 2 — Elisp package store
+
+- fetch Git/ELPA packages into =~/.nelix/store=
+- verify hashes
+- byte-compile
+- expose load-path via active profile
+- support generation rollback for Elisp packages
+
+** Phase 3 — lock file
+
+- produce =nelix.lock=
+- separate declaration from resolution
+- add prefetch/update command
+- add hash mismatch repair workflow
+
+** Phase 4 — backend protocol
+
+- implement =nix= backend
+- implement =apt= backend
+- implement =dnf= backend
+- implement =winget= or =scoop= backend
+- record external backend results in generations
+
+** Phase 5 — nelisp engine extraction
+
+- move fetch/hash/unpack/profile operations from Elisp shelling into nelisp
+- provide stable CLI:
+
+#+begin_example
+nelisp nelix resolve nelix-package.el
+nelisp nelix build nelix.lock
+nelisp nelix activate default
+nelisp nelix rollback default 16
+#+end_example
+
+** Phase 6 — native build/store
+
+- fixed-output build recipes
+- build/runtime dependency closure
+- immutable store registration
+- build logs
+- local substitute cache format
+
+** Phase 7 — signatures and cache
+
+- sign cache metadata
+- verify cache payloads
+- support private cache roots
+- support offline install from local cache
+
+** Phase 8 — sandboxed builds
+
+- Linux namespace sandbox
+- declared input mounts
+- network isolation
+- best-effort Windows isolation
+
+* Open questions
+
+- Should =nelix-package.el= use a pure Elisp DSL, data-only forms, or both?
+- Should lock files be Elisp sexps, JSON, or a stable custom format?
+- How much Nix compatibility is useful versus harmful?
+- Which Windows backend should be first: scoop or winget?
+- Should native Nelix store path names use Nix-like base32, SRI text, or
+  plain hex hashes?
+- How should privileged OS installs be represented in an otherwise
+  declarative profile switch?
+
+* Acceptance criteria for the first useful release
+
+- A Debian user can install =elpa-nelix=.
+- Emacs can load =nelix= without manual load-path setup in a normal
+  Debian session.
+- =nelix-package.el= can define at least a small set of pinned GitHub
+  Elisp packages.
+- =nelix= can install those packages into a profile without modifying
+  arbitrary directories under =~/.emacs.d=.
+- Profile activation changes load-path predictably.
+- Rollback restores the previous Elisp package set.
+- System package declarations can call at least one backend, initially
+  =nix= or =apt=.
+
+* Summary
+
+Nelix can become a Nix-inspired system if its responsibilities are split
+correctly:
+
+- Elisp owns the user-facing configuration and Emacs integration.
+- nelisp owns store/build/cache/sandbox mechanics.
+- External package managers remain backends, not the core model.
+
+This path keeps the project useful early while leaving room to grow
+toward a real native Nelix store and binary cache.

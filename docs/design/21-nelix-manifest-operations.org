@@ -1,0 +1,564 @@
+#+TITLE: Doc 21 — Nelix manifest operations
+#+AUTHOR: zawatton + Codex
+#+DATE: 2026-06-17
+#+STATUS: IMPLEMENTED-M1-M6
+#+OPTIONS: num:nil toc:t
+
+* Status
+
+IMPLEMENTED-M1-M6.  This document defines the next user-facing layer
+for Nelix: a Nix/Guix-like manifest workflow for declaring one machine
+environment in an Emacs Lisp file, then applying, auditing, syncing,
+locking, upgrading, and rolling it back through stable commands.
+
+The initial implementation landed in =nelix-manifest.el= with ERT
+coverage for manifest validation/load, apply/audit, prune/sync, lock
+read/write/check, and manifest-aware =nelix-upgrade-plan=.  The CLI
+wrapper and =nelix-outdated= read-only cross-backend report have also
+landed.  Native backend =plan= / =apply --dry-run= can review install
+and remove rows without Nix, and native backend upgrade planning can
+compare current profile entries with local registry recipe versions.
+
+Doc 20 describes the longer-term nelisp-backed store/build system.
+This document is the nearer-term operational design built on top of
+the current =nelix= / =anvil-pkg= implementation.
+
+* Goal
+
+Make the normal user workflow look like this:
+
+#+begin_src shell
+sudo apt install elpa-nelix
+nelix validate ~/.config/nelix/manifest.el
+nelix apply ~/.config/nelix/manifest.el
+nelix audit ~/.config/nelix/manifest.el
+nelix upgrade-plan ~/.config/nelix/manifest.el
+nelix upgrade ~/.config/nelix/manifest.el
+#+end_src
+
+Equivalent Emacs Lisp entry points must exist first:
+
+#+begin_src emacs-lisp
+(nelix-validate "~/.config/nelix/manifest.el")
+(nelix-apply "~/.config/nelix/manifest.el")
+(nelix-audit "~/.config/nelix/manifest.el")
+(nelix-sync "~/.config/nelix/manifest.el" :prune t)
+(nelix-apply "~/.config/nelix/manifest.el" :locked t)
+(nelix-sync "~/.config/nelix/manifest.el" :locked t :prune t)
+(nelix-lock-write "~/.config/nelix/manifest.el")
+(nelix-upgrade-plan "~/.config/nelix/manifest.el")
+(nelix-upgrade "~/.config/nelix/manifest.el")
+#+end_src
+
+The core promise:
+
+- one manifest file describes the desired Emacs + Linux user-space environment
+- commands are read-only unless their name clearly mutates state
+- audit and plan commands explain what would happen before changing the profile
+- lock data makes Git-pinned and generated package recipes reproducible enough to move between machines
+
+* Non-goals
+
+- Replacing apt/dnf/pacman for bootstrap packages such as =nix-bin=,
+  =emacs=, or =elpa-nelix=.
+- Full Nix flake semantics in the first manifest implementation.
+- A native Nelix store before Doc 20's engine exists.
+- Automatic removal of packages unless the user explicitly requests
+  prune/sync behavior.
+- System-wide package mutation without a deliberate backend policy.
+
+* Current baseline
+
+Already available:
+
+- =nelix-install= supports one package or a list of packages.
+- =nelix-list= lists the isolated Nelix Nix profile.
+- =nelix-upgrade= upgrades a single package or all unpinned packages.
+- =nelix-upgrade-plan= is read-only and reports upgrade targets,
+  pinned entries, missing direct targets, and empty plans.
+- =nelix-pin= / =nelix-unpin= / =nelix-list-pins= provide hold behavior.
+- =nelix-list-generations= / =nelix-rollback= / =nelix-history=
+  expose Nix profile generations.
+- User-local generated files already exist:
+  - =~/.emacs.d/custom-lisp/nelix-package.el=
+  - =~/.emacs.d/custom-lisp/nelix-linux.el=
+
+Missing:
+
+- a first-class manifest file format
+- manifest apply/audit/sync commands
+- lock file read/write
+- prune plan
+- CLI wrapper for non-Emacs use
+- distro-aware bootstrap report that says what must remain in apt/dnf
+
+* Manifest file
+
+The manifest is plain Emacs Lisp.  It should be easy to read, diff,
+and tangle from =init.org=.
+
+** Minimal shape
+
+#+begin_src emacs-lisp
+;;; manifest.el --- My Nelix environment -*- lexical-binding: t; -*-
+
+(require 'nelix-manifest)
+
+(nelix-manifest
+ :name "default"
+ :profile "default"
+ :emacs '(magit org-roam vertico consult)
+ :linux '("git" "ripgrep" "fd" "curl")
+ :bootstrap-apt '(nix-bin emacs elpa-nelix))
+#+end_src
+
+This form must not install on load.  Loading the file only returns or
+registers manifest data.
+
+** Extended shape
+
+#+begin_src emacs-lisp
+(nelix-manifest
+ :name "workstation"
+ :profile "default"
+ :nix-channel "nixpkgs"
+ :backend-policy
+ '((linux . (nix apt-wrapper))
+   (debian . (nix apt-wrapper apt-bootstrap))
+   (fedora . (nix dnf-bootstrap)))
+ :emacs '(magit org-roam vertico consult)
+ :linux '("git" "ripgrep" "fd" "curl")
+ :debian-tools '("dpkg" "fakeroot" "debian-devscripts")
+ :bootstrap-apt '(nix-bin emacs elpa-nelix)
+ :pins '("ripgrep")
+ :imports '("~/.emacs.d/custom-lisp/nelix-package.el"
+            "~/.emacs.d/custom-lisp/nelix-linux.el"))
+#+end_src
+
+** Manifest object
+
+Internally, =nelix-manifest= should normalize to a plist:
+
+#+begin_src emacs-lisp
+(:name "default"
+ :profile "default"
+ :nix-channel "nixpkgs"
+ :emacs (magit org-roam)
+ :linux ("git" "ripgrep")
+ :bootstrap-apt (nix-bin emacs elpa-nelix)
+ :pins ("ripgrep")
+ :imports (...))
+#+end_src
+
+Validation rules:
+
+- =:name= must be a non-empty string.
+- =:profile= defaults to =default=.
+- =:emacs= values are symbols or strings.
+- =:linux= values are strings or symbols coercible to Nix attrs.
+- =:bootstrap-apt= is advisory/read-only unless a future backend explicitly supports system package mutation.
+- =:imports= are loaded before resolving symbolic package targets.
+- unknown keywords signal an error.
+
+* Apply
+
+=nelix-apply= makes the current profile contain at least the manifest
+packages.  It does not remove extra packages.
+
+#+begin_src emacs-lisp
+(nelix-apply MANIFEST-FILE)
+(nelix-apply MANIFEST-FILE :locked t)
+#+end_src
+
+Algorithm:
+
+1. Load manifest in a controlled environment.
+2. Load each =:imports= file.
+3. Activate profile dirs for the current Emacs process when running inside Emacs.
+4. Resolve install targets:
+   - Emacs package symbols through =nelix-package-install-target= when available
+   - raw strings as nixpkgs attrs
+   - Linux package groups through manifest-defined lists
+5. Compare desired targets with =nelix-list=.
+6. Install only missing targets via a single =nelix-install= list call when possible.
+7. Apply pin declarations after successful install.
+8. Return an operation report.
+
+Return shape:
+
+#+begin_src emacs-lisp
+(:status ok
+ :manifest "..."
+ :installed (...)
+ :already-present (...)
+ :pinned (...)
+ :skipped (...)
+ :profile "~/.local/state/nelix/profile")
+#+end_src
+
+Failure rules:
+
+- Validation errors fail before any install.
+- Missing import files fail before any install.
+- =:locked t= requires a matching lock file before any install.
+  The selected backend/profile/system and each package row must match
+  the current manifest resolution.  Missing installs use the lock row
+  =:target= values rather than freshly constructed targets.
+- For =nelix-native=, missing locked installs replay source/install
+  data from the lock row and do not consult mutable registry state
+  after lock generation.
+- If Nix fails, surface the same =anvil-pkg-nix-failed= error currently used by =nelix-install=.
+
+* Audit
+
+=nelix-audit= is read-only.  It answers: "does this machine satisfy
+the manifest?"
+
+#+begin_src emacs-lisp
+(nelix-audit MANIFEST-FILE)
+#+end_src
+
+Checks:
+
+- manifest parses and validates
+- imports load successfully
+- Nix executable is available
+- profile path is the expected Nelix profile
+- every desired package is installed
+- pinned state matches manifest pins
+- bootstrap packages are installed and meet minimum versions where configured
+- managed commands resolve from the Nelix profile where expected
+- old =anvil-pkg/profile= paths are not present in =load-path=
+
+Return shape:
+
+#+begin_src emacs-lisp
+(:ok t-or-nil
+ :manifest "..."
+ :missing (...)
+ :extra (...)
+ :pins (:expected (...) :actual (...) :missing (...) :extra (...))
+ :bootstrap (:missing (...) :outdated (...))
+ :commands (:missing (...) :non-profile (...))
+ :warnings (...))
+#+end_src
+
+This should become the unified replacement for ad hoc calls to
+=nelix-package-audit= and =nelix-linux-audit=.
+
+* Sync and prune
+
+=nelix-sync= converges the profile to the manifest.
+
+#+begin_src emacs-lisp
+(nelix-sync MANIFEST-FILE :prune nil) ; default, equivalent to apply
+(nelix-sync MANIFEST-FILE :prune t)   ; remove unmanaged profile entries
+(nelix-sync MANIFEST-FILE :locked t :prune t)
+#+end_src
+
+Because removal is destructive, pruning must have a plan command:
+
+#+begin_src emacs-lisp
+(nelix-prune-plan MANIFEST-FILE)
+#+end_src
+
+Prune plan return shape:
+
+#+begin_src emacs-lisp
+(:remove (...)
+ :keep (...)
+ :protected (...)
+ :reason (...))
+#+end_src
+
+Protection rules:
+
+- bootstrap anchors are never pruned automatically
+- pinned packages are reported separately before removal
+- packages with no manifest ownership metadata can be protected in
+  the first implementation unless =:force t= is supplied
+- =:locked t= requires a matching lock file before any install or
+  prune mutation.  Package row enforcement happens before the apply
+  phase, so prune cannot proceed from a stale or incompatible lock.
+
+* Lock file
+
+The lock file records resolution results next to the manifest.
+
+Default path:
+
+#+begin_example
+manifest.el
+manifest.lock.el
+#+end_example
+
+Current lock shape:
+
+#+begin_src emacs-lisp
+(nelix-lock
+ :version 2
+ :manifest-digest "sha256-..."
+ :manifest-files
+ '((:role manifest
+    :path "/home/me/.config/nelix/manifest.el"
+    :digest "sha256-...")
+   (:role import
+    :path "/home/me/.emacs.d/custom-lisp/nelix-package.el"
+    :digest "sha256-..."))
+ :profile "default"
+ :backend nix
+ :system x86_64-linux
+ :nix-channel "nixpkgs"
+ :nix-version "2.34.7"
+ :generated-at "2026-06-17T12:00:00+09:00"
+ :packages
+ '((:name "magit"
+    :target magit
+    :backend nix
+    :system x86_64-linux
+    :source nixpkgs
+    :attr-path "legacyPackages.x86_64-linux.emacsPackages.magit")
+   (:name "ripgrep"
+    :target "ripgrep"
+    :backend nix
+    :system x86_64-linux
+    :source nixpkgs
+    :attr-path "legacyPackages.x86_64-linux.ripgrep")))
+#+end_src
+
+Commands:
+
+#+begin_src emacs-lisp
+(nelix-lock-read MANIFEST-FILE)
+(nelix-lock-write MANIFEST-FILE)
+(nelix-lock-check MANIFEST-FILE)
+#+end_src
+
+Lock policy:
+
+- apply can run without a lock in early versions
+- audit warns when the combined manifest/import digest differs from
+  lock digest
+- =nelix-lock-check= also compares per-file =:manifest-files= rows,
+  so imported generated files drift even when the top-level manifest
+  file is unchanged
+- locked mutation additionally enforces =:backend=, =:profile=,
+  =:system=, and the =:packages= rows before install/prune; current
+  package rows must neither be missing nor extra, and target drift is
+  an error
+- for =nelix-native=, locked mutation reconstructs a transient recipe
+  from the lock row source/install/dependencies and replays that data
+  instead of reading the current registry
+- future native/source builds should require a hash in either manifest or lock
+- =nelix-lock-write= is the command that updates hash/resolution data
+
+* Upgrade plan
+
+The current =nelix-upgrade-plan= reports installed profile entries
+that would be passed to =nix profile upgrade=.  Manifest-aware upgrade
+planning adds desired-state context:
+
+#+begin_src emacs-lisp
+(nelix-upgrade-plan MANIFEST-FILE)
+#+end_src
+
+Return shape:
+
+#+begin_src emacs-lisp
+(:operation upgrade
+ :manifest "..."
+ :upgrade (...)
+ :pinned (...)
+ :missing (...)
+ :extra (...)
+ :lock-drift (...)
+ :empty nil)
+#+end_src
+
+For the native backend, =nelix-backend-upgrade-plan= can make a more
+specific read-only claim because both sides are local metadata: it
+compares current native profile entry versions against local registry
+recipe versions and reports upgrade rows with =:from= / =:to=,
+pinned rows, missing direct targets, missing registry recipes, and
+up-to-date rows.  Nix-backed manifest upgrade planning remains
+conservative because exact version-difference data depends on what Nix
+exposes cheaply and reliably for the active profile.
+Manifest upgrade mutation uses the selected backend and applies the
+rows reported by =nelix-outdated=: Nix rows call =pkg-upgrade= by
+installed profile name, and native rows reinstall the matching local
+registry recipe into the target native profile.
+
+* CLI
+
+The Elisp API should land first.  The CLI can then be a thin wrapper
+that calls Emacs batch mode or nelisp, depending on availability.
+
+Target commands:
+
+#+begin_src shell
+nelix apply MANIFEST
+nelix apply MANIFEST --locked
+nelix validate MANIFEST
+nelix audit MANIFEST
+nelix sync MANIFEST [--prune]
+nelix sync MANIFEST [--prune] [--locked]
+nelix prune-plan MANIFEST
+nelix lock MANIFEST
+nelix upgrade-plan [MANIFEST]
+nelix outdated [MANIFEST|NAME] [--backend BACKEND]
+nelix upgrade [MANIFEST]
+nelix list
+nelix rollback [GENERATION]
+nelix doctor
+#+end_src
+
+CLI requirements:
+
+- read-only commands must never mutate profile or lock files
+- =validate= must avoid profile/process/Nix access so it remains usable
+  under standalone NeLisp before =call-process= support is fully stable
+- mutating commands must print the target profile path
+- =apply --locked= and =sync --locked= must refuse mutation unless
+  =nelix-lock-check= is clean and package rows match current
+  manifest resolution
+- JSON output option should exist for agents:
+
+#+begin_src shell
+nelix audit manifest.el --json
+#+end_src
+
+* Integration with current generated files
+
+Current user files should become imports, not be discarded:
+
+#+begin_src emacs-lisp
+(nelix-manifest
+ :name "madblack-21"
+ :imports '("~/.emacs.d/custom-lisp/nelix-package-index.el"
+            "~/.emacs.d/custom-lisp/nelix-linux.el")
+ :emacs nelix-package-emacs-packages
+ :linux nelix-linux-base-nix-packages
+ :bootstrap-apt nelix-linux-bootstrap-apt-packages)
+#+end_src
+
+Use =nelix-package-index.el= for standalone NeLisp validation because
+the full generated =nelix-package.el= recipe file is intentionally
+heavier and remains useful for Emacs startup/load-path activation and
+explicit installs.
+
+This gives a migration path from =init.org= extraction to a stable
+manifest without rewriting all generated recipes at once.
+
+* Implementation phases
+
+** Phase M1 — manifest parser
+
+Status: implemented in =nelix-manifest.el=.
+
+- Add =nelix-manifest.el=.
+- Implement =nelix-manifest= macro/function.
+- Implement =nelix-manifest-load= and validation.
+- Add ERT for good/bad manifest forms.
+
+** Phase M2 — apply and audit
+
+Status: implemented as an initial practical version.
+
+- Implement =nelix-apply=.
+- Implement =nelix-audit=.
+- Reuse =nelix-package-install-target= when available.
+- Reuse =nelix-linux-audit= data when imports define it.
+
+** Phase M3 — sync/prune plan
+
+Status: implemented with conservative pin protection.
+
+- Implement =nelix-prune-plan=.
+- Implement =nelix-sync= with =:prune=.
+- Protect bootstrap packages by default.
+
+** Phase M4 — lock file
+
+Status: implemented with version 2 lock files, combined
+manifest/import digest checks, per-file digest rows, backend/system
+metadata, and resolved target recording.
+
+- Implement lock read/write/check.
+- Store manifest/import digests and resolved targets.
+- Warn on lock drift in audit, including imported generated file
+  drift.
+
+** Phase M5 — CLI wrapper
+
+Status: implemented as an initial Emacs batch wrapper.
+
+- =bin/nelix= routes to =scripts/nelix-cli.el= through Emacs batch by
+  default and supports standalone NeLisp direct mode with
+  =--runtime nelisp= or =NELIX_RUNTIME=nelisp= when the local NeLisp
+  runtime sources are discoverable.
+- Supports =apply=, =audit=, =sync [--prune]=, =prune-plan=, =lock=,
+  =upgrade-plan=, =outdated=, =upgrade=, =list=, =rollback=, and
+  =doctor=.
+- =--json= normalizes plist/symbol output for agents.
+- Mutating commands append =:profile-root= when the underlying API did
+  not already return a target profile path.
+- Debian packaging installs =/usr/bin/nelix= and autopkgtest checks
+  =nelix --help= without touching Nix.
+- Manifest-wide =nelix upgrade MANIFEST= mutates only the outdated
+  rows reported by =nelix-outdated= for the selected backend.  Pinned,
+  missing, current, and unsupported backend rows are returned in the
+  report but not mutated.
+- =make smoke-nelix-cli-nelisp= verifies =bin/nelix --json version=
+  through standalone NeLisp direct mode.
+
+** Phase M6 — richer outdated data
+
+Status: implemented as a read-only cross-backend report.  =nelix-upgrade-plan=
+accepts an existing manifest file and adds missing/extra/lock-drift
+context while delegating Nix concrete upgrade candidates to
+=pkg-upgrade-plan=.  =nelix-backend-upgrade-plan= for =nelix-native=
+reports local registry version-diff candidates without mutating the
+profile.  =nelix-outdated= aggregates available upgrade-plan backends
+and reports unsupported available backends under =:skipped= instead of
+failing the whole operation.
+
+- Keep =nelix-outdated= read-only.  Exact upstream freshness beyond
+  local registry/Nix profile data remains a later backend-specific
+  extension.
+
+* Test plan
+
+Unit tests:
+
+- manifest validation
+- imports are loaded before package resolution
+- apply installs only missing entries
+- apply handles empty manifest
+- audit reports missing, extra, pin drift, bootstrap drift
+- prune-plan separates remove/keep/protected
+- lock write/read round-trip
+- lock drift detection, including import drift
+
+Integration tests:
+
+- dry-run manifest with mocked Nix profile JSON
+- real =nelix-upgrade-plan= read-only smoke
+- Debian package install smoke still loads =nelix-manifest=
+
+NeLisp tests:
+
+- manifest parser loadability under standalone =nelisp=
+- read-only audit shape under =nelisp= once JSON/process/file support is sufficient
+
+* Open questions
+
+- Should the manifest form return a plist directly or register into a
+  global registry?  Direct return is simpler for batch/CLI use.
+- Should =:linux= mean Nix attrs only, or logical names resolved by
+  backend policy?  First implementation can treat strings as Nix attrs
+  and add logical providers later.
+- Should prune be allowed to remove packages installed outside a
+  manifest?  Default should be no unless ownership metadata or
+  explicit =:prune t= is present.
+- Should the lock file be Elisp, JSON, or both?  Elisp fits the repo,
+  JSON helps agents and CLI.  Elisp first, JSON output later.

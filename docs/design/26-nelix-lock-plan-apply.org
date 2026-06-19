@@ -1,0 +1,152 @@
+#+TITLE: Doc 26 - Nelix Lock Plan Apply Minimal Nix Backend
+#+DATE: 2026-06-19
+#+STATUS: SHIPPED
+
+* 1. Purpose
+
+This document defines the first minimal lockfile / plan / apply workflow for
+Nelix manifests.
+
+The goal is to make the desired-state workflow explicit:
+
+- read a =nelix-package.el= style manifest through =nelix-manifest-load=;
+- compare desired targets with the current Nix profile;
+- write a lock file;
+- show a plan;
+- dry-run the apply operation;
+- execute the same plan as =nix profile install/remove= calls.
+
+This stage is intentionally Nix-backend only.  The native store design remains
+separate and is not implemented here.
+
+* 2. Commands
+
+The minimal CLI surface is:
+
+#+begin_src sh
+nelix lock MANIFEST
+nelix plan MANIFEST
+nelix apply MANIFEST --dry-run
+nelix apply MANIFEST
+#+end_src
+
+=nelix lock= writes a generated Elisp/S-expression lock file next to the
+manifest:
+
+#+begin_example
+MANIFEST.nelix-lock
+#+end_example
+
+The lock file calls =nelix-lock= and records:
+
+- package name;
+- backend;
+- resolved target;
+- installed profile name, when currently installed;
+- pin status;
+- selected system;
+- Nix channel;
+- manifest/import digests;
+- Nix version, when detectable.
+
+The format remains Elisp because existing manifest and lock loading already use
+portable Elisp source and this avoids adding another parser to standalone
+NeLisp before the native store work is ready.
+
+* 3. Plan Model
+
+=nelix plan MANIFEST= is read-only.  It loads the manifest, selects the Nix
+backend, reads the current profile, optionally reads =MANIFEST.nelix-lock=,
+and returns a plist with action rows.
+
+Action rows are deliberately close to the eventual process execution:
+
+#+begin_example
+(:action install
+ :name "ripgrep"
+ :backend nix
+ :target "ripgrep"
+ :resolved-target "ripgrep"
+ :installed-name nil
+ :pinned t
+ :argv ("profile" "install" "--profile" PROFILE "nixpkgs#ripgrep"))
+
+(:action remove
+ :name "bat"
+ :backend nix
+ :installed-name "bat"
+ :argv ("profile" "remove" "bat" "--profile" PROFILE))
+#+end_example
+
+The top-level plan includes:
+
+- =:install= for missing manifest targets;
+- =:remove= for unmanaged profile entries;
+- =:keep= for already satisfied manifest targets;
+- =:protected= for unmanaged entries protected by manifest pins;
+- =:commands= as the exact install/remove sequence.
+
+Pins protect extra installed entries from removal and are also recorded on
+install rows.  Missing pinned targets are still installed; pinning does not mean
+"do not install", it means "do not remove/upgrade implicitly".
+
+* 4. Apply Semantics
+
+=nelix apply MANIFEST --dry-run= returns the same plan with =:status dry-run=
+and does not run =nix profile install= or =nix profile remove=.
+
+=nelix apply MANIFEST= executes =:commands= from the plan in order:
+
+1. install missing targets with =nix profile install --profile PROFILE REF=;
+2. remove unmanaged unpinned entries with
+   =nix profile remove NAME --profile PROFILE=;
+3. record manifest pins through the existing pin store.
+
+The result keeps the original plan fields and adds:
+
+- =:status ok=;
+- =:executed= command result rows;
+- =:installed= package names;
+- =:removed= package names;
+- =:pinned= manifest pin names.
+
+* 5. Non-Goals
+
+This stage does not implement:
+
+- native store install/remove;
+- package fetching without Nix;
+- resolver servers or custom binary caches;
+- version solving beyond the selected manifest target;
+- lock enforcement for native store recipes.
+
+Those belong to the native store and package server roadmap.
+
+* 6. Gate
+
+The repeatable gate is:
+
+#+begin_src sh
+tools/nelix-lock-plan-apply-gate.sh
+#+end_src
+
+It uses a fake =nix= executable and verifies:
+
+- =nelix lock MANIFEST= writes =MANIFEST.nelix-lock=;
+- the lock contains resolved target, installed name, backend, and pin data;
+- =nelix plan MANIFEST= reports install/remove command rows;
+- =nelix apply MANIFEST --dry-run= emits the plan without install/remove calls;
+- =nelix apply MANIFEST= invokes fake
+  =nix profile install/remove= with the expected argv;
+- existing =list/audit/upgrade-plan= gates remain separate and must continue to
+  pass.
+
+Latest local result:
+
+#+begin_example
+nelix_lock_gate_result label=lock rc=0
+nelix_lock_gate_result label=plan rc=0
+nelix_lock_gate_result label=dry_run rc=0
+nelix_lock_gate_result label=apply rc=0
+nelix_lock_gate_result label=nelix_lock_plan_apply_gate rc=0
+#+end_example

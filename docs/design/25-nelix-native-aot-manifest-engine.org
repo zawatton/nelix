@@ -1,0 +1,719 @@
+#+TITLE: Doc 25 - Nelix native/AOT manifest engine
+#+DATE: 2026-06-17
+#+STATUS: DRAFT
+
+* Problem
+
+Doc 24 made =nelix --runtime nelisp= correct enough for normal
+=list=, =audit=, =plan=, and =upgrade-plan= use by avoiding the generic
+plist/list-heavy Emacs compatibility path.  That did not remove the
+main fixed costs:
+
+- standalone NeLisp startup,
+- source replay for stdlib + Nelix modules,
+- manifest import evaluation,
+- generic list/string/JSON work in NeLisp,
+- allocator/GC pressure while building plist reports.
+
+The runtime-image probe proved the boundary:
+
+- explicit =NELIX_NELISP_IMAGE= is correct,
+- replay-source images preserve =defun= during evaluation,
+- replay-source images are slower than direct source load for Nelix.
+
+Therefore the next speed lever is native/AOT execution, not automatic
+runtime-image selection.
+
+* Native Compilation Position
+
+Native compilation is required for the real speed target, but it is not
+sufficient by itself.
+
+The current measurements split the problem into two layers:
+
+- NeLisp native exec is now worthwhile.  The standalone
+  =native-exec-elisp-artifact= path for the Nelix native subset dropped
+  from ~24.6 sec to ~1.6 sec after bypassing manifest/plist validation
+  and extracting the embedded object through the externless fast path.
+- Nelix command latency is still dominated by runtime-side data work:
+  manifest target matching, plist/list result construction, generic
+  printer/JSON conversion, and allocator/GC pressure.
+
+Therefore the correct direction is not "native-compile the whole Nelix
+CLI".  It is to native-compile a small command-specific engine that:
+
+1. receives compact line protocol or an equivalent cache-native format,
+2. performs only name-set comparison,
+3. emits compact JSON/name lines directly,
+4. avoids building the Emacs-compatible report plist in the hot path.
+
+Until that direct output path exists, native compilation can prove the
+kernel but may not improve end-to-end =nelix --runtime nelisp audit= or
+=upgrade-plan=.
+
+* Goal
+
+Create a command-specific native/AOT manifest engine for:
+
+- =nelix --runtime nelisp list=
+- =nelix --runtime nelisp audit MANIFEST=
+- =nelix --runtime nelisp upgrade-plan MANIFEST=
+
+The engine must treat those commands as name-set operations over compact
+line data, not as generic Emacs Lisp object traversal.
+
+Target shape:
+
+#+begin_src text
+manifest source -> Nelix fast compiler -> AOT line protocol
+profile names   -> newline names       -> AOT line protocol
+                                      -> native command artifact
+                                      -> minimal JSON or name lines
+#+end_src
+
+* Non-goals
+
+- Do not native-compile the full Nelix CLI first.
+- Do not depend on replay-source runtime images for speed.
+- Do not require the Nix-free native store to be complete.
+- Do not make the generic Emacs-compatible plist/list path faster before
+  the command-specific path exists.
+- Do not emit the full Emacs report structure from native code.
+
+* AOT Input Protocol
+
+The first committed boundary is =nelix-fast-aot-input= in
+=nelix-fast.el=.  It exports a newline/tab protocol that a native
+artifact can parse without reader, plist, alist, hash table, or JSON
+dependencies.
+
+Version 1:
+
+#+begin_src text
+NELIX-AOT-MANIFEST-V1
+manifest<TAB>/abs/path/to/manifest.el
+profile<TAB>default
+system<TAB>x86_64-linux
+target<TAB>magit<TAB>magit<TAB>legacyPackages.x86_64-linux.emacsPackages.magit
+target<TAB>ripgrep<TAB>ripgrep
+pin<TAB>ripgrep
+installed<TAB>magit
+installed<TAB>ripgrep
+installed<TAB>fd
+end
+#+end_src
+
+Rules:
+
+- Fields are separated by literal TAB.
+- Records are separated by literal LF.
+- Package/profile fields must not contain TAB or LF.
+- The native parser may reject unknown protocol versions.
+- =target= record field 2 is the display target; fields 3..N are the
+  acceptable installed-name candidates.
+- =pin= records form a name set.
+- =installed= records are profile names from the selected backend.
+
+This is intentionally simpler than JSON.  JSON remains a CLI output
+format, not the internal hot-path input format.
+
+* Native Command Semantics
+
+** list
+
+=list= does not need manifest input.  The first native form may only
+consume newline-separated profile names and write them back unchanged.
+The useful speedup comes from avoiding generic formatting and keeping
+the subprocess parsing path minimal.
+
+** audit
+
+Native audit is:
+
+1. Build =installed-set= from =installed= records.
+2. For each =target=, find the first installed candidate.
+3. Emit =present= or =missing=.
+4. Emit =extra= for installed names that are not in any target candidate
+   set.
+
+Skipped diagnostics remain explicit:
+
+#+begin_src elisp
+(:skipped (:state-pins :nelisp
+           :lock-drift :nelisp
+           :linux-command-audit :nelisp))
+#+end_src
+
+The native artifact may initially emit compact JSON directly:
+
+#+begin_src json
+{"ok":false,"present":["magit"],"missing":["ripgrep"],"extra":["fd"]}
+#+end_src
+
+The full Emacs path remains available through a later =--full= audit
+mode.
+
+** upgrade-plan
+
+Native upgrade-plan is:
+
+1. Build =installed-set= and =pin-set=.
+2. For each =target=, find the installed candidate.
+3. If no installed candidate exists, add display target to =missing=.
+4. If installed name is pinned, add it to =pinned=.
+5. Otherwise add installed name to =upgrade=.
+
+The native artifact does not need to prove upstream freshness.  It
+matches the current Nelix/Nix semantics: =nix profile upgrade= owns the
+actual version decision.
+
+* Artifact Strategy
+
+Use NeLisp Doc 142 primitives in this order:
+
+1. =.nelc= command artifact for a pure parser/formatter proof.
+2. =.neln= native artifact for the compact parser and set comparison.
+3. Optional standalone in-process native exec when the runtime loader can
+   execute the needed builtin/boundary subset.
+
+The first native target should not be a general loaded Nelix module.  It
+should be a small command artifact with fixed entry points:
+
+#+begin_src elisp
+(nelix-aot-audit INPUT-TEXT)
+(nelix-aot-upgrade-plan INPUT-TEXT)
+(nelix-aot-list PROFILE-NAMES-TEXT)
+#+end_src
+
+The entry points should only use operations already practical in the
+native/AOT subset:
+
+- byte/string scan,
+- integer indexes,
+- equality over interned or copied strings,
+- small hash/set equivalent or sorted-name comparison,
+- direct output construction.
+
+If hash table support remains too expensive for native exec, use sorted
+name arrays:
+
+1. parse names into vectors,
+2. insertion sort or merge sort for ~200 entries,
+3. binary search candidates.
+
+At current scale, =O(n log n)= sorting over 200 names is acceptable and
+may be simpler than native hash table support.
+
+* Integration Plan
+
+** M1: Stable AOT boundary
+
+- =nelix-fast-aot-input= exports versioned input.
+- Tests assert exact protocol records for aliases, pins, and installed
+  names.
+- Package fields containing TAB/LF are rejected.
+
+Status: implemented in Doc 25 initial patch.
+
+** M2: Portable artifact proof
+
+- Add a small =scripts/nelix-aot-manifest-engine.el= source file.
+- Compile it to =.nelc= with NeLisp artifact commands.
+- Run it through =nelisp eval-elisp-artifact= or
+  =exec-elisp-artifact= against fixture input.
+- Assert the same compact report as =nelix-fast-audit= and
+  =nelix-fast-upgrade-plan=.
+
+Status on 2026-06-17:
+
+- =scripts/nelix-aot-manifest-engine.el= exists and consumes
+  =NELIX-AOT-MANIFEST-V1= directly.
+- ERT fixtures verify =nelix-aot-audit= and
+  =nelix-aot-upgrade-plan= over the line protocol.
+- =make smoke-nelix-aot-engine-nelisp= loads the portable engine through
+  =target/nelisp --eval= and verifies compact audit output.
+- =target/nelisp --help= exposes =compile-elisp-artifact=,
+  =exec-elisp-artifact=, =eval-elisp-artifact=, and
+  =inspect-elisp-artifact=.
+- =make smoke-nelix-aot-artifact-nelisp= compiles a small canonical
+  =.nelc= smoke artifact through the NeLisp artifact CLI and verifies
+  =eval-elisp-artifact= over the canonical
+  =nelisp-elisp-artifact-manifest-v1= manifest path.  Full engine
+  behavior remains covered by =smoke-nelix-aot-engine-nelisp= because
+  loading =scripts/nelix-aot-manifest-engine.el= from inside
+  =nelisp-eval= still trips NeLisp's incomplete =require= / feature
+  state.
+- The artifact proof uses the canonical Doc 142 =.nelc= manifest format
+  (=nelisp-elisp-artifact-manifest-v1=), not the earlier
+  source-artifact fallback.
+- NeLisp standalone now exposes =native-exec-elisp-artifact= in the
+  artifact CLI surface.  Host-side =.neln= native exec is proven through
+  =nelisp-artifact-native-exec-general=, and =target/nelisp
+  native-exec-elisp-artifact= can execute the same embedded native
+  function through the standalone command path.
+- =make smoke-nelix-aot-native-artifact-host= compiles a small canonical
+  =.neln= artifact with the NeLisp artifact compiler, executes its
+  embedded native function through the host native proof harness, then
+  verifies standalone NeLisp can inspect the native manifest, run the
+  same artifact through the bytecode fallback path, and execute the
+  embedded native function through =native-exec-elisp-artifact=.
+- =scripts/nelix-aot-native-subset.el= proves the native-eligible
+  name-set comparison kernel as 8-bit integer set operations.  The host
+  proof executes both leaf kernels and the composed equality code.  The
+  standalone =target/nelisp native-exec-elisp-artifact= proof executes a
+  direct leaf kernel, the composed equality code, and string input kernels
+  over public CLI arguments.  This became possible after native object
+  extraction stopped reading the whole payload plist through the standalone
+  reader and the CLI learned to preserve non-integer arguments as strings.
+- Status on 2026-06-18: =target/nelisp native-exec-elisp-artifact=
+  now tries an externless CLI fast path before manifest validation.  For
+  the Nelix bitset subset, this avoids the standalone manifest/plist path
+  and reduces the measured call from ~24.6 sec to ~1.6 sec while keeping
+  the validated native exec path as fallback.  The validated fallback also
+  accepts string arguments, using the host-proof =Sexp::Str= boundary lane.
+
+** M3: Native subset proof
+
+- Restrict the parser to native-eligible forms.
+- Compile to =.neln=.
+- Use host-side native exec tests first.  Initial proof is shipped by
+  =smoke-nelix-aot-native-artifact-host= for a minimal native-eligible
+  defun and for the =nelix-aot-native-subset.el= set-comparison subset.
+- Standalone real-runtime native command proof is available for the
+  minimal native-eligible defun, a subset leaf kernel, and a composed
+  subset call, plus string =str-len= / =str-byte-at= kernels over CLI
+  arguments and byte-level line-protocol tag classification over a payload
+  string.  Counted byte/tag scans over the payload are also proven through
+  the extern-free recursive subset.  Field boundary detection and field
+  byte-sum extraction are proven as the next parser step.  Package-name
+  mask construction for =target=, =pin=, and =installed= rows is also
+  proven through the same extern-free subset.  The public standalone CLI
+  path uses a deliberately small composite proof artifact,
+  =scripts/nelix-aot-native-cli-proof.el=, so one
+  =native-exec-elisp-artifact= call proves string payload reads, tag
+  offsets, field sums, and the sample mask code without linking the full
+  host-only subset on every smoke invocation.  Target candidate field
+  iteration is now proven on the host native subset: a target row with
+  =magit= and =fd= candidates yields mask =5=.  Compact audit and
+  upgrade-plan proof codes are also available as allocation-light numeric
+  results.  Compact output selection and native-built line fragments are
+  proven through the =.neln= string-result lane.  The next proof step also
+  derives individual =present=, =missing=, and =upgrade= line fragments from
+  payload masks instead of returning only fixed literal reports.
+
+** M4: CLI integration
+
+Original explicit environment gate:
+
+#+begin_src sh
+NELIX_NELISP_AOT=1 nelix --runtime nelisp --json audit MANIFEST
+#+end_src
+
+Current user-facing behavior: =nelix --runtime nelisp= enables the AOT
+cache fast lane by default for supported manifest operations.  Set
+=NELIX_NELISP_AOT=0=, =false=, =off=, =none=, or =direct= only when
+debugging the slower direct standalone NeLisp path.
+
+Status on 2026-06-18:
+
+- =bin/nelix= wires AOT cache preference through direct NeLisp mode by
+  injecting =nelix-fast-aot-force=, because standalone =getenv= does not
+  currently see arbitrary process environment variables.
+- =nelix-fast-audit= and =nelix-fast-upgrade-plan= can route small
+  manifests through =scripts/nelix-aot-manifest-engine.el=.
+- The portable line-protocol bridge is guarded by
+  =nelix-fast-aot-portable-max-targets= and
+  =nelix-fast-aot-portable-max-records=.  Large real profiles fall back
+  to =nelix-fast= and report =:aot-skipped=.
+- Real =/home/madblack-21/.emacs.d/nelix-env.el= has 199 targets.  It
+  returns through the fallback in ~16.3 sec for =audit= and ~16.2 sec
+  for =upgrade-plan= with
+  =(:reason :portable-target-limit :targets 199 :record-limit 128 ...)=.
+- A standalone payload-only probe showed the AOT engine can process a
+  200-target prebuilt line protocol in ~0.2 sec.  The remaining slowdown
+  is the Elisp bridge that imports the manifest and constructs the line
+  protocol.  Therefore the next speed milestone is a cached/native parser
+  artifact, not more work on the portable bridge.
+- =nelix aot-cache MANIFEST= now writes a manifest-local target cache at
+  =MANIFEST.nelix-aot-targets=.  The cache stores the protocol header,
+  manifest/profile/system rows, target rows, and pin rows.  It
+  intentionally omits installed profile rows and the final =end= record
+  so runtime execution can append the current profile state.
+- With the AOT cache fast lane enabled and an existing cache, =audit= and
+  =upgrade-plan= can bypass manifest import and build the full AOT
+  payload by concatenating the cache with =nix profile list= output.
+  This is functionally correct for the real profile, but measured slower
+  than the guarded direct fast path: ~19.0 sec for =audit= and ~17.9 sec
+  for =upgrade-plan= versus ~16 sec fallback.  This confirms that the
+  remaining bottleneck is result construction/output in NeLisp, not only
+  manifest loading.
+- =scripts/nelix-aot-manifest-engine.el= now provides direct JSON writers
+  for =audit= and =upgrade-plan=.  =scripts/nelix-cli.el= can wrap this as
+  raw JSON so =--json= output does not re-enter the generic
+  =nelix-cli--json-encode= plist/list printer.  ERT coverage locks the
+  direct writer and CLI pass-through behavior.
+- Direct JSON improves the real cached route but does not reach the M5
+  target yet.  On the 199-target real manifest, with the cache generated
+  outside the hot path, =audit= measured ~18.2 sec and =upgrade-plan=
+  measured ~16.8 sec.  The remaining hot work is therefore the
+  line-protocol parse, hash/list construction inside the portable engine,
+  and runtime construction of =installed= records from =nix profile list=.
+- Generating =aot-cache= under standalone NeLisp is not a hot-path goal.
+  It imports the real manifest and can take too long; cache generation
+  should remain an Emacs/host maintenance operation until a manifest
+  compiler/cache format exists.
+- A =bin/nelix= fast lane now detects
+  =NELIX_RUNTIME=nelisp [--json] audit|plan|upgrade-plan MANIFEST= when
+  AOT cache use is enabled.  In that case it builds or refreshes
+  =MANIFEST.nelix-aot-targets= when needed, builds the runtime payload in
+  the shell, and runs only
+  =scripts/nelix-aot-manifest-engine.el= under =target/nelisp= instead of
+  loading the full Nelix CLI/bootstrap suite.  JSON mode uses the direct
+  JSON writers; non-JSON mode uses compact tab-separated line writers
+  (=nelix-aot-audit-lines= / =nelix-aot-upgrade-plan-lines=), so the
+  cached fast lane does not re-enter the generic plist printer either.
+  This keeps the direct NeLisp fallback available through
+  =NELIX_NELISP_AOT=0= while removing several seconds of CLI fixed cost
+  from the default standalone runtime.  The same shell fast lane is
+  now covered for ID-only runtime payloads: fake-profile smokes exercise both
+  =audit= and =upgrade-plan= with =target-id= / =pin-id= records and no
+  runtime string =target= / =pin= records, in both compact line output and
+  =--json= direct-writer mode.  =make smoke-nelix-aot-cache-fast-lane=
+  makes that =bin/nelix= coverage repeatable without touching the user's real
+  Nix profile.
+- Fast-lane real-profile measurements on 2026-06-18:
+
+| Step | Measurement |
+|------+-------------|
+| cache generation through Emacs runtime | ~0.066 sec |
+| cached =audit= through fast lane | ~13.96 sec |
+| cached =upgrade-plan= through fast lane | ~12.73 sec |
+
+- A hash-free linear comparison experiment was measured and rejected.
+  It exceeded 55 sec on the real audit payload, while the existing
+  hash-index JSON engine took ~13.94 sec for the same payload.  The next
+  real speed lever is therefore not linear Elisp comparison; it is moving
+  the parser/index builder to a native artifact or a lower-level
+  cache-native format.
+- NeLisp native exec now has a host-proof string argument lane for
+  =.neln= general native execution.  The C harness can construct
+  =Sexp::Str= slots from command-line strings and pass their slot
+  pointers to native defuns.  =scripts/nelix-aot-native-subset.el= now
+  proves =str-len= and =str-byte-at= over a string argument in
+  =smoke-nelix-aot-native-artifact-host=, returning =3= and =97= for
+  ="abc"=.  This does not yet make the full line-protocol parser native,
+  but it removes the previous blocker where native proofs could only
+  accept integer arguments.
+
+** M5: Automatic selection
+
+Enable automatic AOT only after measurements prove it is faster than the
+direct fast path on:
+
+- =list=
+- =audit ~/.emacs.d/nelix-env.el=
+- =upgrade-plan ~/.emacs.d/nelix-env.el=
+
+Do not auto-select replay-source runtime-image mode for speed.
+
+* Acceptance Gates
+
+- =make test= passes.
+- =make smoke-nelix-cli-nelisp= passes.
+- =make smoke-nelix-cli-image= passes as a correctness check.
+- =make smoke-nelix-aot-engine-nelisp= passes.
+- =make smoke-nelix-aot-artifact-nelisp= passes through the standalone
+  NeLisp artifact CLI.
+- =make smoke-nelix-aot-native-artifact-host= passes and returns =42=
+  from a real embedded =.neln= native function through both the host proof
+  harness and =target/nelisp native-exec-elisp-artifact=.  The same gate
+  also verifies the Nelix native subset through host native exec and a
+  standalone public CLI proof.  The host proof covers public CLI string
+  arguments, byte-level line-protocol tag classification, counted scans,
+  field boundary and field byte-sum extraction, and package-name mask
+  construction for =target=, =pin=, and =installed= rows, plus target
+  candidate-field iteration and compact audit/upgrade-plan proof codes.
+  The standalone public CLI proof uses a compact composite artifact to
+  verify the same payload bridge and sample mask code in one call.
+- AOT fixture command returns the same package names as
+  =nelix-fast-audit= / =nelix-fast-upgrade-plan=.
+- Real profile timing beats direct fast path before auto-selection:
+
+| Command | Direct fast path baseline | AOT target |
+|---------+---------------------------+------------|
+| =list= | ~3.4 sec | < 1.0 sec |
+| =audit= | ~16 sec | < 5.0 sec |
+| =upgrade-plan= | ~15 sec | < 5.0 sec |
+
+* Open Issues
+
+- NeLisp native exec still has limited general builtin/boundary coverage.
+- =target/nelisp= now routes the public =nelisp--syscall-read-file=
+  compatibility name through =rdf=, so general evaluation and artifact
+  loading can use the normal file reader without the earlier process-backed
+  =cat= workaround.  The older long-name native dispatch path should still
+  be audited later.
+- Compiling the full =scripts/nelix-aot-manifest-engine.el= source as
+  canonical =.nelc= is still too slow for a smoke gate.  The current
+  artifact smoke compiles a tiny canonical artifact and keeps the full
+  engine validation in =smoke-nelix-aot-engine-nelisp=.
+- Loading the full engine from inside =eval-elisp-artifact= still exposes
+  NeLisp's incomplete =require= / feature-state behavior.  The full AOT
+  engine artifact remains an M3/M4 target after that runtime gap is fixed.
+- M3 has a real =.neln= native artifact proof for a minimal
+  native-eligible defun through both host and standalone command paths,
+  plus host and standalone proofs for the bitset-based Nelix name-set
+  subset.  The previous standalone hang was caused by routing the embedded
+  object payload through generic reader/string processing; native exec now
+  uses a fast object extraction path, and the public CLI has an externless
+  fast path that skips manifest/plist validation before falling back to the
+  validated path.  The remaining native gap is reducing the ~1.6 second
+  standalone/toolchain fixed cost, extending the proof to the full
+  line-protocol manifest engine subset, and eventually replacing the
+  host-toolchain harness with in-process mmap/relocation.
+- Host-side and standalone CLI native exec can now pass string arguments to
+  native defuns, which unblocks parser-kernel proofs over payload text.
+  The remaining bridge is not public argument parsing; it is lowering the
+  full line-protocol parser into the native subset and reducing the
+  standalone/toolchain fixed cost.
+- The native subset now includes the first byte-level line-protocol parser
+  kernel.  =nelix-aot-native-protocol-prefix-code= validates the
+  =NELIX-AOT-MANIFEST-V1= prefix, and
+  =nelix-aot-native-record-tag-code= classifies record tags at explicit
+  offsets (=target=1, =pin=2, =installed=3, =end=4).  The
+  =smoke-nelix-aot-native-artifact-host= gate proves both host native exec
+  and public =target/nelisp native-exec-elisp-artifact= over a real
+  line-protocol payload string.
+- The native subset also includes counted payload scans without mutable
+  locals: =nelix-aot-native-count-byte= counts bytes, and
+  =nelix-aot-native-count-tag= scans the payload for record tags.  These
+  use tail recursion and inline =(+ x 1)= arithmetic, which keeps the
+  compiled =.neln= artifact extern-free and avoids the current
+  =while= / =setq= lowering gap.
+- Field extraction has started in the same extern-free subset.
+  =nelix-aot-native-find-byte= finds delimiter offsets,
+  =nelix-aot-native-field-end= finds TAB/LF/EOF field boundaries, and
+  =nelix-aot-native-field-byte-sum= proves stable field content reads
+  (=magit= -> =530=, =ripgrep= -> =761= in the smoke payload).  The
+  standalone proof uses =nelix-aot-native-line-proof-code= to combine
+  version/tag/count/field checks into one public native exec invocation so
+  the correctness gate does not multiply the standalone/toolchain fixed
+  cost unnecessarily.
+- Package-name mask construction is now in the native subset.
+  =nelix-aot-native-name-bit-from-sum= maps the proof package names to
+  8-bit set bits, =nelix-aot-native-mask-for-tag= scans the line protocol
+  for selected tag rows, and the =desired=, =pin=, and =installed= masks
+  are built without plist/list/hash table allocation.  The sample payload
+  proves =desired=1=, =installed=1=, =pin=2=, and mask equality =1=, with
+  host-side =nelix-aot-native-mask-proof-code= returning =19=.  The
+  standalone public CLI artifact keeps only a compact payload proof and
+  returns =556=, combining byte length, tag offsets, field sum, and the
+  same sample mask code.
+- Target candidate field iteration is proven in the host native subset.
+  =nelix-aot-native-target-candidate-mask-at= skips the first target
+  payload field and scans candidate fields until LF; the multi-candidate
+  proof payload =target\tmagit\tmagit\tfd= returns candidate mask =5=.
+  =nelix-aot-native-compact-audit-code= returns =9= for the base payload,
+  and =nelix-aot-native-compact-upgrade-plan-code= returns =10= for the
+  candidate payload.  Portable compact line/name output now exists in
+  =scripts/nelix-aot-manifest-engine.el= and is wired through the shell
+  AOT cache fast lane for non-JSON =audit= and =upgrade-plan=.  The next
+  native step has started: =nelix-aot-native-compact-audit-output-select=
+  and =nelix-aot-native-compact-upgrade-output-select= prove that the
+  native parser can select and return compact output strings through the
+  =.neln= string-result lane.  The public standalone CLI proof also
+  verifies native string-result return.  Native-built literal line
+  fragments are now proven by =nelix-aot-native-compact-audit-lines-proof=,
+  =nelix-aot-native-compact-upgrade-lines-proof=, and
+  =nelix-aot-native-cli-lines-proof=.  Field-derived line fragments are
+  also proven on the host native subset: =present\tmagit=,
+  =missing\tfd=, and =upgrade\tmagit= are selected from payload-derived
+  desired/installed/pin/candidate masks, not from a fixed report literal.
+  The host subset now also proves small multi-line compact reports:
+  =ok\tfalse= with =present\tmagit= and =missing\tfd= for audit, and
+  =operation\tupgrade= with =upgrade\tmagit= and =missing\tfd= for
+  upgrade-plan.  This deliberately avoids runtime =concat= for now:
+  =concat= is still treated as a delegated builtin by the native compiler,
+  while branch-selected line/report literals stay in the lightweight
+  =nl_alloc_str= lane.  The native-safe builder lane has now started:
+  the host =.neln= proof harness supports =nl_alloc_mut_str=,
+  =nl_mut_str_push_byte=, and =nl_mut_str_finalize=, and
+  =nelix-aot-native-builder-audit-report-proof= builds the same compact
+  audit report byte-by-byte in a caller-provided output slot after checking
+  payload-derived masks.  The first reusable append helpers are also
+  proven: =nelix-aot-native-builder-push-ok-false=,
+  =nelix-aot-native-builder-push-present-magit=,
+  =nelix-aot-native-builder-push-missing-fd=, and
+  =nelix-aot-native-builder-push-backend-nix= can be called from the
+  report builder without leaving the native-safe integer/string slot lane.
+  Bit-selected append dispatch is now proven for the proof name subset:
+  =nelix-aot-native-builder-push-name-bit= maps bits to =magit=,
+  =ripgrep=, =fd=, and =bat=, and the builder can emit both
+  =present\tmagit= / =missing\tfd= and
+  =present\tripgrep= / =missing\tbat= from payload-derived masks.
+  A numeric-ID input proof has also started the real name-table path:
+  =target-id=, =pin-id=, and =installed-id= records reuse the existing tag
+  prefixes but parse numeric fields through
+  =nelix-aot-native-field-small-uint=.  The host proof can build masks
+  from those IDs and emit =present\tripgrep= / =missing\tbat= via the same
+  MutStr builder.  This is not the final table format yet, but it proves
+  that a cache/compiler step can replace hot-path string matching with
+  integer ID set operations.  The cache writer now emits that bridge data:
+  =nelix-fast-aot-target-cache-write= keeps the original string records for
+  compatibility, and additionally writes =name-id=, =target-id=, and
+  =pin-id= records.  =nelix-fast-aot-input-from-target-cache= appends
+  =installed-id= records when installed names map through the cache table;
+  both the explicit payload builder and the shell fast lane use the same
+  =name-id= lookup, including duplicate suffix normalization such as
+  =ripgrep-1= -> =ripgrep=.
+  The portable engine now treats these records as an acceleration contract
+  rather than inert metadata: when =target-id= and =name-id= are present,
+  =nelix-aot-audit= and =nelix-aot-upgrade-plan= compare numeric ID sets and
+  use string records only to recover installed display names and unmapped
+  extras.  The cache file still retains string =target= and =pin= records for
+  compatibility, but the runtime cache fast lane now emits an ID-only prefix
+  when =target-id= records are present: =manifest=, =profile=, =system=,
+  =name-id=, =target-id=, and =pin-id=, followed by live =installed= /
+  =installed-id= records.  This removes string target/pin parsing from the
+  cached hot path while preserving fallback caches that do not yet contain ID
+  records.  The native proof consumes the same records directly.  Full dynamic
+  in-native line construction is still pending: the next milestone is
+  promoting this ID path from the portable engine into the real native cache
+  contract and covering the 200-target real profile without re-entering the
+  portable hash/list engine.
+- A probe with =while= + =setq= compiles to =.neln= but requires
+  =nelisp_env_set_value= and, more importantly, the generated loop body
+  does not read the updated local on the next iteration in the current
+  proof lane.  A recursive scanner using =1+= links but segfaults because
+  the direct helper call does not pass hidden builtin boundary slots.  The
+  working shape is tail recursion plus inline =+=.  Package-name mask
+  construction and candidate-field iteration now follow that shape; later
+  native parser work should keep these restrictions until the native
+  lowering gaps are fixed.
+- Public standalone native exec still pays the standalone/toolchain fixed
+  cost on each call.  The smoke gate therefore uses compact CLI proof calls
+  for the payload bridge: the original package-name proof remains, and
+  =nelix-aot-native-cli-audit-id-lines-proof= now returns a compact audit
+  line report from a numeric-ID payload through
+  =nelisp native-exec-elisp-artifact=.  This is still a fixed proof payload,
+  not the full real-profile scanner, but it proves the public command path
+  can return native-built report text.  The broader parser/mask scan remains
+  a host-side native proof until in-process native artifact loading exists.
+- The native parser must avoid depending on general plist/list/hash table
+  behavior until those paths are proven fast.
+- Manifest imports still run in Elisp before AOT input export.  A later
+  cache can store the exported line protocol with source/import hashes.
+- The first target cache exists and removes manifest import from the AOT
+  route, but it does not yet improve real-profile end-to-end timing.
+  Direct compact JSON output and compact tab-separated line output remove
+  the generic CLI JSON encoder and plist printer from the cached route,
+  but automatic cache selection should remain gated until parsing and
+  installed-name ingestion move to a native artifact or a cache-native
+  binary/name-index format.
+- The shell-level fast lane now makes cached AOT faster than the direct
+  fast fallback on the current real profile, but it is still above the M5
+  target.  It is an opt-in bridge, not the final automatic selection
+  policy.
+- The portable M4 bridge is intentionally capped.  With the real 199-target
+  profile, constructing the line protocol inside standalone NeLisp exceeded
+  45 sec before the guard was added; native parser/artifact work is required
+  before M5 automatic selection.
+- Native output should stay direct-writer based: compact JSON for
+  =--json= and compact tab-separated lines for non-JSON commands.  It
+  should not route through generic S-expression/plist printers.
+- 2026-06-18: =nelix --runtime nelisp list= now uses a
+  shell-level name-only stream writer because =list= has no manifest
+  semantics.  It avoids full NeLisp CLI/runtime loading and does not enter
+  the generic plist/list/JSON formatter.  On the current 202-name real
+  profile, measured wall time is about 0.02 sec for both plain and =--json=
+  output.  This satisfies the =list= side of the M5 timing target; the
+  remaining native/AOT work is =audit= and =upgrade-plan=, where manifest
+  target matching and installed-name ingestion still need the numeric-ID
+  native cache path.
+- 2026-06-18: the cached =audit= / =upgrade-plan= path now evaluates
+  =name-id=, =target-id=, =pin-id=, and live profile names in a shell/awk
+  numeric-ID bridge before falling back to the portable NeLisp AOT engine.
+  The bridge only runs when AOT cache use is enabled and the
+  manifest-local cache contains =target-id= records.  It
+  preserves the existing compact JSON and tab-separated line output shape,
+  including =:nelisp-aot-cache= diagnostics.  On the current
+  =/home/madblack-21/.emacs.d/nelix-env.el= real profile with 199 targets
+  and 202 installed names, =--json audit= and =--json upgrade-plan= both
+  measure about 0.025 sec after the cache exists.  This removes the current
+  user-facing blocker where the no-cache fallback entered the full NeLisp
+  CLI path and could segfault.  The final native artifact should still
+  replace this bridge by consuming the same numeric-ID cache contract
+  in-process.
+  Cache safety is conservative about correctness but automatic for UX:
+  missing caches and caches older than the manifest are regenerated through
+  the cache builder before =audit= / =plan= /
+  =upgrade-plan= continue.  The builder output is suppressed so =--json=
+  commands still write only the requested JSON result.  If regeneration
+  fails or still leaves the cache stale, the command exits 2 and reports the
+  =nelix aot-cache MANIFEST= recovery command.  The fast lane does not
+  silently fall back to the full NeLisp CLI path for these cases.
+  For usability, =nelix --runtime nelisp aot-cache MANIFEST= delegates only
+  the cache-build operation to the same Emacs batch builder used by the
+  default runtime.  This keeps the user-facing command as =nelix=, avoids
+  =emacsclient=, and avoids the full standalone NeLisp manifest import path
+  that timed out at 45 sec on the real profile.  The measured batch builder
+  path is about 0.09 sec for the current 199-target manifest; missing/stale
+  cache auto-refresh followed by =--json audit= or =--json upgrade-plan=
+  measures about 0.11 sec on the same profile.
+- 2026-06-19: the same shell/awk numeric-ID bridge now covers
+  =plan MANIFEST= and =--json plan MANIFEST=.  This is deliberately a
+  minimal desired/installed name-set plan: it emits =install=, =remove=,
+  =keep=, =protected=, =commands=, =count=, and =empty=, while marking
+  lock/transaction checks as skipped by =nelisp-aot=.  On the real
+  =~/.emacs.d/nelix-package.el= DSL v1 manifest with 204 cached targets,
+  =--runtime nelisp --json plan= measured about 0.025 sec with
+  =install=0=, =remove=0=, and =keep=204= after the cache existed.  Before
+  this bridge, the same command entered the full standalone NeLisp CLI path
+  and had to be stopped after more than two minutes.
+- 2026-06-19: =nelix --runtime nelisp --json validate MANIFEST= now avoids
+  the full standalone NeLisp manifest load path for DSL v1 manifests.  The
+  CLI exposes =nelix-fast-validate-json= as the intended data-only path, and
+  the wrapper has a source-only validate lane that delegates to Emacs batch
+  while the native reader/count scanner remains too slow for the 200-package
+  user manifest.  This removes the user-facing segfault/hang from the required
+  real-manifest validate command without requiring =emacsclient=.
+- 2026-06-18: the native subset proof now covers the =upgrade-plan=
+  numeric-ID contract, not only audit.  Host native exec verifies
+  =target-candidate-id-mask=7=, =pin-id-mask=2=,
+  =id-upgrade-mask=1=, =id-pinned-mask=2=, and
+  =id-upgrade-missing-mask=4= for a sample cache payload, and the MutStr
+  builder emits =upgrade\tmagit=, =pinned\tripgrep=,
+  =missing\tfd=, =backend\tnix=.  The public standalone
+  =nelisp native-exec-elisp-artifact= proof also returns the same compact
+  ID upgrade report from =nelix-aot-native-cli-upgrade-id-lines-proof=.
+  This keeps the shell bridge and future native artifact aligned on the
+  same numeric-ID cache semantics.
+- 2026-06-18: AOT manifest-engine output writers now avoid mapconcat-style
+  intermediate join lists on the hot command-output path.  Compact JSON string
+  arrays, skipped objects, escaped-string slow path, audit/upgrade line groups,
+  and name-only list output stream directly into their output accumulators.
+  The new ERT gate wraps =mapconcat= while emitting audit JSON, upgrade-plan
+  JSON, audit lines, upgrade-plan lines, list lines, and list JSON, proving
+  that public AOT writers do not re-enter the generic join-list formatter.
+- 2026-06-18: AOT audit/upgrade input parsing now streams over the line
+  protocol instead of materializing a complete line list before processing.
+  =nelix-aot--parse-input= consumes non-empty records with
+  =nelix-aot--for-each-line= and keeps =nelix-aot--parse-lines= for public
+  list operations that intentionally return a name list.  The ERT gate wraps
+  =nelix-aot--parse-lines= while running audit, upgrade-plan, JSON, and line
+  writers to prove the manifest hot path no longer allocates that line list.
+- 2026-06-18: AOT parser records now avoid per-line tab-field lists too.
+  =manifest=, =profile=, =system=, =name-id=, =target-id=, =pin-id=,
+  =installed=, =installed-id=, =pin=, and legacy string =target= records
+  are parsed with prefix checks and tab indexes.  =nelix-aot--split-tabs=
+  has been removed.  The input streaming ERT covers both numeric-ID and
+  string-target payloads while wrapping =nelix-aot--parse-lines=, proving
+  audit/upgrade parsing does not allocate the all-lines list and no longer
+  has a per-record fields-list splitter to fall back to.
+
+* Decision
+
+Proceed with a command-specific Nelix AOT engine.  Keep the existing
+=nelix-fast.el= path as the correctness fallback.  Treat replay-source
+runtime images as a correctness/preload probe, not the performance
+solution.

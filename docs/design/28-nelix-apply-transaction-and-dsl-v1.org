@@ -1,0 +1,206 @@
+#+TITLE: Doc 28 - Nelix Apply Transaction, Debian Gates, and DSL v1
+#+DATE: 2026-06-19
+#+STATUS: ACTIVE
+
+* 1. Purpose
+
+This document fixes the next practical safety layer after the real
+=init.el= migration flow:
+
+- =nelix apply= must be recoverable when a Nix command fails halfway through;
+- Debian package gates must exercise the installed =/usr/bin/nelix= CLI, not
+  only source-tree helpers;
+- the manifest DSL needs a stable v1 contract before native store and lockfile
+  schema work expand the surface.
+
+* 2. Apply Transaction Model
+
+For the Nix backend, =nelix apply= now treats profile mutation as a transaction
+bounded by the active Nix profile generation.
+
+Default behavior:
+
+1. Build the normal plan.
+2. Before executing install/remove commands, call =pkg-list-generations= and
+   capture the active =:id= as =:before-generation=.
+3. Execute command rows in order.
+4. On success, capture =:after-generation=.
+5. On command failure, call =nelix-rollback= with =:before-generation= when it
+   was captured.
+6. Return failure to the CLI even when rollback succeeds, because the requested
+   convergence did not complete.
+
+Dry-run behavior:
+
+- never queries generation history;
+- returns =:transaction= metadata with =:dry-run t=;
+- shows whether rollback would be enabled for a real apply.
+
+Opt-out:
+
+#+begin_src sh
+nelix apply MANIFEST --no-rollback
+#+end_src
+
+This is intended only for debugging.  Normal interactive and scripted use
+should keep rollback enabled.
+
+Current returned transaction shape:
+
+#+begin_example
+:transaction
+(:enabled t
+ :rollback-on-error t
+ :generation-captured t
+ :rollback-available t
+ :before-generation 7
+ :after-generation 8)
+#+end_example
+
+Failure signals =anvil-pkg-error= with:
+
+- human message including =rollback=ok= or =rollback=not-ok=;
+- =:executed= command rows that completed before failure;
+- =:transaction= metadata;
+- =:rollback= result.
+
+* 3. Remove Safety
+
+Real =apply= refuses unmanaged remove actions unless the caller explicitly
+confirms the remove set.
+
+Supported safety flags:
+
+#+begin_src sh
+nelix apply MANIFEST --allow-remove
+nelix apply MANIFEST --allow-remove-count N
+nelix sync MANIFEST --prune --allow-remove-count N
+#+end_src
+
+The exact count mode is preferred for scripts because it proves the caller saw
+the current plan.  =apply --dry-run= never requires the flag; it reports
+=:remove-safety= metadata so tools can show the required count before a real
+apply.
+
+Transaction rollback protects against command failure, not against applying an
+undesired but valid remove plan.  Remove review remains mandatory.
+
+* 4. Debian Package Gate
+
+The package now has an installed CLI gate:
+
+#+begin_src sh
+make verify-installed-cli-gate
+#+end_src
+
+It runs =/usr/bin/nelix= with a fake =nix= executable and verifies:
+
+- =validate MANIFEST=;
+- =lock MANIFEST= creates =MANIFEST.nelix-lock=;
+- =plan MANIFEST= reports install/remove rows;
+- =apply MANIFEST --dry-run= reports transaction metadata without mutating.
+
+=make deb-release-gate= now runs =deb-local-gate=, installs the freshly built
+=.deb= with =install-built-deb=, then runs =verify-installed-debian=,
+=verify-installed-cli-gate=, and =verify-user-environment=.  This ordering is
+important because =deb-local-gate= rebuilds the package; installed CLI checks
+must exercise that rebuilt payload, not a previously installed package with the
+same version.  =debian/tests/load= also invokes the installed CLI gate so
+autopkgtest covers the package-installed command path.
+
+* 5. DSL v1 Contract
+
+There are now two layers:
+
+- low-level stable API: =(nelix-manifest :name ... :emacs ... :linux ...)=;
+- user-facing v1 DSL: a thin, Nix/Guix-like declarative environment form.
+
+The v1 DSL target syntax is:
+
+#+begin_src emacs-lisp
+(nelix-environment
+ (name "madblack-21")
+ (profile "default")
+ (nix-channel "nixpkgs")
+ (imports "custom-lisp/nelix-package-index.el"
+          "custom-lisp/nelix-linux.el")
+ (backend-policy
+  (gnu/linux nix nelix-native)
+  (darwin nix nelix-native)
+  (windows-nt nix))
+ (emacs-packages nelix-package-emacs-packages)
+ (linux-packages nelix-linux-base-nix-packages)
+ (bootstrap-apt-packages nelix-linux-bootstrap-apt-packages))
+#+end_src
+
+Rules:
+
+- subform names are stable once v1 ships;
+- plist =nelix-manifest= remains supported indefinitely for generated files and
+  backward compatibility;
+- package list subforms accept either a variable symbol or literal package
+  symbols/strings;
+- OS backend policy subforms are converted to the existing alist shape;
+- unknown subforms are hard errors;
+- the DSL must expand to =nelix-manifest= so existing lock/plan/apply code stays
+  the single implementation path.
+
+Implementation status: =nelix-environment= is implemented as a macro expanding
+to =nelix-manifest=.  Existing plist manifests remain valid.
+
+* 6. Lockfile Schema Direction
+
+Current lockfiles are Elisp/S-expression files with an explicit schema header:
+
+#+begin_example
+:schema "nelix-lock"
+:schema-version 2
+:version 2
+:format sexp
+#+end_example
+
+CLI =--json lock= serializes the same data for external tooling.
+
+Current compatibility rule:
+
+- legacy v1 locks are readable for drift checks, but =apply --locked= refuses
+  them because they do not contain package rows;
+- legacy v2 locks without explicit =:schema= / =:schema-version= are readable
+  and schema-compatible;
+- current v2 locks with explicit schema metadata are covered by a fixture with
+  package rows;
+- future schema versions are rejected by =lock-check= and =apply --locked=
+  until support is added.
+
+The regression suite commits fixture lockfiles under =test/fixtures= and
+round-trips real =nelix --json lock= output through the standard JSON parser.
+
+Do not replace the S-expression lockfile until NeLisp and Emacs both have a
+stable JSON parser/writer path for this data.
+
+* 7. Native Store and Wrapper Policy
+
+=nelix-system-*= wrapper packages are transitional.  Replacement policy:
+
+- keep wrappers in the standard Linux package set while Debian tools still come
+  from bootstrap APT packages;
+- replace each wrapper with a native Nix or Nelix-native recipe only when the
+  command set is equivalent enough for package development gates;
+- remove the wrapper from =nelix-linux-debian-wrapper-nix-packages= in the same
+  change that adds the native recipe and updates docs/tests.
+
+=ripgrep= is now part of the core Linux tool set because it is needed for
+source inspection and package migration work.
+
+* 8. Operational Docs
+
+The user manual must keep a dedicated "real apply" section:
+
+- run =validate=;
+- run =lock=;
+- run =plan=;
+- run =apply --dry-run=;
+- inspect =install/remove/commands/transaction=;
+- run =apply= only after remove review;
+- use =nelix rollback GENERATION= or the transaction error's rollback report
+  when recovery is needed.

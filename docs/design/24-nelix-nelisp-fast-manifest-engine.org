@@ -1,0 +1,596 @@
+#+TITLE: Doc 24 — Nelix fast manifest engine for standalone NeLisp
+#+AUTHOR: zawatton + Codex
+#+DATE: 2026-06-17
+#+STATUS: DESIGN
+#+OPTIONS: num:nil toc:t
+
+* Status
+
+IMPLEMENTED-PARTIAL.  This document records the next priority for Nelix: making
+=nelix --runtime nelisp= fast enough to use as the normal command-line
+runtime for manifest operations.
+
+Doc 21 defines the user-facing manifest commands.  Doc 22 defines the
+native store direction for machines without Nix.  This document is the
+performance and runtime-shape design needed before those workflows can
+be comfortable on standalone NeLisp.
+
+Current evidence from the Debian development machine:
+
+- =nix profile list --profile ~/.local/state/nelix/profile= is fast
+  from the shell.
+- =nelix --runtime nelisp list= is slow even though the Nix subprocess
+  is fast.
+- =nelix --runtime nelisp audit ~/.emacs.d/nelix-env.el= and
+  =upgrade-plan= are too slow for normal use when they traverse the
+  Emacs-compatible plist/list report path.
+- The slow parts are NeLisp-side list/plist/alist processing,
+  =member= / =equal= scans, manifest target matching, string handling,
+  =format= / print / JSON conversion, and allocator/GC pressure.
+
+Implementation checkpoint on 2026-06-17:
+
+- Added =nelix-fast.el= as the standalone NeLisp name-set manifest
+  engine.
+- Routed =nelix --runtime nelisp list= through a name-only CLI fast
+  path.
+- Routed standalone NeLisp =audit= and manifest =upgrade-plan= through
+  =nelix-fast-audit= and =nelix-fast-upgrade-plan=.
+- Kept the Emacs runtime on the existing row-oriented manifest engine.
+- Added CLI formatting for name-only list output so it does not depend
+  on NeLisp =prin1-to-string= compatibility.
+- Fixed the shell wrapper's empty-string Elisp quoting for the direct
+  NeLisp runner.
+
+Measured on the same Debian development profile, 202 entries:
+
+| Command | Before | After |
+|---------+--------+-------|
+| =nelix --runtime nelisp list= | ~25.6 sec / broken row path | ~3.0 sec |
+| =nelix --runtime nelisp --json list= | ~52.8 sec | ~7.0 sec |
+| =nelix --runtime nelisp --json audit ~/.emacs.d/nelix-env.el= | timeout-prone generic path | ~15.2 sec |
+| =nelix --runtime nelisp --json upgrade-plan ~/.emacs.d/nelix-env.el= | timed out at 120-300 sec | ~15.4 sec |
+
+The remaining major cost is still runtime startup, manifest import
+loading, and generic JSON output.  Runtime image/cache work remains the
+next lever after the fast manifest engine.
+
+Runtime image checkpoint on 2026-06-17:
+
+- Added a Nelix CLI runtime-image probe target:
+  =make smoke-nelix-cli-image-build= creates
+  =.cache/nelisp/nelix-cli.nlri=.
+- Added explicit =NELIX_NELISP_IMAGE= handling in =bin/nelix=.
+- Disabled automatic image use.  =bin/nelix= only probes an image when
+  =NELIX_NELISP_IMAGE= is set explicitly.
+- NeLisp =eval-runtime-image= now preloads the standalone prelude and
+  preserves replayed =defun= bindings during image evaluation.  A Nelix
+  image can satisfy =(fboundp 'nelix-cli-dispatch)=,
+  =(fboundp 'nelix-cli-format-result)=, and
+  =(fboundp 'nelix-cli-parse-args)= after image load.
+- =bin/nelix= still probes explicit images and exits with an actionable
+  error if the image does not contain those CLI functions.
+- =make smoke-nelix-cli-image= now verifies explicit image mode by
+  running =bin/nelix --json version= through =NELIX_NELISP_IMAGE=.
+
+Measured direct fallback after this guard remains usable:
+
+| Command | Runtime image state | Time |
+|---------+---------------------+------|
+| =nelix --runtime nelisp list= | direct source load | ~3.446 sec |
+| =NELIX_NELISP_IMAGE=.cache/nelisp/nelix-cli.nlri nelix --runtime nelisp list= | explicit replay-source image | ~6.829 sec |
+| =nelix --runtime nelisp --json audit ~/.emacs.d/nelix-env.el= | direct source load | ~16.056 sec |
+| =NELIX_NELISP_IMAGE=.cache/nelisp/nelix-cli.nlri nelix --runtime nelisp --json audit ~/.emacs.d/nelix-env.el= | explicit replay-source image | ~19.854 sec |
+
+The explicit image path is now a correctness checkpoint, not a speed
+win.  Because the current image format is replayed source, it can add
+work compared with the direct fast path.  The next performance lever is
+not automatic image selection; it is either a serialized runtime heap or
+a much smaller command-specific image that avoids loading the generic
+Nelix CLI surface.
+
+* Goal
+
+Create a standalone NeLisp-specific manifest engine that treats Nelix
+manifest operations as set operations over compact package names.
+
+The intended command behavior:
+
+#+begin_src shell
+nelix --runtime nelisp validate ~/.emacs.d/nelix-env.el
+nelix --runtime nelisp list
+nelix --runtime nelisp audit ~/.emacs.d/nelix-env.el
+nelix --runtime nelisp upgrade-plan ~/.emacs.d/nelix-env.el
+nelix --runtime nelisp apply ~/.emacs.d/nelix-env.el
+nelix --runtime nelisp sync ~/.emacs.d/nelix-env.el --prune
+#+end_src
+
+Performance target on the current profile size, roughly 200 entries:
+
+| Command | Target wall time |
+|---------+------------------|
+| =version= | < 3 sec including startup |
+| =validate= | < 5 sec including startup |
+| =list= | < 10 sec |
+| =audit= | < 15 sec |
+| =upgrade-plan= | < 15 sec |
+| =apply= no-op | < 20 sec |
+| =sync --prune= no-op | < 20 sec |
+
+These are first practical targets, not final targets.  Later runtime
+image/cache work should reduce startup and preload overhead further.
+
+* Non-goals
+
+- Making generic Emacs-compatible plist/list code fast by itself.
+- Replacing all normal Emacs runtime code paths.
+- Computing full lock drift and full extra package diagnostics in the
+  first fast path when the user asked for a simple =upgrade-plan=.
+- Fully solving the Nix-free native store.  Doc 22 owns that larger
+  package/store system.
+- Full semantic parity with every Emacs-side report field.  Fast
+  NeLisp reports may expose compact fields plus explicit =:skipped=
+  metadata.
+
+* Problem
+
+The current implementation reuses the Emacs-oriented data model:
+
+#+begin_example
+manifest -> target plist rows -> installed profile plist rows
+         -> report plist rows -> audit/plan plist -> JSON/S-expression
+#+end_example
+
+That model is reasonable in Emacs, but expensive in standalone
+NeLisp:
+
+- each package row is a plist with repeated keyword symbols
+- matching often uses nested loops over target lists and installed
+  lists
+- target resolution calls helper functions that search long alists
+- report rows often keep nested =:entry= data that the CLI does not
+  need
+- JSON formatting walks every nested plist/list again
+- small helper calls allocate many short-lived cons cells and strings
+
+For a 200-package manifest, this turns simple set operations into
+large allocator and printer workloads.
+
+* Design Principle
+
+Standalone NeLisp must not run the Emacs-compatible manifest engine by
+default.
+
+Instead, it should compile manifest data into a compact runtime shape
+once per command:
+
+#+begin_example
+manifest.el
+  -> fast manifest table
+     desired-names: hash/name set
+     desired-order: vector/list of strings
+     pins: hash/name set
+     bootstrap: compact list
+  -> installed profile names
+     installed-names: hash/name set
+     installed-order: vector/list of strings
+  -> command-specific set diff
+     missing / present / extra / pinned / upgrade candidates
+  -> compact output
+#+end_example
+
+The fast engine should use only a small set of primitive operations:
+
+- append strings only when needed
+- hash table membership for name lookup
+- one pass over desired names
+- one pass over installed names
+- compact output rows or plain name lists
+- command-specific skips for expensive diagnostics
+
+* Fast Runtime Data Model
+
+** Fast manifest
+
+Internal shape:
+
+#+begin_src emacs-lisp
+(:file "/home/.../nelix-env.el"
+ :name "madblack-21"
+ :profile "default"
+ :desired-order ("magit" "ripgrep" ...)
+ :desired-set HASH
+ :emacs-order ("magit" ...)
+ :linux-order ("ripgrep" ...)
+ :pins-order ("ripgrep" ...)
+ :pins-set HASH
+ :bootstrap-apt (nix-bin emacs elpa-nelix)
+ :backend nix
+ :system x86_64-linux)
+#+end_src
+
+Rules:
+
+- Keep strings as the primary runtime key.
+- Do not keep original package plists in command output.
+- Convert symbols to strings once.
+- Resolve generated package aliases through prebuilt hash tables, not
+  repeated alist scans.
+- For upgrade planning, prefer profile names over Nix attr paths.
+
+** Fast profile
+
+Internal shape:
+
+#+begin_src emacs-lisp
+(:profile-root "/home/.../.local/state/nelix/profile"
+ :names ("magit" "ripgrep" ...)
+ :set HASH
+ :rows HASH-OR-NIL)
+#+end_src
+
+The first phase only needs names.  Optional rows can be added later if
+a command truly needs attr path or store path data.
+
+** Compact report
+
+Fast reports should favor names:
+
+#+begin_src emacs-lisp
+(:operation audit
+ :ok t
+ :manifest "..."
+ :backend nix
+ :present ("magit" "ripgrep")
+ :missing nil
+ :extra ("fd")
+ :pins (:expected ("ripgrep")
+        :missing nil
+        :extra :skipped)
+ :skipped (:lock-drift :nelisp
+           :state-pins :nelisp))
+#+end_src
+
+Verbose plist rows are reserved for the Emacs runtime or an explicit
+future =--verbose= mode.
+
+* Command Semantics
+
+** list
+
+Current bottleneck:
+
+- Nix subprocess is fast.
+- NeLisp list parsing and output formatting are slow.
+
+Fast path:
+
+1. Call =nix profile list --profile PROFILE= without JSON.
+2. Reduce to one name per line in the subprocess using =sed= or a
+   tiny helper.
+3. Parse newline-separated names.
+4. For JSON output, emit a compact array of names by default:
+
+#+begin_src json
+["magit", "ripgrep", "fd"]
+#+end_src
+
+Compatibility:
+
+- Existing =nelix list= can keep plist rows under Emacs.
+- NeLisp can expose =list --rows= later if row compatibility is
+  required.
+
+** audit
+
+Fast audit is a set comparison:
+
+#+begin_example
+missing = desired - installed
+present = desired ∩ installed
+extra   = installed - desired
+#+end_example
+
+First implementation:
+
+- Use fast manifest desired set.
+- Use fast profile installed set.
+- Use manifest =:pins= only.
+- Skip state pin drift unless explicitly requested.
+- Skip Linux command audit and bootstrap version checks unless
+  explicitly requested.
+- Skip lock drift unless explicitly requested.
+
+Return:
+
+#+begin_src emacs-lisp
+(:operation audit
+ :ok BOOL
+ :missing NAMES
+ :present NAMES
+ :extra NAMES
+ :skipped (:state-pins :nelisp
+           :linux-command-audit :nelisp
+           :bootstrap-version-audit :nelisp
+           :lock-drift :nelisp))
+#+end_src
+
+** upgrade-plan
+
+Important: current =pkg-upgrade-plan= does not prove that newer
+versions exist.  It reports profile entries that would be passed to
+=nix profile upgrade=.  NeLisp fast =upgrade-plan= should preserve
+that meaning.
+
+Fast path:
+
+1. Load fast manifest.
+2. Load fast profile names.
+3. candidate = desired ∩ installed - manifest pins.
+4. missing = desired - installed.
+5. Return candidate names only.
+
+Return:
+
+#+begin_src emacs-lisp
+(:operation upgrade
+ :name :manifest
+ :count 42
+ :upgrade ("magit" "ripgrep" ...)
+ :missing (...)
+ :pinned (...)
+ :skipped (:extra-scan :nelisp
+           :state-pins :nelisp
+           :lock-drift :nelisp))
+#+end_src
+
+** upgrade
+
+Fast =upgrade= consumes the fast =upgrade-plan=:
+
+#+begin_example
+for name in plan.upgrade:
+  nix profile upgrade NAME --profile PROFILE
+#+end_example
+
+It must not recompute full audit data.
+
+** apply
+
+Fast =apply= only installs =missing=:
+
+#+begin_example
+missing = desired - installed
+nelix-install missing
+pin manifest pins
+#+end_example
+
+It may still use existing =nelix-install= for mutation, but the
+planning phase must use fast sets.
+
+** sync --prune
+
+Fast =sync --prune=:
+
+#+begin_example
+missing = desired - installed
+extra = installed - desired
+install missing
+remove extra unless protected by manifest pins
+#+end_example
+
+No full report rows are necessary.
+
+* Implementation Plan
+
+** M1: Fast engine module
+
+Add =nelix-fast.el= or =nelix-manifest-fast.el=.
+
+Public internal functions:
+
+#+begin_src emacs-lisp
+(nelix-fast-load-manifest FILE)
+(nelix-fast-profile-names &optional PROFILE)
+(nelix-fast-audit FILE)
+(nelix-fast-upgrade-plan FILE)
+(nelix-fast-apply FILE &rest ARGS)
+(nelix-fast-sync FILE &rest ARGS)
+#+end_src
+
+The existing public APIs dispatch to these functions only when
+=anvil-pkg-compat--standalone-nelisp-p= is true.
+
+** M2: Fast profile name source
+
+Replace row-heavy =nelix-list= use in NeLisp command paths with a
+name-only helper:
+
+#+begin_src emacs-lisp
+(nelix-fast-profile-names)
+;; => ("magit" "ripgrep" ...)
+#+end_src
+
+Use subprocess-side reduction:
+
+#+begin_src shell
+nix profile list --profile "$profile" |
+  sed -n 's/\x1b\[[0-9;]*m//g; s/^Name:[[:space:]]*//p'
+#+end_src
+
+** M3: Fast package alias indexes
+
+When generated package index variables are loaded:
+
+- =nelix-package-nixpkgs-overrides=
+- =nelix-package-install-aliases=
+- =nelix-package-pname-overrides=
+
+Build hash tables once and reuse them:
+
+#+begin_src emacs-lisp
+symbol -> install target
+symbol -> pname
+target string -> profile name candidate
+#+end_src
+
+** M4: Compact JSON writer
+
+Generic plist/list JSON formatting is too expensive for large reports.
+
+Add a command-specific compact JSON writer for:
+
+- string lists
+- known fast audit plist
+- known fast upgrade-plan plist
+- known fast apply/sync plist
+
+Avoid generic recursive object conversion for these shapes.
+
+** M5: Fast audit and upgrade-plan
+
+Implement =audit= and =upgrade-plan= using only fast manifest/profile
+sets.
+
+Acceptance:
+
+- =nelix --runtime nelisp --json upgrade-plan ~/.emacs.d/nelix-env.el=
+  exits 0 under 15 seconds on the current Debian machine.
+- =nelix --runtime nelisp --json audit ~/.emacs.d/nelix-env.el=
+  exits 0 under 15 seconds, with explicit =:skipped= fields for
+  diagnostics not yet covered by the fast path.
+
+** M6: Fast apply and sync
+
+Implement mutation commands using fast plans plus existing mutation
+primitives.
+
+Acceptance:
+
+- no-op =apply= exits under 20 seconds
+- no-op =sync --prune= exits under 20 seconds
+- tests prove missing and extra names are passed to install/remove
+  functions exactly once
+
+** M7: Runtime image/cache
+
+After the fast engine is correct, revisit the larger startup cost:
+
+- preload runtime sources
+- preload Nelix modules
+- preload generated package indexes
+- cache an image if NeLisp supports it
+
+This is separate from the fast engine.  Image/cache reduces fixed
+startup cost; the fast engine reduces per-command data processing.
+
+Checkpoint:
+
+- Nelix now has a safe image probe and an explicit =NELIX_NELISP_IMAGE=
+  path that can run the CLI.
+- Keep automatic image use disabled.  Replay-source image mode has been
+  measured slower than direct fast load for current Nelix commands.
+- Doc 25 owns the next performance step: command-specific native/AOT
+  manifest execution over the compact =nelix-fast-aot-input= protocol.
+
+* Output Compatibility Policy
+
+NeLisp fast output may be compact.
+
+Rules:
+
+- Fast output must include =:operation=, =:status= or =:ok=,
+  =:manifest=, =:backend=, and command-specific name lists.
+- Expensive omitted diagnostics must be explicit in =:skipped=.
+- Emacs runtime remains the compatibility/reference implementation.
+- A future =--verbose= can request row-heavy output and accept slower
+  runtime.
+
+* Test Plan
+
+ERT:
+
+- fast manifest converts symbols/strings to stable names
+- fast package alias cache resolves overrides, aliases, and pnames
+- fast profile parser reads newline names
+- fast audit reports missing/present/extra with hash-set semantics
+- fast upgrade-plan excludes manifest pins
+- fast apply installs missing names only
+- fast sync prunes extra names only
+- fast output contains skipped metadata for expensive diagnostics
+
+Integration:
+
+#+begin_src shell
+make test
+make smoke-nelix-cli-nelisp
+timeout 30 nelix --runtime nelisp --json upgrade-plan ~/.emacs.d/nelix-env.el
+timeout 30 nelix --runtime nelisp --json audit ~/.emacs.d/nelix-env.el
+#+end_src
+
+Performance regression tests should use a generated 200-package
+manifest fixture and must not invoke real Nix.
+
+* Risks
+
+** R1: Compact output breaks callers
+
+Mitigation: document compact NeLisp output and keep Emacs runtime as
+the compatibility path.  Add =--verbose= later if row compatibility is
+needed.
+
+** R2: Manifest pins diverge from state pins
+
+Fast NeLisp uses manifest pins first.  State pin drift is expensive
+today and should be a separate audit mode:
+
+#+begin_src shell
+nelix audit MANIFEST --full
+#+end_src
+
+Until then, reports must include =(:state-pins :nelisp)= in
+=:skipped=.
+
+** R3: Name matching misses packages installed under different names
+
+Mitigation:
+
+- use generated override/alias/pname hash tables
+- include profile name normalization for duplicate suffixes like
+  =company-posframe-1=
+- keep missing rows visible so mismatches are diagnosable
+
+** R4: Fast engine duplicates logic
+
+This is intentional.  The alternative is keeping the Emacs-compatible
+engine as the only implementation, which is currently not viable on
+standalone NeLisp.
+
+* Relationship To Native Store
+
+The fast manifest engine is also prerequisite for Doc 22.
+
+The native store will need the same primitive operations:
+
+- desired names
+- installed names
+- missing names
+- extra names
+- pinned names
+- compact profile generations
+
+Therefore M1-M6 should avoid Nix-specific assumptions except in the
+profile name source.  Later, =nelix-fast-profile-names= can dispatch
+to:
+
+- Nix profile names
+- native profile names
+- OS backend names
+
+* Decision
+
+Proceed with a dedicated NeLisp fast manifest engine.
+
+Do not try to make the row-heavy Emacs plist/list manifest engine the
+primary standalone NeLisp execution path.  Keep it as the reference
+implementation for Emacs and for verbose diagnostics.
