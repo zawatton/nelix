@@ -665,6 +665,12 @@ This command is read-only and generated from the runtime constants used by
 Package gates check it so downstream automation can rely on the DSL, lock, and
 transaction version boundaries without parsing Elisp source files.
 
+=docs/schema/nelix-lock-v2.schema.json= carries the same operational metadata
+under =x-nelix-summary=.  This is a schema-file extension, not a required field
+inside =MANIFEST.nelix-lock=.  Gates compare the extension's =const= values
+against =nelix --json schema lock-v2= so the documented JSON schema and the
+installed CLI cannot drift independently.
+
 For =lock-v2=, the schema summary is itself the operational contract:
 
 - =source-of-truth= is =MANIFEST.nelix-lock=.

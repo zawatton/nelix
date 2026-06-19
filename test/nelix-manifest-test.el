@@ -94,6 +94,8 @@
            (defs (alist-get "$defs" schema-json nil nil #'string=))
            (package-schema
             (alist-get "package" defs nil nil #'string=))
+           (summary-contract
+            (alist-get "x-nelix-summary" schema-json nil nil #'string=))
            (summary (nelix-schema "lock-v2")))
       (should (equal (alist-get "const"
                                 (alist-get "schema" schema-properties
@@ -118,7 +120,14 @@
       (should (equal (alist-get "required" schema-json nil nil #'string=)
                      (plist-get summary :required)))
       (should (equal (alist-get "required" package-schema nil nil #'string=)
-                     (plist-get summary :package-required))))))
+                     (plist-get summary :package-required)))
+      (dolist (key '("source-of-truth" "json-output" "commands"
+                     "compatibility" "migration" "validation" "diff"))
+        (should (equal (alist-get "const"
+                                  (alist-get key summary-contract
+                                             nil nil #'string=)
+                                  nil nil #'string=)
+                       (plist-get summary (intern (concat ":" key)))))))))
 
 (ert-deftest nelix-manifest-test-normalizes-minimal-form ()
   "nelix-manifest normalizes defaults and validates list fields."

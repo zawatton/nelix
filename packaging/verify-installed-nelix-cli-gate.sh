@@ -227,6 +227,7 @@ validate_schema_summary_contract() {
                        (schema (json-read-file (car args)))
                        (summary (json-read-file (cadr args)))
                        (schema-properties (jget "properties" schema))
+                       (summary-contract (jget "x-nelix-summary" schema))
                        (defs (jget "$defs" schema))
                        (package-schema (jget "package" defs))
                        (schema-required (jget "required" schema))
@@ -252,6 +253,11 @@ validate_schema_summary_contract() {
                   (unless (equal (sorted schema-package-required)
                                  (sorted summary-package-required))
                     (error "schema summary package-required keys differ from JSON schema"))
+                  (dolist (key (quote ("source-of-truth" "json-output" "commands"
+                                       "compatibility" "migration" "validation" "diff")))
+                    (unless (equal (jget "const" (jget key summary-contract))
+                                   (jget key summary))
+                      (error "schema summary %s differs from JSON schema" key)))
                   (princ "nelix installed CLI schema summary matches JSON schema\n"))))' \
     -- "$schema_file" "$schema_summary"
 }

@@ -89,6 +89,7 @@ path_in_release_scope() {
     test/nelix-cli-test.el|\
     test/nelix-manifest-test.el|\
     test/nelix-store-test.el|\
+    tools/nelix-lock-schema-gate.sh|\
     tools/nelix-lock-plan-apply-gate.sh|\
     tools/nelix-aot-native-cli-proof-gate.sh|\
     tools/nelix-release-scope-audit.sh|\
@@ -303,6 +304,16 @@ require_autopkgtest_gate_strength() {
     'registry index "$$data/nelix/registry" "$$generated_index"'
   require_contains Makefile \
     "grep -Fq 'native remove fixture-extra'"
+  require_contains Makefile \
+    "grep -Fq '\"x-nelix-summary\"'"
+  require_contains docs/schema/nelix-lock-v2.schema.json \
+    '"x-nelix-summary"'
+  require_contains docs/schema/nelix-lock-v2.schema.json \
+    '"legacy-v1-readable-migrate-required"'
+  require_contains test/nelix-manifest-test.el \
+    '"source-of-truth" "json-output" "commands"'
+  require_contains test/nelix-cli-test.el \
+    'source-of-truth json-output commands compatibility'
   require_contains packaging/verify-installed-nelix-cli-gate.sh \
     "registry list [--system SYSTEM]"
   require_contains packaging/verify-installed-nelix-cli-gate.sh \
@@ -976,6 +987,7 @@ audit_group "Commit B - Nelix manifest, native store, and CLI" \
   test/nelix-cli-test.el \
   test/nelix-manifest-test.el \
   test/nelix-store-test.el \
+  tools/nelix-lock-schema-gate.sh \
   tools/nelix-lock-plan-apply-gate.sh \
   tools/nelix-release-scope-audit.sh \
   tools/nelix-release-scope-stage.sh

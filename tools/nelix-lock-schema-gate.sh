@@ -179,6 +179,7 @@ expect_out future_schema_rejected '"schema-version":999'
                        (schema-all (read-json-file schema-all-json))
                        (lock (read-json-file lock-json))
                        (properties (jget \"properties\" schema))
+                       (summary-contract (jget \"x-nelix-summary\" schema))
                        (defs (jget \"\$defs\" schema))
                        (package-schema (jget \"package\" defs))
                        (required (json-list (jget \"required\" schema)))
@@ -216,6 +217,11 @@ expect_out future_schema_rejected '"schema-version":999'
                   (need (equal package-required
                                (json-list (jget \"package-required\" summary)))
                         \"summary package required keys differ from JSON schema\")
+                  (dolist (key '(\"source-of-truth\" \"json-output\" \"commands\"
+                                 \"compatibility\" \"migration\" \"validation\" \"diff\"))
+                    (need (equal (jget \"const\" (jget key summary-contract))
+                                 (json-list (jget key summary)))
+                          (format \"summary %s differs from JSON schema\" key)))
                   (dolist (command '(\"lock\" \"lock validate\"
                                      \"lock diff\" \"lock migrate\"))
                     (need (member command commands)

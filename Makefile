@@ -301,6 +301,8 @@ verify-deb-contents:
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/schema/nelix-manifest-dsl-v1.schema.json | grep -Fq '"title": "Nelix manifest DSL schema v1 summary"'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/doc/elpa-nelix/schema/nelix-lock-v2.schema.json'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/schema/nelix-lock-v2.schema.json | grep -Fq '"title": "Nelix lockfile schema v2"'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/schema/nelix-lock-v2.schema.json | grep -Fq '"x-nelix-summary"'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/schema/nelix-lock-v2.schema.json | grep -Fq '"compatibility"'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/doc/elpa-nelix/schema/nelix-transaction-v1.schema.json'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/schema/nelix-transaction-v1.schema.json | grep -Fq '"title": "Nelix apply transaction schema v1 summary"'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-extracted-nelix-debian.sh | grep -Fq 'NELIX_USER_MANIFEST_LOCKED'

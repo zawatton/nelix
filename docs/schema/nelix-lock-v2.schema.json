@@ -76,6 +76,38 @@
       }
     }
   },
+  "x-nelix-summary": {
+    "source-of-truth": {
+      "const": "MANIFEST.nelix-lock"
+    },
+    "json-output": {
+      "const": "nelix --json lock MANIFEST"
+    },
+    "commands": {
+      "const": [
+        "lock",
+        "lock validate",
+        "lock diff",
+        "lock migrate"
+      ]
+    },
+    "compatibility": {
+      "const": [
+        "legacy-v1-readable-migrate-required",
+        "legacy-v2-readable",
+        "future-version-rejected"
+      ]
+    },
+    "migration": {
+      "const": "nelix lock migrate MANIFEST [--dry-run]"
+    },
+    "validation": {
+      "const": "nelix lock validate MANIFEST"
+    },
+    "diff": {
+      "const": "nelix lock diff MANIFEST"
+    }
+  },
   "additionalProperties": true,
   "$defs": {
     "manifest-file": {

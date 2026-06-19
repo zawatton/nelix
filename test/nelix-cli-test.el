@@ -759,6 +759,7 @@
                 t))
          (parsed (json-parse-string json :object-type 'alist))
          (properties (alist-get 'properties schema-file))
+         (summary-contract (alist-get 'x-nelix-summary schema-file))
          (package-schema
           (alist-get
            'package
@@ -780,6 +781,11 @@
     (should (member "future-version-rejected"
                     (nelix-cli-test--json-array-list
                      (alist-get 'compatibility parsed))))
+    (dolist (key '(source-of-truth json-output commands compatibility
+                   migration validation diff))
+      (should (equal (alist-get 'const (alist-get key summary-contract))
+                     (nelix-cli-test--json-array-list
+                      (alist-get key parsed)))))
     (should (equal required
                    (nelix-cli-test--json-array-list
                     (alist-get 'required parsed))))
