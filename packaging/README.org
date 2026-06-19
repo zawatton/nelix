@@ -197,6 +197,7 @@ verifier after the Debian package verifier passes:
 #+begin_src shell
 make verify-user-manifest-dsl
 make verify-user-environment
+make verify-user-init-migration
 #+end_src
 
 =verify-user-manifest-dsl= is a rootless source-tree check for the real
@@ -216,9 +217,18 @@ previous lock file so the real profile is not mutated.  When combined with
 =NELIX_USER_MANIFEST_NELISP=required=, the locked dry-run must use the
 =:nelisp-aot-cache= fast lane.
 
-=verify-user-environment= also loads =~/.emacs.d/init.el= and runs
-=my-nelix-audit=, which checks the dedicated Emacs package file and Linux tool
-file together.
+=verify-user-environment= deliberately does not load =~/.emacs.d/init.el= or
+=~/.emacs.d/early-init.el=, so it stays safe inside =deb-release-gate= and
+=deb-full-gate=.  It checks the installed Debian package plus the personal
+Nelix manifest/audit path only.
+
+=verify-user-init-migration= is the explicit daily-use cutover check.  It first
+runs the personal manifest through =nelix --runtime nelisp= read-only commands
+(=validate=, =audit=, =plan=, =apply --dry-run=, =upgrade-plan=, and locked
+=apply --dry-run=), then loads =~/.emacs.d/early-init.el= and
+=~/.emacs.d/init.el= in Emacs batch and runs =my-nelix-audit=.  This target is
+not part of =deb-full-gate=; run it when verifying the real desktop Emacs
+configuration.
 
 When =autopkgtest= is available, run the Debian smoke gate too.  On a normal
 host backend, autopkgtest needs root because it writes temporary APT

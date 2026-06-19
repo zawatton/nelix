@@ -171,7 +171,34 @@ ripgrep                  -> core search/development tool
 
 This keeps the profile converged without removing currently useful tools.
 
-* 6. Debian Package Verification
+* 6. Daily Init Migration Verification
+
+The package release gates intentionally do not load the user's
+=~/.emacs.d/init.el= or =~/.emacs.d/early-init.el=.  That keeps
+=deb-release-gate= and =deb-full-gate= suitable for package verification and
+prevents root-owned or daemon-oriented user init side effects.
+
+The explicit daily-use verifier is:
+
+#+begin_src sh
+NELIX_USER_MANIFEST="$HOME/.emacs.d/nelix-package.el" \
+NELISP=/home/madblack-21/Cowork/Notes/dev/nelisp/target/nelisp \
+NELISP_ROOT=/home/madblack-21/Cowork/Notes/dev/nelisp \
+make verify-user-init-migration
+#+end_src
+
+It performs two checks in order:
+
+- =nelix --runtime nelisp= read-only manifest commands:
+  =validate=, =audit=, =plan=, =apply --dry-run=, =upgrade-plan=, and locked
+  =apply --dry-run=;
+- Emacs batch loading of =~/.emacs.d/early-init.el= and =~/.emacs.d/init.el=,
+  followed by =my-nelix-audit=.
+
+This target is the current evidence that the extracted package manifest and the
+real editor startup path agree.
+
+* 7. Debian Package Verification
 
 Installed package verification requires =elpa-nelix >= 0.1.0-4= because older
 packages did not ship =/usr/bin/nelix=.
@@ -200,7 +227,7 @@ NELISP_ROOT=/home/madblack-21/Cowork/Notes/dev/nelisp \
 packaging/verify-extracted-nelix-debian.sh ../elpa-nelix_0.1.0-4_all.deb 0.1.0-4
 #+end_src
 
-* 7. Open Edges
+* 8. Open Edges
 
 - =nelix --runtime nelisp --json validate= works for the standard manifest
   without entering the full standalone NeLisp manifest loader, and the read-only
