@@ -1307,38 +1307,8 @@ smoke-nelix-aot-native-artifact-host:
 			    echo "error: host subset native mut-str builder ID upgrade report failed"; \
 			    exit 1; \
 			  }; \
-		  $(EMACS) -Q --batch \
-		    -L "$(NELISP_REPO)/lisp" \
-		    -L "$(NELISP_REPO)/src" \
-		    --eval '(setq load-prefer-newer t)' \
-		    --eval '(require (quote nelisp-artifact))' \
-		    --eval "(nelisp-artifact-compile-file \"scripts/nelix-aot-native-cli-proof.el\" \"$$subset_cli_artifact\" nil nil nil nil nil (quote neln))"; \
-		  line_payload=$$(printf 'NELIX-AOT-MANIFEST-V1\ntarget\tmagit\tmagit\npin\tripgrep\ninstalled\tmagit\nend\n'); \
-		  subset_cli_proof=$$("$(NELISP)" native-exec-elisp-artifact "$$subset_cli_artifact" nelix-aot-native-cli-proof-code "$$line_payload"); \
-		  test "$$subset_cli_proof" = "556" || { \
-		    echo "error: standalone subset CLI proof returned $$subset_cli_proof"; \
-		    exit 1; \
-		  }; \
-		  subset_cli_output=$$("$(NELISP)" native-exec-elisp-artifact "$$subset_cli_artifact" nelix-aot-native-cli-lines-proof "$$line_payload"); \
-		  subset_cli_expected=$$(printf 'ok\ttrue\npresent\tmagit'); \
-		  test "$$subset_cli_output" = "$$subset_cli_expected" || { \
-		    echo "error: standalone subset CLI line fragment returned $$subset_cli_output"; \
-		    exit 1; \
-		  }; \
-		  id_line_payload=$$(printf 'NELIX-AOT-MANIFEST-V1\ntarget-id\t1\t1\ntarget-id\t2\t2\ntarget-id\t3\t3\ninstalled-id\t1\ninstalled-id\t2\nend\n'); \
-		  subset_cli_id_output=$$("$(NELISP)" native-exec-elisp-artifact "$$subset_cli_artifact" nelix-aot-native-cli-audit-id-lines-proof "$$id_line_payload"); \
-		  subset_cli_id_expected=$$(printf 'ok\tfalse\npresent\tmagit\npresent\tripgrep\nmissing\tfd\nbackend\tnix'); \
-		  test "$$subset_cli_id_output" = "$$subset_cli_id_expected" || { \
-		    echo "error: standalone subset CLI ID audit line report returned $$subset_cli_id_output"; \
-		    exit 1; \
-		  }; \
-		  id_upgrade_payload=$$(printf 'NELIX-AOT-MANIFEST-V1\ntarget-id\t1\t1\ntarget-id\t2\t2\ntarget-id\t3\t3\npin-id\t2\ninstalled-id\t1\ninstalled-id\t2\nend\n'); \
-		  subset_cli_id_upgrade_output=$$("$(NELISP)" native-exec-elisp-artifact "$$subset_cli_artifact" nelix-aot-native-cli-upgrade-id-lines-proof "$$id_upgrade_payload"); \
-		  subset_cli_id_upgrade_expected=$$(printf 'operation\tupgrade\nupgrade\tmagit\npinned\tripgrep\nmissing\tfd\nbackend\tnix'); \
-		  test "$$subset_cli_id_upgrade_output" = "$$subset_cli_id_upgrade_expected" || { \
-		    echo "error: standalone subset CLI ID upgrade line report returned $$subset_cli_id_upgrade_output"; \
-		    exit 1; \
-		  }
+			  EMACS="$(EMACS)" NELISP="$(NELISP)" NELISP_REPO="$(NELISP_REPO)" NELISP_CACHE_DIR="$(NELISP_CACHE_DIR)" \
+			    tools/nelix-aot-native-cli-proof-gate.sh
 	@echo "smoke-nelix-aot-native-artifact-host: .neln native artifact host + standalone subset proofs passed"
 
 $(NELIX_CLI_IMAGE): $(SRC) $(SCRIPT_SRC) $(BIN_SRC)

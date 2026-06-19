@@ -256,10 +256,7 @@ hash-verified local tar archive recipe through the same CLI path.  It also cover
 locked installed CLI path reaches the expected profile install/remove command
 sequence.  It also verifies the native store CLI plus the
 =nelix --runtime nelisp= AOT cache shell lane with isolated fake
-registry/profile/Nix/NeLisp fixtures.  The AOT cache shell lane is the default
-for supported =--runtime nelisp= manifest
-commands; use =NELIX_NELISP_AOT=0= only to debug the slower direct standalone
-path.
+registry/profile/Nix/NeLisp fixtures.  The cache shell lane is the default for supported =--runtime nelisp= manifest commands; use =NELIX_NELISP_AOT=0= only to debug the slower direct standalone path.
 With the local =null= backend,
 autopkgtest can still return status 8 after the =load= test passed because of
 host testbed status or cleanup behavior.  The wrapper accepts that case only

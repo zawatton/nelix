@@ -90,6 +90,7 @@ path_in_release_scope() {
     test/nelix-manifest-test.el|\
     test/nelix-store-test.el|\
     tools/nelix-lock-plan-apply-gate.sh|\
+    tools/nelix-aot-native-cli-proof-gate.sh|\
     tools/nelix-release-scope-audit.sh|\
     tools/nelix-release-scope-stage.sh|\
     docs/design/20-nelix-package-store-system.org|\
@@ -1040,6 +1041,7 @@ require_executable \
   packaging/verify-nelix-native-cli-gate.sh \
   packaging/verify-installed-nelix-debian.sh \
   packaging/verify-nelix-user-environment.sh \
+  tools/nelix-aot-native-cli-proof-gate.sh \
   tools/nelix-lock-plan-apply-gate.sh \
   tools/nelix-release-scope-audit.sh \
   tools/nelix-release-scope-stage.sh
