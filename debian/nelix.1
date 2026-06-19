@@ -1,0 +1,60 @@
+.TH NELIX 1 "June 2026" "Nelix 0.1.0" "User Commands"
+.SH NAME
+nelix \- command-line wrapper for Nelix package manifests
+.SH SYNOPSIS
+.B nelix
+[\fB--json\fR]
+.I COMMAND
+[\fIARGS\fR...]
+.SH DESCRIPTION
+.B nelix
+runs Nelix manifest and profile operations from the command line.
+It currently routes commands through Emacs batch mode and the installed
+Nelix Elisp libraries.
+.SH COMMANDS
+.TP
+.B apply MANIFEST
+Install packages missing from MANIFEST and apply declared pins.
+.TP
+.B audit MANIFEST
+Report manifest/profile drift without mutating state.
+.TP
+.B sync MANIFEST [--prune]
+Apply MANIFEST and optionally remove unmanaged profile entries.
+.TP
+.B prune-plan MANIFEST
+Print the read-only prune plan for MANIFEST.
+.TP
+.B lock MANIFEST
+Write the manifest lock file.
+.TP
+.B upgrade-plan [MANIFEST|NAME]
+Print a read-only upgrade plan.
+.TP
+.B outdated [MANIFEST|NAME] [--backend BACKEND]
+Print a read-only cross-backend outdated report.
+.TP
+.B upgrade [MANIFEST|NAME]
+Upgrade all packages, a single profile element, or outdated rows declared
+by MANIFEST through the selected backend.
+.TP
+.B list
+List profile entries.
+.TP
+.B rollback [GENERATION]
+Roll back the profile.
+.TP
+.B doctor
+Print a read-only environment health report.
+.SH OPTIONS
+.TP
+.B --json
+Print normalized JSON output.
+.TP
+.B --help
+Show command usage.
+.TP
+.B --version
+Show wrapper version.
+.SH AUTHOR
+Nelix is maintained by the Nelix contributors.

@@ -1,0 +1,117 @@
+#+title: Nelix Fedora packaging notes
+
+* Status
+
+This directory contains the RPM packaging contract for Fedora and
+dnf-based systems.  The current gate builds RPMs, runs =rpmlint=,
+creates a local =createrepo_c= repository, installs =nelix= and
+=emacs-nelix= from that repository with =dnf=, and verifies both
+=nelix --help= and Emacs loadability.
+
+* Package names
+
+| Package | Purpose |
+|---------+---------|
+| =emacs-nelix= | Emacs Lisp runtime files |
+| =nelix= | CLI wrapper and documentation |
+| =nelisp= | Future NeLisp runtime package |
+
+The first RPM split can ship =emacs-nelix= and =nelix= from one source
+RPM.  =nelisp= should remain separate because it is built from the
+NeLisp repository.
+
+* Build contract
+
+The spec uses the repository's existing install interface:
+
+#+begin_src shell
+make install \
+  DESTDIR="%{buildroot}" \
+  prefix=%{_prefix} \
+  bindir=%{_bindir} \
+  lispdir=%{_emacs_sitelispdir}/nelix \
+  docdir=%{_docdir}/nelix
+#+end_src
+
+The source tarball gate keeps local build output out of the RPM source:
+
+#+begin_src shell
+make fedora-source-gate
+#+end_src
+
+This creates =nelix-0.1.0.tar.gz= under =FEDORA_TOPDIR/SOURCES= and
+verifies that required runtime files are present while Debian helper
+outputs, local APT/RPM repository trees, caches, compiled Elisp, and
+logs are absent.
+
+* Local verification target
+
+On a Fedora host with =rpm-build=, =rpmlint=, =createrepo_c=,
+=emacs=, and =make= installed:
+
+#+begin_src shell
+make fedora-local-gate
+#+end_src
+
+On a non-Fedora host with =podman= or =docker=:
+
+#+begin_src shell
+make fedora-container-gate
+#+end_src
+
+The gate checks:
+
+- =rpmbuild -ba= builds =nelix=, =emacs-nelix=, and the source RPM
+- the RPM build verifies the generated source tarball before invoking
+  =rpmbuild=
+- the source tarball and RPM =%check= verify that =bin/nelix= contains
+  the default AOT cache mode and that =NELIX_LISPDIR="$PWD" bin/nelix
+  --json version= succeeds
+- =rpmlint= reports no errors
+- =createrepo_c= creates a local repository
+- =dnf= installs both RPMs from that local repository
+- installed =nelix= and =emacs-nelix= RPM versions match =FEDORA_VERSION=
+- =emacs -Q --batch -L /usr/share/emacs/site-lisp/nelix --eval "(require 'nelix)"=
+  succeeds after install
+- =nelix --help= succeeds after install
+
+* Public URL smoke
+
+Before uploading to a public HTTPS host, build and verify the static
+repository tree with the final URL:
+
+#+begin_src shell
+make fedora-publication-preflight FEDORA_PUBLIC_URL=https://packages.example.org/nelix/fedora
+#+end_src
+
+This creates =FEDORA_PUBLISH_DIR= from =FEDORA_REPO_DIR=, writes
+=nelix-fedora.repo= with the exact public base URL, rejects temporary
+GPG/private-key material, verifies =repodata/repomd.xml=, and confirms
+both =nelix= and =emacs-nelix= RPM payloads are present.  The default
+=example.invalid= URL is intentionally refused.
+
+After publishing the repository metadata and RPMs to HTTPS storage,
+verify the final dnf URL on a Fedora host or disposable Fedora
+container:
+
+#+begin_src shell
+sudo make fedora-public-url-smoke FEDORA_PUBLIC_URL=https://packages.example.org/nelix/fedora
+#+end_src
+
+By default this mirrors the local smoke policy and disables package and
+repository GPG checks.  For signed public repositories, set
+=NELIX_FEDORA_GPGCHECK=1=, =NELIX_FEDORA_REPO_GPGCHECK=1=, and
+=NELIX_FEDORA_GPGKEY_URL=https://packages.example.org/nelix/RPM-GPG-KEY-nelix=
+as appropriate.
+
+* Remaining Fedora work
+
+- Run the same gate on a persistent Fedora host, not only in an
+  ephemeral container.
+- Add RPM signing and signed repository metadata if required by the
+  public dnf repository.
+- Run =make fedora-publication-preflight= with the final hosted URL
+  before uploading the static repository tree.
+- Run the public URL install smoke against the final hosted URL.
+- Decide whether the first public release should keep the current
+  =nelix= + =emacs-nelix= split.

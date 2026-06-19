@@ -1,0 +1,33 @@
+Source: nelix
+Section: editors
+Priority: optional
+Maintainer: zawatton <zawatton@example.invalid>
+Build-Depends:
+ debhelper-compat (= 13),
+ dh-sequence-elpa
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+Homepage: https://github.com/zawatton/nelix
+Vcs-Browser: https://github.com/zawatton/nelix
+Vcs-Git: https://github.com/zawatton/nelix.git
+
+Package: elpa-nelix
+Architecture: all
+Depends:
+ ${elpa:Depends},
+ ${misc:Depends}
+Recommends:
+ ca-certificates,
+ curl,
+ git,
+ nix-bin
+Suggests:
+ nelisp
+Description: Emacs Lisp package manager backed by the Nix store
+ Nelix is a package manager configured in Emacs Lisp and backed by the
+ Nix store.  It can install Linux user-space tools from nixpkgs and
+ Emacs Lisp packages described by Nelix package definitions.
+ .
+ This package installs the Emacs Lisp interface.  It keeps compatibility
+ aliases for the previous anvil-pkg name while exposing the new Nelix
+ entry points such as nelix-install, nelix-search, and nelix-doctor.

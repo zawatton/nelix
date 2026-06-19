@@ -1,0 +1,45 @@
+Nelix for Debian
+================
+
+This package is installed as an ELPA package through dh-elpa.  Normal
+Emacs startup loads Debian's site-start files and makes the package
+available with:
+
+  (require 'nelix)
+  (require 'nelix-dsl)
+
+For a command-line smoke test, do not use "emacs -Q" unless you add the
+ELPA source directory yourself.  The -Q option intentionally skips the
+Debian site-lisp setup.
+
+Normal Debian/ELPA smoke test:
+
+  emacs --batch \
+    --eval "(require 'nelix)" \
+    --eval "(require 'nelix-dsl)" \
+    --eval "(message \"nelix ok\")"
+
+Profile/default smoke test:
+
+  emacs --batch \
+    --eval "(require 'nelix)" \
+    --eval "(require 'anvil-pkg)" \
+    --eval "(princ anvil-pkg-profile-dir)"
+
+The path should end with:
+
+  .local/state/nelix/profile
+
+Minimal -Q smoke test:
+
+  emacs -Q --batch \
+    -L /usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0 \
+    --eval "(require 'nelix)" \
+    --eval "(require 'nelix-dsl)" \
+    --eval "(message \"nelix ok\")"
+
+Nelix shells out to Nix when installing packages.  Debian's nix-bin
+package is only recommended, not a hard dependency, because many users
+install Nix through the official Nix installer instead.  Run
+"M-x nelix-doctor" or evaluate "(nelix-doctor)" to check whether Emacs
+can see the runtime prerequisites.

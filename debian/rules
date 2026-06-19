@@ -1,0 +1,24 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_clean:
+	$(MAKE) clean
+
+override_dh_auto_build:
+	:
+
+override_dh_auto_install:
+	:
+
+override_dh_auto_test:
+ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
+	make test
+endif
+
+override_dh_elpa_test:
+	:
+
+override_dh_compress:
+	dh_compress -X.sh

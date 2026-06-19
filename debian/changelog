@@ -1,0 +1,42 @@
+nelix (0.1.0-4) unstable; urgency=medium
+
+  * Add Nelix manifest transaction rollback using Nix profile generations.
+  * Add explicit remove safety flags for apply and sync.
+  * Add nelix-environment DSL v1 and lock schema metadata.
+  * Strengthen installed CLI, Debian release, and autopkgtest gates.
+  * Remove the superficial autopkgtest restriction after adding CLI
+    lock/plan/apply dry-run coverage.
+  * Avoid user init.el loading in the personal Nelix environment verifier.
+
+ -- zawatton <zawatton@example.invalid>  Fri, 19 Jun 2026 08:50:00 +0900
+
+nelix (0.1.0-3) unstable; urgency=medium
+
+  * Install the Nelix CLI and NeLisp/AOT runtime helper files in the Debian
+    package.
+  * Make the Nelix CLI tolerate dh-elpa's flat ELPA source layout.
+  * Verify extracted Debian packages by running the packaged CLI against the
+    installed ELPA source layout.
+
+ -- zawatton <zawatton@example.invalid>  Thu, 18 Jun 2026 05:55:00 +0900
+
+nelix (0.1.0-2) unstable; urgency=medium
+
+  * Update the default Nelix profile path to ~/.local/state/nelix/profile.
+  * Strengthen the Debian load autopkgtest smoke checks.
+  * Document local Debian package installation verification.
+  * Add a combined Nelix user environment verifier.
+  * Add Makefile targets for Debian package build, content verification,
+    autopkgtest, and user-environment verification.
+  * Add a local Debian package gate target.
+  * Add local Debian release/full gate targets with autopkgtest separated
+    for root-capable testbeds.
+  * Make the autopkgtest target fail early when not run as root.
+
+ -- zawatton <zawatton@example.invalid>  Wed, 17 Jun 2026 04:12:44 +0900
+
+nelix (0.1.0-1) unstable; urgency=medium
+
+  * Initial Debian packaging for elpa-nelix.
+
+ -- zawatton <zawatton@example.invalid>  Tue, 16 Jun 2026 21:46:01 +0900

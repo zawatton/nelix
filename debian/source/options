@@ -1,0 +1,1 @@
+extend-diff-ignore = "(^|/)(\.cache|build|dist|nelix-apt-public|nelix-apt-repo|nelix-apt-repo-gnupg-test|nelix-rpm-repo|nelix-rpmbuild|result)(/|$)|(^|/)result-[^/]+(/|$)|\.elc$|\.log$"

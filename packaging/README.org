@@ -1,0 +1,449 @@
+#+title: Nelix packaging notes
+
+* Package split
+
+Nelix should be packaged as user-space environment tooling.  Distro
+packages bootstrap the runtime; Nelix then manages Emacs packages and
+Linux user tools through its isolated Nix profile.
+
+Recommended package names:
+
+| Distribution family | Runtime package | Emacs package | Optional CLI package |
+|---------------------+-----------------+---------------+----------------------|
+| Debian / Ubuntu     | =nelisp=        | =elpa-nelix=  | =nelix=              |
+| Fedora / RPM        | =nelisp=        | =emacs-nelix= | =nelix=              |
+
+The Emacs package should install only the runtime Elisp sources from
+this repository.  Test files, smoke scripts, and examples are useful
+for source packages but are not needed in the runtime site-lisp
+directory.
+
+* Make install contract
+
+The repository provides a DESTDIR-aware install target:
+
+#+begin_src shell
+make install \
+  DESTDIR="$pkgdir" \
+  prefix=/usr \
+  lispdir=/usr/share/emacs/site-lisp/nelix \
+  docdir=/usr/share/doc/nelix
+#+end_src
+
+Installed Elisp files:
+
+- =nelix.el=
+- =nelix-dsl.el=
+- =nelix-emacs.el=
+- =nelix-import.el=
+- the compatibility implementation files currently named
+  =anvil-pkg*.el=
+
+The =anvil-pkg*.el= files remain part of the runtime package while
+the public name migrates to Nelix.  New user configuration should load
+=nelix= and =nelix-dsl=.
+
+#+begin_src elisp
+(require 'nelix)
+(require 'nelix-dsl)
+#+end_src
+
+* Dependency policy
+
+For the Emacs package:
+
+- hard dependency: Emacs 29 or newer
+- recommended dependency: Nix 2.18 or newer with flakes enabled
+- useful runtime tools: =git=, =curl=, =ca-certificates=
+- optional integration: =nelisp=
+
+Avoid depending on a distro-packaged =nix= when that makes the package
+uninstallable on distributions where Nix is installed through the
+official Nix installer.  In that case, keep Nix as a recommendation
+and let =nelix-doctor= report missing runtime prerequisites.
+
+* Load path
+
+Generic =make install= places files under =lispdir=.  Distribution
+packages should use their native Emacs integration to add that
+directory to =load-path=:
+
+- Debian: prefer =dh-elpa= / =emacsen-common= conventions for
+  =elpa-nelix=.
+- Fedora: use the distro Emacs packaging macros or install a
+  site-start snippet if required by policy.
+
+The installed package must make this work without user-specific
+=load-path= edits:
+
+#+begin_src elisp
+(require 'nelix)
+(require 'nelix-dsl)
+#+end_src
+
+* Debian local package verification
+
+After building a local Debian package, install it as a normal package
+upgrade.  Do not rely on reinstalling a rebuilt =.deb= with the same
+version; bump the Debian revision when the package payload changes.
+
+#+begin_src shell
+make deb-local-gate
+sudo apt install /home/madblack-21/Cowork/Notes/dev/elpa-nelix_0.1.0-4_all.deb
+#+end_src
+
+For source-package publication, build and lint the full source upload:
+
+#+begin_src shell
+make deb-source-gate
+#+end_src
+
+This produces =../nelix_0.1.0.orig.tar.gz=,
+=../nelix_0.1.0-4.dsc=, =../nelix_0.1.0-4.debian.tar.xz=, and
+=../nelix_0.1.0-4_source.changes=, then runs =lintian= over the source
+changes.  =debian/source/options= ignores local generated smoke caches and
+repository outputs, so =.cache/= or local publication trees do not appear as
+unexpected upstream changes.
+
+For a rootless local publication check before any public URL exists:
+
+#+begin_src shell
+make publication-local-gate
+#+end_src
+
+This runs the signed/static/local HTTP APT smoke and the Fedora source
+tarball gate.  Fedora RPM build/install smoke remains under
+=make fedora-container-gate= or a Fedora host with rpm tooling installed.
+
+Before uploading both repository trees, verify the final public URLs, then run
+the combined publication preflight:
+
+#+begin_src shell
+make publication-url-check \
+  APT_PUBLIC_URL=https://packages.example.org/nelix \
+  FEDORA_PUBLIC_URL=https://packages.example.org/nelix/fedora
+#+end_src
+
+#+begin_src shell
+make publication-preflight \
+  APT_PUBLIC_URL=https://packages.example.org/nelix \
+  FEDORA_PUBLIC_URL=https://packages.example.org/nelix/fedora
+#+end_src
+
+This is the pre-upload umbrella for =make publication-url-check=,
+=make apt-publication-preflight=, and =make fedora-publication-preflight=.
+It intentionally refuses the default =example.invalid= URLs before doing
+repository build/sign/publish work.  The APT tree check also compares the
+published =elpa-nelix= metadata and payload against =DEB_VERSION=, and the
+Fedora tree check compares the RPM payloads against =FEDORA_VERSION=.
+
+After upload, run the combined public URL smoke:
+
+#+begin_src shell
+sudo make publication-public-smoke \
+  APT_PUBLIC_URL=https://packages.example.org/nelix \
+  FEDORA_PUBLIC_URL=https://packages.example.org/nelix/fedora
+#+end_src
+
+The APT smoke is rootless and isolated.  The Fedora smoke installs RPMs
+with =dnf= and therefore must run as root on Fedora or inside a
+disposable Fedora container.
+
+Before uploading a Fedora/dnf repository tree, verify the static tree
+against the final public URL:
+
+#+begin_src shell
+make fedora-publication-preflight FEDORA_PUBLIC_URL=https://packages.example.org/nelix/fedora
+#+end_src
+
+This refuses the default =example.invalid= URL, verifies
+=nelix-fedora.repo=, rejects temporary GPG/private-key material, and
+checks that both =nelix= and =emacs-nelix= RPM payloads are present at
+=FEDORA_VERSION=.
+
+This creates =../nelix_0.1.0.orig.tar.gz= from the current upstream
+source tree, then runs =dpkg-buildpackage -S -sa -us -uc=.  The =-sa=
+flag is intentional for the first public upload because the generated
+=.changes= must include the orig tarball.
+
+Then verify the installed package, not the source tree:
+
+#+begin_src shell
+make verify-installed-debian
+#+end_src
+
+The verifier checks:
+
+- =elpa-nelix= is installed at version =0.1.0-4= or newer
+- normal Debian Emacs startup can =(require 'nelix)=
+- =emacs -Q= can load from the installed ELPA source directory
+- =anvil-pkg-profile-dir= resolves to =~/.local/state/nelix/profile=
+- the Nix profile install subcommand is =install=
+
+Before installing, =make deb-local-gate= also runs
+=packaging/verify-extracted-nelix-debian.sh= against the built =.deb=.
+That rootless check extracts the package, loads Nelix from the flattened
+ELPA source directory, and runs the packaged =/usr/bin/nelix= with
+=NELIX_LISPDIR= pointed at the extracted payload.
+
+For this machine's full Nelix cutover, run the combined environment
+verifier after the Debian package verifier passes:
+
+#+begin_src shell
+make verify-user-manifest-dsl
+make verify-user-environment
+#+end_src
+
+=verify-user-manifest-dsl= is a rootless source-tree check for the real
+=~/.emacs.d/nelix-package.el= DSL v1 manifest.  It requires exactly one
+top-level =nelix-environment= form, rejects returning to top-level
+=nelix-manifest=, and validates the manifest through normal Nelix.  In the
+default auto mode it also tries =nelix --runtime nelisp= when NeLisp is
+available, but treats that path as advisory unless
+=NELIX_USER_MANIFEST_NELISP=required= is set.  Required mode now checks both
+the validate fast lane and the read-only AOT cache lane for =audit=, =plan=,
+and =upgrade-plan=, verifying that they report =:nelisp-aot-cache= instead of
+falling back to the slow full standalone manifest path.
+
+=verify-user-environment= also loads =~/.emacs.d/init.el= and runs
+=my-nelix-audit=, which checks the dedicated Emacs package file and Linux tool
+file together.
+
+When =autopkgtest= is available, run the Debian smoke gate too.  On a normal
+host backend, autopkgtest needs root because it writes temporary APT
+configuration under =/etc/apt=; the Makefile target invokes =sudo= only for
+the autopkgtest command itself so Debian build artifacts stay owned by the
+normal user:
+
+#+begin_src shell
+make autopkgtest-debian
+#+end_src
+
+The autopkgtest is not marked =superficial=.  It checks the installed Elisp
+load path, packaged CLI presence, CLI =--json version= output, and the
+installed CLI gate.  That gate covers =validate=, =lock=, =plan=, and
+=apply --dry-run= with a fake Nix executable, then verifies the native store
+CLI and the =nelix --runtime nelisp= AOT cache shell lane with isolated fake
+registry/profile/Nix/NeLisp fixtures.  The AOT cache shell lane is the
+default for supported =--runtime nelisp= manifest commands; use
+=NELIX_NELISP_AOT=0= only to debug the slower direct standalone path.
+With the local =null= backend,
+autopkgtest can still return status 8 after the =load= test passed because of
+host testbed status or cleanup behavior.  The wrapper accepts that case only
+when the =load= summary is =PASS= and no =load FAIL= summary is present.
+
+Do not run the whole package build with =sudo make=.  If that happens,
+=debian/.debhelper= and =debian/elpa-nelix= can become root-owned and later
+non-root builds will fail during =dh_clean=.
+
+Recovery from an accidental =sudo make= package build:
+
+#+begin_src shell
+make fix-debian-ownership
+make deb-full-gate
+#+end_src
+
+Builds leave normal Debian helper metadata under =debian/= and package
+repository outputs beside the source tree.  Use the explicit cleanup
+targets when preparing a source handoff:
+
+#+begin_src shell
+make deb-clean   # remove debian/.debhelper, debian/elpa-nelix, substvars, etc.
+make distclean   # also remove local caches and generated APT/RPM repo trees
+#+end_src
+
+The Debian rules file deliberately maps =dh_auto_clean= to =make clean=
+instead of =make distclean=, so package builds never delete adjacent APT
+or RPM publication directories as a side effect.
+
+The complete local release gate builds the =.deb=, installs that freshly built
+package with =apt install --reinstall=, then runs the installed/user
+verification gates:
+
+#+begin_src shell
+make deb-release-gate
+#+end_src
+
+This target may prompt for =sudo= when it reaches the install step.
+
+For a root-capable testbed, the full gate including autopkgtest is:
+
+#+begin_src shell
+make deb-full-gate
+#+end_src
+
+* Debian local APT repository
+
+Nelix can generate a local APT repository from the built
+=elpa-nelix= package.  This is the handoff point between local =.deb=
+verification and publishing the package through a real HTTP repository.
+
+#+begin_src shell
+make apt-repo-gate
+#+end_src
+
+This target runs:
+
+- =make deb-local-gate=
+- =packaging/apt/make-repo.sh ../elpa-nelix_0.1.0-4_all.deb ../nelix-apt-repo unstable=
+- =packaging/apt/verify-repo.sh ../nelix-apt-repo unstable=
+
+The generated repository has this shape:
+
+#+begin_example
+nelix-apt-repo/
+  pool/main/n/nelix/elpa-nelix_0.1.0-4_all.deb
+  dists/unstable/Release
+  dists/unstable/main/binary-all/Packages
+  dists/unstable/main/binary-all/Packages.gz
+  sources.list
+#+end_example
+
+For a signed local repository gate:
+
+#+begin_src shell
+make apt-signed-repo-gate
+#+end_src
+
+This generates the repository, creates a temporary signing key, writes
+=InRelease= and =Release.gpg=, exports
+=nelix-archive-keyring.gpg=, writes =sources.list.signed=, and verifies
+the signatures with =gpgv=.
+
+To sign with a persistent maintainer key instead of the temporary gate
+key:
+
+#+begin_src shell
+NELIX_APT_GPG_KEYID=YOURKEYID make apt-sign-repo
+make verify-signed-apt-repo
+#+end_src
+
+For a local trusted install test:
+
+#+begin_src shell
+sudo cp ../nelix-apt-repo/sources.list /etc/apt/sources.list.d/nelix-local.list
+sudo apt update
+sudo apt install elpa-nelix
+#+end_src
+
+For a signed local install test, install from =sources.list.signed=
+instead and keep the generated =nelix-archive-keyring.gpg= at the path
+recorded in that file.
+
+For a sanitized static publication tree:
+
+#+begin_src shell
+make apt-publish-static
+#+end_src
+
+This writes =../nelix-apt-public= by copying only =dists/=, =pool/=,
+=nelix-archive-keyring.gpg=, and source-list examples.  It refuses to
+publish a tree that contains temporary GPG homes or private key
+material.
+
+For a rootless local HTTP smoke:
+
+#+begin_src shell
+make apt-http-gate
+#+end_src
+
+This signs the repository, writes the static publication tree, serves
+it from =127.0.0.1=, runs =apt-get update= with isolated temporary APT
+state, downloads =elpa-nelix= through HTTP, and verifies the downloaded
+=.deb= metadata.
+
+For public hosting, copy =../nelix-apt-public= to static HTTPS
+storage, publish the archive key through a documented channel, and
+replace the example URL in =sources.list.https= with the public HTTPS
+repository URL before asking users to add the repository.
+
+Before uploading the static tree, run the public preflight with the
+real URL.  Unlike the local smoke, this refuses the default
+=example.invalid= URL:
+
+#+begin_src shell
+make apt-publication-preflight APT_PUBLIC_URL=https://packages.example.org/nelix
+#+end_src
+
+This verifies the signed repository files, confirms that
+=sources.list.https= exactly matches the URL/suite/component, rejects
+GPG test or secret material, checks =Packages.gz= against =Packages=,
+confirms the referenced =elpa-nelix= payload exists, and verifies that both
+the =Packages= row and the downloaded payload match =DEB_VERSION=.
+
+After publication, verify the final URL without touching the host APT
+state:
+
+#+begin_src shell
+make apt-public-url-smoke APT_PUBLIC_URL=https://packages.example.org/nelix
+#+end_src
+
+This downloads =nelix-archive-keyring.gpg= from the repository root,
+runs =apt-get update= with isolated temporary APT state, downloads
+=elpa-nelix=, and verifies the downloaded =.deb= metadata and =DEB_VERSION=.
+If the archive key is distributed outside the repository root, pass
+=NELIX_APT_PUBLIC_KEYRING=/path/to/nelix-archive-keyring.gpg=.
+
+* Fedora / dnf packaging
+
+The Fedora packaging workflow lives under =packaging/fedora/=.  It
+contains:
+
+- =nelix.spec= :: source RPM contract for =nelix= and =emacs-nelix=.
+- =make-source.sh= :: create =nelix-0.1.0.tar.gz= from the current
+  checkout.
+- =build-rpm.sh= :: build binary and source RPMs with =rpmbuild -ba=.
+- =rpmlint.sh= :: lint the spec and generated RPMs.
+- =make-repo.sh= :: create a local dnf repository with =createrepo_c=.
+- =dnf-smoke.sh= :: install =nelix= and =emacs-nelix= from that local
+  repository, verify installed RPM versions against =FEDORA_VERSION=,
+  and verify =nelix --help= plus Emacs loadability.
+- =container-gate.sh= :: run the full Fedora gate in =fedora:latest=
+  through =podman= or =docker=.
+
+Before requiring RPM tools, verify the source tarball contract:
+
+#+begin_src shell
+make fedora-source-gate
+#+end_src
+
+On Fedora:
+
+#+begin_src shell
+make fedora-local-gate
+#+end_src
+
+On Debian or another non-Fedora host with a container engine:
+
+#+begin_src shell
+make fedora-container-gate
+#+end_src
+
+The container gate validates RPM build, =rpmlint=, local
+=createrepo_c= metadata, =dnf install= from the local repository,
+installed RPM versions against =FEDORA_VERSION=, =nelix --help=, and
+=(require 'nelix)= / =(require 'nelix-dsl)= after installation.
+
+After publishing the repository metadata and RPMs to HTTPS storage,
+verify the final dnf URL on a Fedora host or disposable Fedora
+container:
+
+#+begin_src shell
+sudo make fedora-public-url-smoke FEDORA_PUBLIC_URL=https://packages.example.org/nelix/fedora
+#+end_src
+
+By default this mirrors the local smoke policy and disables package and
+repository GPG checks.  For signed public repositories, set
+=NELIX_FEDORA_GPGCHECK=1=, =NELIX_FEDORA_REPO_GPGCHECK=1= as
+appropriate, and optionally
+=NELIX_FEDORA_GPGKEY_URL=https://packages.example.org/nelix/RPM-GPG-KEY-nelix=.
+Remaining Fedora publication work is public repository hosting,
+signing policy, and a successful run of this public URL smoke against
+the final hosted URL.
+
+* Current compatibility stance
+
+The short =pkg-*= API remains the stable DSL surface, and the old
+=anvil-pkg-*= aliases remain available.  Public documentation should
+lead with =nelix-*=: =nelix-install=, =nelix-search=, =nelix-list=,
+and =nelix-doctor=.

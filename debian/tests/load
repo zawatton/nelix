@@ -1,0 +1,52 @@
+#!/bin/sh
+set -eu
+
+elpa_src_dir=/usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0
+
+for file in \
+  /usr/bin/nelix \
+  "$elpa_src_dir/nelix-cli.el" \
+  "$elpa_src_dir/nelix-aot-manifest-engine.el" \
+  "$elpa_src_dir/anvil-pkg-nelisp-smoke.el" \
+  "$elpa_src_dir/anvil-pkg-nelisp-ert-shim.el"
+do
+  if [ ! -f "$file" ]; then
+    echo "expected Debian payload file is missing: $file" >&2
+    exit 1
+  fi
+done
+
+emacs --batch \
+  --eval "(require 'nelix)" \
+  --eval "(require 'nelix-dsl)" \
+  --eval "(require 'anvil-pkg)" \
+  --eval "(unless (fboundp 'nelix-install) (error \"nelix-install missing\"))" \
+  --eval "(unless (macrop (symbol-function 'nelix-define)) (error \"nelix-define missing\"))" \
+  --eval "(unless (string= (expand-file-name anvil-pkg-profile-dir) (expand-file-name \"~/.local/state/nelix/profile\")) (error \"unexpected profile: %S\" anvil-pkg-profile-dir))" \
+  --eval "(unless (string= (anvil-pkg--nix-install-subcommand) \"install\") (error \"unexpected nix profile subcommand\"))" \
+  --eval "(message \"nelix Debian load smoke ok\")"
+
+emacs -Q --batch \
+  -L "$elpa_src_dir" \
+  --eval "(require 'nelix)" \
+  --eval "(require 'nelix-dsl)" \
+  --eval "(require 'anvil-pkg)" \
+  --eval "(unless (fboundp 'nelix-install) (error \"nelix-install missing\"))" \
+  --eval "(unless (macrop (symbol-function 'nelix-define)) (error \"nelix-define missing\"))" \
+  --eval "(unless (string= (expand-file-name anvil-pkg-profile-dir) (expand-file-name \"~/.local/state/nelix/profile\")) (error \"unexpected profile: %S\" anvil-pkg-profile-dir))" \
+  --eval "(unless (string= (anvil-pkg--nix-install-subcommand) \"install\") (error \"unexpected nix profile subcommand\"))" \
+  --eval "(message \"nelix Debian -Q load smoke ok\")"
+
+/usr/bin/nelix --help >/dev/null
+
+cli_version="$(/usr/bin/nelix --json version)"
+printf '%s\n' "$cli_version" | grep -q '"status":"ok"' || {
+  echo "nelix CLI version did not report ok status: $cli_version" >&2
+  exit 1
+}
+printf '%s\n' "$cli_version" | grep -q '"version":"0.1.0"' || {
+  echo "nelix CLI version did not report expected upstream version: $cli_version" >&2
+  exit 1
+}
+
+sh /usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh
