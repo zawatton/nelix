@@ -175,8 +175,9 @@ Public Elisp API uses the short =pkg-= prefix:
 - =nelix-manifest.el= desired-state workflow:
   =nelix-manifest-load=, =nelix-validate=, =nelix-apply=, =nelix-audit=,
   =nelix-prune-plan=, =nelix-sync=, =nelix-lock-read=,
-  =nelix-lock-write=, =nelix-lock-check=, and manifest-aware
-  =nelix-upgrade-plan=.  This is the first Nix/Guix-like manifest
+  =nelix-lock-write=, =nelix-lock-validate=, =nelix-lock-diff=,
+  =nelix-lock-check=, and manifest-aware =nelix-upgrade-plan=.  This
+  is the first Nix/Guix-like manifest
   layer for managing Emacs and Linux package lists from one file.
   Lock files are version 2 and record combined manifest/import digests,
   per-file digest rows, backend/system metadata, and resolved package
@@ -215,8 +216,9 @@ Public Elisp API uses the short =pkg-= prefix:
   and up-to-date entries without mutating profiles.
 - =bin/nelix= and =scripts/nelix-cli.el= provide the initial command
   line wrapper for manifest operations: =validate=, =apply=, =audit=, =sync
-  [--prune]=, =prune-plan=, =lock=, =upgrade-plan=, =outdated=,
-  =upgrade=, =list=, =rollback=, and =doctor=.  =--json= emits
+  [--prune]=, =prune-plan=, =lock=, =lock validate=, =lock diff=,
+  =upgrade-plan=, =outdated=, =upgrade=, =list=, =rollback=, and =doctor=.
+  =--json= emits
   normalized JSON for agent use.  The wrapper supports Emacs batch mode
   and standalone NeLisp direct mode via =--runtime nelisp= or
   =NELIX_RUNTIME=nelisp=.  =validate= is read-only and avoids profile

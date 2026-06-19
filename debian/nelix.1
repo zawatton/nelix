@@ -28,6 +28,12 @@ Print the read-only prune plan for MANIFEST.
 .B lock MANIFEST
 Write the manifest lock file.
 .TP
+.B lock validate MANIFEST
+Validate the manifest lockfile schema without mutating state.
+.TP
+.B lock diff MANIFEST
+Report read-only manifest/import drift against the lockfile.
+.TP
 .B upgrade-plan [MANIFEST|NAME]
 Print a read-only upgrade plan.
 .TP

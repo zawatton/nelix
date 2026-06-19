@@ -18,7 +18,7 @@
   "Version string reported by the Nelix CLI wrapper.")
 
 (defconst nelix-cli--mutating-commands
-  '("apply" "sync" "lock" "upgrade" "rollback")
+  '("apply" "sync" "upgrade" "rollback")
   "Commands that may mutate profile or lock state.")
 
 (defconst nelix-cli--usage
@@ -28,6 +28,8 @@
 Commands:
   validate MANIFEST
   lock MANIFEST
+  lock validate MANIFEST
+  lock diff MANIFEST
   lock-check MANIFEST
   plan MANIFEST [--dry-run]
   apply MANIFEST [--dry-run] [--locked] [--allow-remove]
@@ -148,6 +150,13 @@ Commands:
       (append result (list :profile-root (nelix-cli--profile-path)))
     result))
 
+(defun nelix-cli--add-profile-path (result)
+  "Ensure RESULT contains a profile path."
+  (if (and (listp result)
+           (not (nelix-cli--plist-has-key-p result :profile-root)))
+      (append result (list :profile-root (nelix-cli--profile-path)))
+    result))
+
 (defun nelix-cli--dispatch-apply (args)
   "Dispatch `nelix apply' with ARGS."
   (let ((manifest nil)
@@ -262,6 +271,29 @@ read-only and already returns the dry-run convergence report."
     (if (anvil-pkg-compat--standalone-nelisp-p)
         (nelix-lock-check--nelisp manifest)
       (nelix-lock-check manifest))))
+
+(defun nelix-cli--dispatch-lock (args)
+  "Dispatch `nelix lock' subcommands with ARGS."
+  (let ((subcommand (car args))
+        (rest (cdr args)))
+    (cond
+     ((equal subcommand "validate")
+      (let ((manifest (nelix-cli--arg-or-error "lock validate" rest)))
+        (when (cdr rest)
+          (signal 'anvil-pkg-error
+                  (list (format "nelix lock validate: unexpected argument %S"
+                                (cadr rest)))))
+        (nelix-lock-validate manifest)))
+     ((equal subcommand "diff")
+      (let ((manifest (nelix-cli--arg-or-error "lock diff" rest)))
+        (when (cdr rest)
+          (signal 'anvil-pkg-error
+                  (list (format "nelix lock diff: unexpected argument %S"
+                                (cadr rest)))))
+        (nelix-lock-diff manifest)))
+     (t
+      (nelix-cli--add-profile-path
+       (nelix-lock-write (nelix-cli--arg-or-error "lock" args)))))))
 
 (defun nelix-cli--dispatch-outdated (args)
   "Dispatch `nelix outdated' with ARGS."
@@ -717,7 +749,7 @@ ALLOWED may contain `profile', `system', `generation', and `dry-run'."
             (nelix-fast-aot-target-cache-write
              (nelix-cli--arg-or-error command args)))
            ((equal command "lock")
-            (nelix-lock-write (nelix-cli--arg-or-error command args)))
+            (nelix-cli--dispatch-lock args))
            ((equal command "lock-check")
             (nelix-cli--dispatch-lock-check args))
            ((equal command "upgrade-plan")

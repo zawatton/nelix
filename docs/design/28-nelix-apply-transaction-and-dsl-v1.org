@@ -101,6 +101,10 @@ It runs =/usr/bin/nelix= with a fake =nix= executable and verifies:
 
 - =validate MANIFEST=;
 - =lock MANIFEST= creates =MANIFEST.nelix-lock=;
+- =lock validate MANIFEST= validates schema/version/format metadata without
+  mutating profile or lock state;
+- =lock diff MANIFEST= reports manifest/import drift against the lockfile
+  without mutating profile or lock state;
 - =plan MANIFEST= reports install/remove rows;
 - =apply MANIFEST --dry-run= reports transaction metadata without mutating.
 - =apply MANIFEST --locked --allow-remove-count 1= enforces the lock and

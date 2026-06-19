@@ -245,6 +245,30 @@
                        :lock "m.el.nelix-lock"
                        :profile-root "/tmp/nelix-profile"))))))
 
+(ert-deftest nelix-cli-test-dispatch-lock-validate-is-read-only-api ()
+  "lock validate does not inherit lockfile write mutation metadata."
+  (let (called)
+    (cl-letf (((symbol-function 'nelix-lock-validate)
+               (lambda (manifest)
+                 (setq called manifest)
+                 (list :ok t :manifest manifest))))
+      (should (equal (nelix-cli-dispatch
+                      '(:command "lock" :args ("validate" "m.el")))
+                     '(:ok t :manifest "m.el")))
+      (should (equal called "m.el")))))
+
+(ert-deftest nelix-cli-test-dispatch-lock-diff-is-read-only-api ()
+  "lock diff exposes lock drift without profile mutation metadata."
+  (let (called)
+    (cl-letf (((symbol-function 'nelix-lock-diff)
+               (lambda (manifest)
+                 (setq called manifest)
+                 (list :ok nil :status 'drift :manifest manifest))))
+      (should (equal (nelix-cli-dispatch
+                      '(:command "lock" :args ("diff" "m.el")))
+                     '(:ok nil :status drift :manifest "m.el")))
+      (should (equal called "m.el")))))
+
 (ert-deftest nelix-cli-test-dispatch-lock-check-is-read-only-api ()
   "lock-check exposes the public lock checker without profile mutation metadata."
   (let (called)

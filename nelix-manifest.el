@@ -2325,6 +2325,86 @@ verified before locked apply may mutate a profile."
           :expected-files (plist-get lock :manifest-files)
           :actual-files actual-files)))
 
+;;;###autoload
+(defun nelix-lock-validate (manifest-file)
+  "Validate the lockfile associated with MANIFEST-FILE without drift checks."
+  (let* ((lock (nelix-lock-read manifest-file))
+         (schema-check (nelix-lock-schema-check lock))
+         (format (plist-get lock :format))
+         (format-ok (or (null format)
+                        (eq format 'sexp)
+                        (equal format "sexp"))))
+    (list :ok (and (plist-get schema-check :ok) format-ok t)
+          :manifest (expand-file-name manifest-file)
+          :lock (nelix-manifest-lock-file-name manifest-file)
+          :schema-check schema-check
+          :schema (plist-get schema-check :schema)
+          :schema-version (plist-get schema-check :schema-version)
+          :version (plist-get schema-check :version)
+          :format (or format 'sexp)
+          :format-ok format-ok)))
+
+(defun nelix-lock--file-row-path (row)
+  "Return ROW path normalized for comparisons."
+  (expand-file-name (plist-get row :path)))
+
+(defun nelix-lock--file-row-by-path (rows path)
+  "Return file row in ROWS matching PATH."
+  (let ((normalized (expand-file-name path))
+        found)
+    (while (and rows (null found))
+      (let ((row (car rows)))
+        (when (equal normalized (nelix-lock--file-row-path row))
+          (setq found row)))
+      (setq rows (cdr rows)))
+    found))
+
+(defun nelix-lock--file-diff (expected actual)
+  "Return path-level differences between EXPECTED and ACTUAL file rows."
+  (let (added removed changed unchanged)
+    (dolist (row actual)
+      (let* ((path (plist-get row :path))
+             (expected-row (nelix-lock--file-row-by-path expected path))
+             (actual-digest (plist-get row :digest))
+             (expected-digest (and expected-row
+                                   (plist-get expected-row :digest))))
+        (cond
+         ((null expected-row)
+          (push row added))
+         ((equal expected-digest actual-digest)
+          (push row unchanged))
+         (t
+          (push (list :path path
+                      :role (plist-get row :role)
+                      :expected expected-digest
+                      :actual actual-digest)
+                changed)))))
+    (dolist (row expected)
+      (unless (nelix-lock--file-row-by-path actual (plist-get row :path))
+        (push row removed)))
+    (list :added (nreverse added)
+          :removed (nreverse removed)
+          :changed (nreverse changed)
+          :unchanged (nreverse unchanged))))
+
+;;;###autoload
+(defun nelix-lock-diff (manifest-file)
+  "Return read-only differences between MANIFEST-FILE and its lock."
+  (let* ((check (if (anvil-pkg-compat--standalone-nelisp-p)
+                    (nelix-lock-check--nelisp manifest-file)
+                  (nelix-lock-check manifest-file)))
+         (expected-files (plist-get check :expected-files))
+         (actual-files (plist-get check :actual-files))
+         (file-diff (nelix-lock--file-diff expected-files actual-files)))
+    (list :ok (and (plist-get check :ok) t)
+          :status (if (plist-get check :ok) 'clean 'drift)
+          :manifest (plist-get check :manifest)
+          :lock (plist-get check :lock)
+          :schema-check (plist-get check :schema-check)
+          :manifest-digest (list :expected (plist-get check :expected)
+                                 :actual (plist-get check :actual))
+          :manifest-files file-diff)))
+
 (defun nelix-manifest--nix-flakeref (manifest target)
   "Return the Nix flake reference for MANIFEST TARGET."
   (let ((name (nelix-manifest--target-name target)))

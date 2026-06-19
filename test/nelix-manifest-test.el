@@ -806,6 +806,51 @@
               (should (plist-get check :ok)))))
       (delete-directory dir t))))
 
+(ert-deftest nelix-manifest-test-lock-validate-and-diff ()
+  "lock validate reads schema metadata and lock diff reports file drift."
+  (let ((dir (make-temp-file "nelix-manifest-lock-diff-" t)))
+    (unwind-protect
+        (progn
+          (nelix-manifest-test--write
+           dir "packages.el"
+           "(setq nelix-manifest-test-import-loaded 'v1)\n")
+          (nelix-manifest-test--write
+           dir "manifest.el"
+           "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :imports '(\"packages.el\") :linux '(ripgrep))\n")
+          (cl-letf (((symbol-function 'nelix-list)
+                     (lambda ()
+                       (list (list :name "ripgrep"
+                                   :attr-path "legacyPackages.x86_64-linux.ripgrep"))))
+                    ((symbol-function 'anvil-pkg-compat-executable-find)
+                     (lambda (program)
+                       (and (equal program "nix") "/usr/bin/nix")))
+                    ((symbol-function 'anvil-pkg--detect-nix-version)
+                     (lambda () "2.34.7")))
+            (let* ((manifest-file (expand-file-name "manifest.el" dir))
+                   (_lock (nelix-lock-write manifest-file))
+                   (validate (nelix-lock-validate manifest-file))
+                   (clean (nelix-lock-diff manifest-file)))
+              (should (plist-get validate :ok))
+              (should (= 2 (plist-get validate :schema-version)))
+              (should (eq 'sexp (plist-get validate :format)))
+              (should (plist-get clean :ok))
+              (should (eq 'clean (plist-get clean :status)))
+              (should-not (plist-get (plist-get clean :manifest-files)
+                                     :changed))
+              (nelix-manifest-test--write
+               dir "packages.el"
+               "(setq nelix-manifest-test-import-loaded 'v2)\n")
+              (let* ((drift (nelix-lock-diff manifest-file))
+                     (files (plist-get drift :manifest-files))
+                     (changed (plist-get files :changed)))
+                (should-not (plist-get drift :ok))
+                (should (eq 'drift (plist-get drift :status)))
+                (should (= 1 (length changed)))
+                (should (equal (expand-file-name "packages.el" dir)
+                               (expand-file-name
+                                (plist-get (car changed) :path))))))))
+      (delete-directory dir t))))
+
 (ert-deftest nelix-manifest-test-lock-schema-check-accepts-legacy-v2 ()
   "Lock schema v2 remains readable without explicit schema metadata."
   (let ((dir (make-temp-file "nelix-manifest-lock-legacy-" t)))

@@ -142,6 +142,14 @@ reject_log() {
   echo "nelix installed CLI gate: help omits lock-check command" >&2
   exit 1
 }
+/usr/bin/nelix --help | grep -Fq 'lock validate MANIFEST' || {
+  echo "nelix installed CLI gate: help omits lock validate command" >&2
+  exit 1
+}
+/usr/bin/nelix --help | grep -Fq 'lock diff MANIFEST' || {
+  echo "nelix installed CLI gate: help omits lock diff command" >&2
+  exit 1
+}
 
 run_json schema_all schema
 expect_json schema_all '"name":"manifest-dsl-v1"'
@@ -177,6 +185,16 @@ test -f "$manifest.nelix-lock" || {
 expect_json lock '"lock":'
 expect_json lock '"schema":"nelix-lock"'
 expect_json lock '"schema-version":2'
+
+run_json lock_validate lock validate "$manifest"
+expect_json lock_validate '"ok":true'
+expect_json lock_validate '"format":"sexp"'
+expect_json lock_validate '"schema-version":2'
+
+run_json lock_diff lock diff "$manifest"
+expect_json lock_diff '"ok":true'
+expect_json lock_diff '"status":"clean"'
+expect_json lock_diff '"manifest-digest":'
 
 run_json lock_check lock-check "$manifest"
 expect_json lock_check '"ok":true'

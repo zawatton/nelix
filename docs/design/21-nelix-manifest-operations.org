@@ -404,6 +404,8 @@ nelix sync MANIFEST [--prune]
 nelix sync MANIFEST [--prune] [--locked]
 nelix prune-plan MANIFEST
 nelix lock MANIFEST
+nelix lock validate MANIFEST
+nelix lock diff MANIFEST
 nelix upgrade-plan [MANIFEST]
 nelix outdated [MANIFEST|NAME] [--backend BACKEND]
 nelix upgrade [MANIFEST]
@@ -418,6 +420,8 @@ CLI requirements:
 - =validate= must avoid profile/process/Nix access so it remains usable
   under standalone NeLisp before =call-process= support is fully stable
 - mutating commands must print the target profile path
+- =lock validate= and =lock diff= are read-only schema/drift inspection
+  commands; they must not print mutation metadata or touch the profile
 - =apply --locked= and =sync --locked= must refuse mutation unless
   =nelix-lock-check= is clean and package rows match current
   manifest resolution
