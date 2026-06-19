@@ -5,8 +5,8 @@
 
 ;;; Commentary:
 
-;; Doc 22 native backend/store/registry skeleton coverage.  These tests avoid
-;; Nix and network access.
+;; Doc 22 native backend/store/registry coverage.  These tests avoid Nix and
+;; network access.
 
 ;;; Code:
 

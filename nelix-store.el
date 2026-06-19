@@ -1,13 +1,14 @@
-;;; nelix-store.el --- Native Nelix store/profile metadata -*- lexical-binding: t; -*-
+;;; nelix-store.el --- Native Nelix store/profile primitives -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026 zawatton
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 
-;; Metadata-only native store skeleton for Doc 22.  This module does not fetch
-;; or build packages; it defines portable store/profile roots, store-entry
-;; metadata, profile generations, rollback primitives, and Emacs activation
+;; Native store/profile primitives for Doc 22.  Fetching and package
+;; materialization live in nelix-fetch.el and nelix-builder.el; this module
+;; owns portable roots, store-entry metadata, profile generations,
+;; transactional activation, rollback primitives, and Emacs/runtime activation
 ;; helpers.
 
 ;;; Code:
@@ -17,7 +18,7 @@
 (require 'anvil-pkg-compat)
 
 (defgroup nelix-store nil
-  "Native Nelix store/profile metadata."
+  "Native Nelix store/profile primitives."
   :group 'anvil-pkg
   :prefix "nelix-store-")
 

@@ -184,11 +184,11 @@ Public Elisp API uses the short =pkg-= prefix:
   rows so generated import drift is detected by =nelix-lock-check= and
   =nelix-audit=.
 - =nelix-backend.el= / =nelix-store.el= / =nelix-registry.el= native
-  skeleton: backend capabilities and policy selection, Nix-free
-  =nelix-native-audit=, metadata-only native store/profile generations,
-  rollback, profile prune/remove, and local registry list/search/show with
-  fixture recipes.  This
-  starts the path toward Windows/macOS/Nix-free operation.
+  backend: backend capabilities and policy selection, Nix-free
+  =nelix-native-audit=, native store/profile generations, staged profile
+  activation, rollback, profile prune/remove, and local or packaged registry
+  list/search/show with fixture recipes.  This is the portable base for
+  Windows/macOS/Nix-free operation.
 - =nelix-fetch.el= / =nelix-builder.el= native install path:
   hash-verified local/file/HTTP/Git source fetch, GitHub release URL
   construction, ELPA archive URL resolution, exact Git rev archive
