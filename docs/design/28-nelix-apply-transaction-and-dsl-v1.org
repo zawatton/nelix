@@ -135,7 +135,11 @@ The v1 DSL target syntax is:
 
 Rules:
 
+- =nelix-dsl.el= is the public require boundary for DSL v1; it must provide
+  =nelix-environment= and report =nelix-dsl-version= as =1=;
 - subform names are stable once v1 ships;
+- each subform is single-assignment; duplicates are hard errors in both the
+  normal Emacs loader and the standalone NeLisp fast validator;
 - plist =nelix-manifest= remains supported indefinitely for generated files and
   backward compatibility;
 - package list subforms accept either a variable symbol or literal package

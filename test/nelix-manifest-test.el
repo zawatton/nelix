@@ -13,6 +13,7 @@
 (require 'ert)
 (require 'cl-lib)
 (require 'nelix-manifest)
+(require 'nelix-dsl)
 (require 'anvil-pkg-state)
 
 (defvar nelix-manifest-test-import-loaded nil
@@ -113,6 +114,29 @@
       (should (equal '(nix nelix-native)
                      (nelix-manifest-backend-policy
                       manifest 'gnu/linux))))))
+
+(ert-deftest nelix-manifest-test-dsl-entrypoint-provides-environment-v1 ()
+  "`nelix-dsl' is the public require boundary for the DSL v1 contract."
+  (should (= 1 (nelix-dsl-version)))
+  (should (fboundp 'nelix-environment))
+  (should (memq 'emacs-packages nelix-environment-dsl-forms))
+  (let ((manifest
+         (nelix-environment
+          (name "entrypoint")
+          (emacs-packages magit consult)
+          (linux-packages "ripgrep" "fd"))))
+    (should (equal "entrypoint" (plist-get manifest :name)))
+    (should (equal '(magit consult) (plist-get manifest :emacs)))
+    (should (equal '("ripgrep" "fd") (plist-get manifest :linux)))))
+
+(ert-deftest nelix-manifest-test-environment-dsl-v1-rejects-duplicate-forms ()
+  "DSL v1 subforms are single-assignment."
+  (let ((err (should-error
+              (eval '(nelix-environment
+                      (name "first")
+                      (name "second")))
+              :type 'anvil-pkg-error)))
+    (should (string-match-p "duplicate form name" (cadr err)))))
 
 (ert-deftest nelix-manifest-test-validate-is-process-free ()
   "nelix-validate loads manifests and reports counts without profile IO."

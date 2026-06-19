@@ -41,6 +41,14 @@
 (defconst nelix-lock-schema-name "nelix-lock"
   "Stable schema name recorded in Nelix lock files.")
 
+(defconst nelix-environment-dsl-version 1
+  "Stable version of the public `nelix-environment' manifest DSL.")
+
+(defconst nelix-environment-dsl-forms
+  '(name profile nix-channel imports backend-policy emacs-packages
+    linux-packages debian-tools bootstrap-apt-packages pins)
+  "Stable subform names accepted by `nelix-environment' DSL v1.")
+
 (defun nelix-manifest--plist-keys (plist)
   "Return keyword keys from PLIST, rejecting malformed plists."
   (let ((rest plist)
@@ -178,9 +186,15 @@ forms such as:
 Package forms with a single argument evaluate that argument, which
 supports generated package variables.  Package forms with multiple
 arguments are treated as a literal package list."
-  (let (plist)
+  (let (plist seen)
     (dolist (form forms)
-      (let ((pair (nelix-environment--form-to-plist-pair form)))
+      (let ((pair (nelix-environment--form-to-plist-pair form))
+            (head (car form)))
+        (when (memq head seen)
+          (signal 'anvil-pkg-error
+                  (list (format "nelix-environment: duplicate form %S"
+                                head))))
+        (push head seen)
         (setq plist (append plist pair))))
     `(nelix-manifest ,@plist)))
 

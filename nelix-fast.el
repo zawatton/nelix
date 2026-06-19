@@ -49,6 +49,12 @@
     nelix-linux-apt-wrapper-packages)
   "Data symbols read by the standalone NeLisp fast validator.")
 
+(defconst nelix-fast--environment-form-names
+  '("name" "profile" "nix-channel" "imports" "backend-policy"
+    "emacs-packages" "linux-packages" "debian-tools"
+    "bootstrap-apt-packages" "pins")
+  "Stable DSL v1 subform names accepted by the fast validator.")
+
 (defun nelix-fast-aot-enabled-p ()
   "Return non-nil when the opt-in Nelix AOT engine is enabled."
   (let ((value (or nelix-fast-aot-force
@@ -480,7 +486,28 @@ standalone predicate, fall back to `nelix-list' so fixtures stay pure."
       (signal 'anvil-pkg-error
               (list (format "nelix-fast validate: expected one nelix-environment form, got %S"
                             (length environment-forms)))))
+    (dolist (environment-form environment-forms)
+      (nelix-fast--environment-check-forms environment-form))
     environment-forms))
+
+(defun nelix-fast--environment-check-forms (environment-form)
+  "Validate DSL v1 subforms in ENVIRONMENT-FORM without evaluating values."
+  (let (seen)
+    (dolist (form (cdr environment-form))
+      (unless (and (consp form) (symbolp (car form)))
+        (signal 'anvil-pkg-error
+                (list (format "nelix-fast validate: malformed DSL form %S"
+                              form))))
+      (let ((name (symbol-name (car form))))
+        (unless (member name nelix-fast--environment-form-names)
+          (signal 'anvil-pkg-error
+                  (list (format "nelix-fast validate: unknown DSL form %S"
+                                (car form)))))
+        (when (member name seen)
+          (signal 'anvil-pkg-error
+                  (list (format "nelix-fast validate: duplicate DSL form %S"
+                                (car form)))))
+        (push name seen)))))
 
 (defun nelix-fast--environment-imports (environment-form)
   "Return import strings from ENVIRONMENT-FORM without evaluating variables."

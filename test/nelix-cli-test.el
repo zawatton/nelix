@@ -107,6 +107,29 @@
                             (alist-get 'counts parsed)))))))
       (delete-directory dir t))))
 
+(ert-deftest nelix-cli-test-validate-json-rejects-duplicate-dsl-forms ()
+  "The NeLisp fast validator enforces the same DSL v1 shape as Emacs load."
+  (let ((dir (make-temp-file "nelix-cli-fast-validate-duplicate-" t)))
+    (unwind-protect
+        (let ((manifest (expand-file-name "nelix-package.el" dir)))
+          (with-temp-file manifest
+            (insert "(require 'nelix)\n")
+            (insert "(nelix-environment\n")
+            (insert " (name \"fixture\")\n")
+            (insert " (name \"duplicate\")\n")
+            (insert " (linux-packages \"ripgrep\"))\n"))
+          (cl-letf (((symbol-function 'anvil-pkg-compat--standalone-nelisp-p)
+                     (lambda () t)))
+            (let ((err (should-error
+                        (nelix-cli-dispatch
+                         (list :command "validate"
+                               :args (list manifest)
+                               :json t))
+                        :type 'anvil-pkg-error)))
+              (should (string-match-p "duplicate DSL form name"
+                                      (cadr err))))))
+      (delete-directory dir t))))
+
 (ert-deftest nelix-cli-test-dispatch-sync-parses-prune ()
   (let (called)
     (cl-letf (((symbol-function 'nelix-sync)
