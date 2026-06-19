@@ -212,7 +212,9 @@ the validate fast lane and the read-only AOT cache lane for =audit=, =plan=,
 manifest path.  The verifier also supports
 =NELIX_USER_MANIFEST_LOCKED=required=, which temporarily writes
 =MANIFEST.nelix-lock=, runs =apply --locked --dry-run=, and restores the
-previous lock file so the real profile is not mutated.
+previous lock file so the real profile is not mutated.  When combined with
+=NELIX_USER_MANIFEST_NELISP=required=, the locked dry-run must use the
+=:nelisp-aot-cache= fast lane.
 
 =verify-user-environment= also loads =~/.emacs.d/init.el= and runs
 =my-nelix-audit=, which checks the dedicated Emacs package file and Linux tool

@@ -122,8 +122,10 @@ NeLisp process/runtime path is complete enough for mutating lock writes.
 with a real manifest lock cycle: it backs up any existing
 =MANIFEST.nelix-lock=, runs =nelix --json lock MANIFEST=, verifies
 =nelix --json apply MANIFEST --locked --dry-run=, and restores the previous
-lock file.  This covers the daily locked review path without mutating the real
-profile.
+lock file.  When =NELIX_USER_MANIFEST_NELISP=required= is also set, it verifies
+the same locked dry-run through the NeLisp AOT cache fast lane and requires the
+result to report =:nelisp-aot-cache=.  This covers the daily locked review path
+without mutating the real profile.
 
 The lock file path is:
 

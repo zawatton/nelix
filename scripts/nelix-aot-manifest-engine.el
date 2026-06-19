@@ -188,6 +188,8 @@
          (cond
           ((nelix-aot--line-prefix-p "manifest\t" line)
            (setq manifest (nelix-aot--after-prefix "manifest\t" line)))
+          ((nelix-aot--line-prefix-p "source-file\t" line)
+           nil)
           ((nelix-aot--line-prefix-p "profile\t" line)
            (setq profile (nelix-aot--after-prefix "profile\t" line)))
           ((nelix-aot--line-prefix-p "system\t" line)

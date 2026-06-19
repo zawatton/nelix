@@ -110,6 +110,23 @@ run_locked_readonly_checks() (
   expect_json_fragment locked-dry-run "$locked_tmp/locked-dry-run.json" '"lock-enforced":true' || return 1
   expect_json_fragment locked-dry-run "$locked_tmp/locked-dry-run.json" '"lock-check":' || return 1
 
+  case "$nelisp_mode" in
+    1|true|yes|required)
+      if ! run_nelix_with_timeout --runtime nelisp --json apply "$manifest" --locked --dry-run \
+        >"$locked_tmp/nelisp-locked-dry-run.json" \
+        2>"$locked_tmp/nelisp-locked-dry-run.err"; then
+        sed -n '1,3p' "$locked_tmp/nelisp-locked-dry-run.json" >&2
+        sed -n '1,20p' "$locked_tmp/nelisp-locked-dry-run.err" >&2
+        return 1
+      fi
+      expect_json_fragment nelisp-locked-dry-run "$locked_tmp/nelisp-locked-dry-run.json" '"status":"dry-run"' || return 1
+      expect_json_fragment nelisp-locked-dry-run "$locked_tmp/nelisp-locked-dry-run.json" '"locked":true' || return 1
+      expect_json_fragment nelisp-locked-dry-run "$locked_tmp/nelisp-locked-dry-run.json" '"lock-enforced":true' || return 1
+      expect_json_fragment nelisp-locked-dry-run "$locked_tmp/nelisp-locked-dry-run.json" '"fallback":":nelisp-aot-cache"' || return 1
+      expect_json_fragment nelisp-locked-dry-run "$locked_tmp/nelisp-locked-dry-run.json" '"checked-by":":nelisp-aot-cache"' || return 1
+      ;;
+  esac
+
   printf 'nelix user manifest locked dry-run ok: %s\n' "$manifest"
 )
 

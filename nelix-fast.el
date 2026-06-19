@@ -270,6 +270,7 @@ standalone predicate, fall back to `nelix-list' so fixtures stay pure."
     (list :file (plist-get manifest :file)
           :name (plist-get manifest :name)
           :profile (plist-get manifest :profile)
+          :imports (plist-get manifest :imports)
           :backend 'nix
           :backend-selection '(:backend nix :system x86_64-linux :fallback :nelisp-fast)
           :system 'x86_64-linux
@@ -925,6 +926,11 @@ without importing the manifest in standalone NeLisp."
          (chunks (list "NELIX-AOT-MANIFEST-V1\n")))
     (push (nelix-fast--aot-line "manifest" (plist-get fast :file))
           chunks)
+    (push (nelix-fast--aot-line "source-file" (plist-get fast :file))
+          chunks)
+    (dolist (import (plist-get fast :imports))
+      (push (nelix-fast--aot-line "source-file" import)
+            chunks))
     (push (nelix-fast--aot-line "profile" (plist-get fast :profile))
           chunks)
     (push (nelix-fast--aot-line "system" (plist-get fast :system))

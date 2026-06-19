@@ -229,6 +229,7 @@ verify-deb-contents:
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq '"fallback":":nelisp-aot-cache"'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'NELIX_USER_MANIFEST_LOCKED'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq -- '--json apply "$$manifest" --locked --dry-run'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq '"checked-by":":nelisp-aot-cache"'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/doc/elpa-nelix/packaging/verify-nelix-aot-cache-gate.sh'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-aot-cache-gate.sh | grep -Fq 'apply "$$manifest" --dry-run'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-aot-cache-gate.sh | grep -Fq '"status":"dry-run"'
@@ -849,6 +850,7 @@ smoke-nelix-aot-cache-fast-lane:
 	  printf '%s\n' \
 	    'NELIX-AOT-MANIFEST-V1' \
 	    "manifest	$$manifest" \
+	    "source-file	$$manifest" \
 	    "profile	$$profile" \
 	    'system	x86_64-linux' \
 	    'target	magit	magit' \
@@ -863,6 +865,26 @@ smoke-nelix-aot-cache-fast-lane:
 	    'target-id	3	3' \
 	    'pin-id	2' \
 	    > "$$cache"; \
+	  manifest_digest=sha256-$$(sha256sum "$$manifest" | awk '{ print $$1 }'); \
+	  printf '%s\n' \
+	    ';;; manifest.el.nelix-lock --- generated Nelix lock file -*- lexical-binding: t; -*-' \
+	    '(require (quote nelix-manifest))' \
+	    '(nelix-lock' \
+	    ' :schema "nelix-lock"' \
+	    ' :schema-version 2' \
+	    ' :version 2' \
+	    " :format 'sexp" \
+	    " :lock \"$$manifest.nelix-lock\"" \
+	    " :manifest-digest \"$$manifest_digest\"" \
+	    " :manifest-files '((:role manifest :path \"$$manifest\" :digest \"$$manifest_digest\"))" \
+	    " :profile \"$$profile\"" \
+	    " :backend 'nix" \
+	    " :system 'x86_64-linux" \
+	    ' :nix-channel "nixpkgs"' \
+	    ' :packages ((:name "magit" :target magit :resolved-target magit :backend nix :system x86_64-linux)' \
+	    '            (:name "ripgrep" :target ripgrep :resolved-target ripgrep :backend nix :system x86_64-linux)' \
+	    '            (:name "fd" :target fd :resolved-target fd :backend nix :system x86_64-linux)))' \
+	    > "$$manifest.nelix-lock"; \
 	  printf '%s\n' \
 	    '#!/bin/sh' \
 	    "printf 'Name: magit\nName: ripgrep-1\nName: bat\n'" \
@@ -911,6 +933,13 @@ smoke-nelix-aot-cache-fast-lane:
 	  printf '%s\n' "$$apply_dry_run_json" | grep -q '"action":"install","name":"fd"' || { echo "error: AOT cache fast-lane JSON apply dry-run missing fd install"; rm -rf "$$tmp"; exit 1; }; \
 	  printf '%s\n' "$$apply_dry_run_json" | grep -q '"action":"remove","name":"bat"' || { echo "error: AOT cache fast-lane JSON apply dry-run missing bat remove"; rm -rf "$$tmp"; exit 1; }; \
 	  printf '%s\n' "$$apply_dry_run_json" | grep -q '"fallback":":nelisp-aot-cache"' || { echo "error: AOT cache fast-lane JSON apply dry-run did not use cache"; rm -rf "$$tmp"; exit 1; }; \
+	  locked_apply_dry_run_json=$$(env $$common_env bin/nelix --json apply "$$manifest" --locked --dry-run); \
+	  printf '%s\n' "$$locked_apply_dry_run_json"; \
+	  printf '%s\n' "$$locked_apply_dry_run_json" | grep -q '"status":"dry-run"' || { echo "error: AOT cache fast-lane locked apply dry-run did not report dry-run"; rm -rf "$$tmp"; exit 1; }; \
+	  printf '%s\n' "$$locked_apply_dry_run_json" | grep -q '"locked":true' || { echo "error: AOT cache fast-lane locked apply dry-run did not report locked"; rm -rf "$$tmp"; exit 1; }; \
+	  printf '%s\n' "$$locked_apply_dry_run_json" | grep -q '"lock-enforced":true' || { echo "error: AOT cache fast-lane locked apply dry-run did not enforce lock"; rm -rf "$$tmp"; exit 1; }; \
+	  printf '%s\n' "$$locked_apply_dry_run_json" | grep -q '"checked-by":":nelisp-aot-cache"' || { echo "error: AOT cache fast-lane locked apply dry-run did not use AOT lock check"; rm -rf "$$tmp"; exit 1; }; \
+	  printf '%s\n' "$$locked_apply_dry_run_json" | grep -q '"fallback":":nelisp-aot-cache"' || { echo "error: AOT cache fast-lane locked apply dry-run did not use cache"; rm -rf "$$tmp"; exit 1; }; \
 	  plan_json=$$(env $$common_env bin/nelix --json upgrade-plan "$$manifest"); \
 	  printf '%s\n' "$$plan_json"; \
 	  printf '%s\n' "$$plan_json" | grep -q '"upgrade":\["magit"\]' || { echo "error: AOT cache fast-lane JSON upgrade-plan missing magit"; rm -rf "$$tmp"; exit 1; }; \

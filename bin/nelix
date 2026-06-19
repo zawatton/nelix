@@ -182,10 +182,23 @@ nelix_aot_cache_fresh_p() {
   manifest=$1
   cache=$2
   [ -f "$cache" ] || return 1
-  if [ "$manifest" -nt "$cache" ]; then
-    return 1
+  if awk -F '	' '$1 == "source-file" { found = 1 } END { exit(found ? 0 : 1) }' "$cache"; then
+    sources=$(mktemp "${TMPDIR:-/tmp}/nelix-aot-sources.XXXXXX")
+    awk -F '	' '$1 == "source-file" && $2 != "" { print $2 }' "$cache" >"$sources"
+    while IFS= read -r source_file; do
+      [ -f "$source_file" ] || {
+        rm -f "$sources"
+        return 1
+      }
+      if [ "$source_file" -nt "$cache" ]; then
+        rm -f "$sources"
+        return 1
+      fi
+    done <"$sources"
+    rm -f "$sources"
+    return 0
   fi
-  return 0
+  [ ! "$manifest" -nt "$cache" ]
 }
 
 nelix_aot_cache_error() {
@@ -204,6 +217,14 @@ nelix_aot_cache_error() {
       ;;
   esac
   echo "nelix: run 'nelix aot-cache $manifest' before retrying $command" >&2
+  echo "nelix: set NELIX_NELISP_AOT=0 to force the slower direct NeLisp path" >&2
+  exit 2
+}
+
+nelix_aot_locked_error() {
+  manifest=$1
+  echo "nelix: locked AOT check failed for $manifest" >&2
+  echo "nelix: run 'nelix lock $manifest' before retrying apply --locked --dry-run" >&2
   echo "nelix: set NELIX_NELISP_AOT=0 to force the slower direct NeLisp path" >&2
   exit 2
 }
@@ -268,6 +289,7 @@ nelix_emit_aot_cache_runtime_prefix() {
     awk -F '\t' '
       NR == 1 ||
       $1 == "manifest" ||
+      $1 == "source-file" ||
       $1 == "profile" ||
       $1 == "system" ||
       $1 == "name-id" ||
@@ -281,18 +303,167 @@ nelix_emit_aot_cache_runtime_prefix() {
   fi
 }
 
+nelix_aot_lock_manifest_files_current_p() {
+  lock=$1
+  rows=$(mktemp "${TMPDIR:-/tmp}/nelix-lock-files.XXXXXX")
+  awk '
+    {
+      line = $0
+      while (match(line, /:path "[^"]+" :digest "sha256-[0-9a-f]+"/)) {
+        row = substr(line, RSTART, RLENGTH)
+        sub(/^:path "/, "", row)
+        sub(/" :digest "/, "\t", row)
+        sub(/"$/, "", row)
+        print row
+        line = substr(line, RSTART + RLENGTH)
+      }
+    }
+  ' "$lock" >"$rows"
+  [ -s "$rows" ] || {
+    rm -f "$rows"
+    return 1
+  }
+  while IFS='	' read -r path expected; do
+    [ -f "$path" ] || {
+      rm -f "$rows"
+      return 1
+    }
+    actual=sha256-$(sha256sum "$path" | awk '{ print $1 }')
+    [ "$actual" = "$expected" ] || {
+      rm -f "$rows"
+      return 1
+    }
+  done <"$rows"
+  rm -f "$rows"
+}
+
+nelix_aot_lock_targets_match_cache_p() {
+  lock=$1
+  cache=$2
+  targets=$(mktemp "${TMPDIR:-/tmp}/nelix-lock-targets.XXXXXX")
+  awk '
+    BEGIN { RS = "\\(:name " }
+    function value(row, key,   pat, start, rest, end) {
+      pat = ":" key " "
+      start = index(row, pat)
+      if (!start) return ""
+      rest = substr(row, start + length(pat))
+      if (substr(rest, 1, 1) == "\"") {
+        rest = substr(rest, 2)
+        end = index(rest, "\"")
+        if (!end) return ""
+        return substr(rest, 1, end - 1)
+      }
+      if (substr(rest, 1, 1) == sprintf("%c", 39)) {
+        rest = substr(rest, 2)
+      }
+      if (match(rest, /^[^ \t\n)]+/)) {
+        return substr(rest, RSTART, RLENGTH)
+      }
+      return ""
+    }
+    NR > 1 {
+      target = value($0, "resolved-target")
+      if (target == "" || target == "nil") {
+        target = value($0, "target")
+      }
+      if (target != "" && target != "nil") {
+        print target
+      }
+    }
+  ' "$lock" >"$targets"
+  [ -s "$targets" ] || {
+    rm -f "$targets"
+    return 1
+  }
+  if awk -F '	' '$1 == "target-id" { found = 1 } END { exit(found ? 0 : 1) }' "$cache"; then
+    target_record=target-id
+  else
+    target_record=target
+  fi
+  awk -F '	' -v record="$target_record" '
+    FILENAME == ARGV[1] {
+      lock[$1] = 1
+      lock_count++
+      next
+    }
+    $1 == "name-id" && $2 != "" && $3 != "" {
+      name[$2] = $3
+      next
+    }
+    record == "target" && $1 == "target" {
+      target_count++
+      ok = 0
+      for (i = 3; i <= NF; i++) {
+        if ($i in lock) ok = 1
+      }
+      if (!ok) missing++
+      next
+    }
+    record == "target-id" && $1 == "target-id" {
+      target_count++
+      ok = 0
+      for (i = 3; i <= NF; i++) {
+        if (($i in name) && (name[$i] in lock)) ok = 1
+      }
+      if (!ok) missing++
+      next
+    }
+    END {
+      exit((target_count > 0 && missing == 0) ? 0 : 1)
+    }
+  ' "$targets" "$cache"
+  rc=$?
+  rm -f "$targets"
+  return "$rc"
+}
+
+nelix_aot_locked_dry_run_check() {
+  manifest=$1
+  cache=$2
+  lock=${manifest}.nelix-lock
+  [ -f "$lock" ] || return 1
+
+  cache_profile=$(awk -F '	' '$1 == "profile" { print $2; exit }' "$cache")
+  cache_system=$(awk -F '	' '$1 == "system" { print $2; exit }' "$cache")
+  [ -n "$cache_profile" ] || return 1
+  [ -n "$cache_system" ] || return 1
+
+  grep -Fq ':schema "nelix-lock"' "$lock" || return 1
+  grep -Fq ':schema-version 2' "$lock" || return 1
+  grep -Fq ":profile \"$cache_profile\"" "$lock" || return 1
+  grep -Fq ":backend 'nix" "$lock" ||
+    grep -Fq ":backend nix" "$lock" ||
+    return 1
+  grep -Fq ":system '$cache_system" "$lock" ||
+    grep -Fq ":system $cache_system" "$lock" ||
+    return 1
+
+  nelix_aot_lock_manifest_files_current_p "$lock" || return 1
+  nelix_aot_lock_targets_match_cache_p "$lock" "$cache" || return 1
+}
+
 nelix_run_aot_id_cache_shell_lane() {
   command=$1
   json=$2
   cache=$3
   profile=$4
   nix_program=$5
+  locked=0
 
   awk -F '\t' '$1 == "target-id" { found = 1 } END { exit(found ? 0 : 1) }' "$cache" || return 1
 
+  if [ "$command" = "apply-dry-run-locked" ]; then
+    nelix_aot_locked_dry_run_check "$manifest" "$cache" ||
+      nelix_aot_locked_error "$manifest"
+    command=apply-dry-run
+    locked=1
+  fi
+
   "$nix_program" profile list --profile "$profile" \
     | sed -n 's/\x1b\[[0-9;]*m//g; s/^Name:[[:space:]]*//p' \
-    | awk -F '\t' -v command="$command" -v json="$json" -v cache_file="$cache" '
+    | awk -F '\t' -v command="$command" -v json="$json" \
+        -v locked="$locked" -v cache_file="$cache" '
         function norm(s, t) {
           t = s
           sub(/-[0-9]+$/, "", t)
@@ -469,6 +640,11 @@ nelix_run_aot_id_cache_shell_lane() {
               printf ",\"empty\":%s", bool(missing_count == 0 && extra_count == 0)
               printf ",\"lock-drift\":null"
               printf ",\"skipped\":{\"lock-drift\":\"nelisp-aot\",\"lock-read\":\"nelisp-aot\",\"transaction\":\"nelisp-aot\"}"
+              if (locked == "1") {
+                printf ",\"locked\":true,\"lock-enforced\":true"
+                printf ",\"lock-check\":{\"ok\":true,\"checked-by\":\":nelisp-aot-cache\"}"
+                printf ",\"locked-installed\":"; json_actions("install", missing, missing_count)
+              }
               printf ",\"backend\":\"nix\",\"backend-selection\":{\"backend\":\"nix\",\"system\":%s,\"fallback\":\":nelisp-aot-cache\"}", j(system_value)
               printf ",\"aot-cache\":%s}\n", j(cache_file)
             } else {
@@ -502,6 +678,9 @@ nelix_run_aot_id_cache_shell_lane() {
             line_names("keep", keep, keep_count)
             line_names("protected", protected, protected_count)
             printf "count\t%d\nempty\t%s\n", missing_count + extra_count, bool(missing_count == 0 && extra_count == 0)
+            if (locked == "1") {
+              printf "locked\ttrue\nlock-enforced\ttrue\nlock-check\tok\n"
+            }
             printf "backend\tnix\nfallback\t:nelisp-aot-cache\naot-cache\t%s\n", cache_file
           } else {
             printf "operation\tupgrade\nname\t:manifest\ncount\t%d\nempty\t%s\n", upgrade_count, bool(upgrade_count == 0)
@@ -530,9 +709,25 @@ nelix_try_nelisp_aot_cache_fast_lane() {
     json=1
     command=apply-dry-run
     manifest=$(nelix_abs_path "$3")
+  elif [ "$#" -eq 5 ] && [ "$1" = "--json" ] && [ "$2" = "apply" ] && [ "$4" = "--locked" ] && [ "$5" = "--dry-run" ]; then
+    json=1
+    command=apply-dry-run-locked
+    manifest=$(nelix_abs_path "$3")
+  elif [ "$#" -eq 5 ] && [ "$1" = "--json" ] && [ "$2" = "apply" ] && [ "$4" = "--dry-run" ] && [ "$5" = "--locked" ]; then
+    json=1
+    command=apply-dry-run-locked
+    manifest=$(nelix_abs_path "$3")
   elif [ "$#" -eq 3 ] && [ "$1" = "apply" ] && [ "$3" = "--dry-run" ]; then
     json=0
     command=apply-dry-run
+    manifest=$(nelix_abs_path "$2")
+  elif [ "$#" -eq 4 ] && [ "$1" = "apply" ] && [ "$3" = "--locked" ] && [ "$4" = "--dry-run" ]; then
+    json=0
+    command=apply-dry-run-locked
+    manifest=$(nelix_abs_path "$2")
+  elif [ "$#" -eq 4 ] && [ "$1" = "apply" ] && [ "$3" = "--dry-run" ] && [ "$4" = "--locked" ]; then
+    json=0
+    command=apply-dry-run-locked
     manifest=$(nelix_abs_path "$2")
   elif [ "$#" -eq 3 ] && [ "$1" = "--json" ]; then
     json=1
@@ -561,7 +756,7 @@ nelix_try_nelisp_aot_cache_fast_lane() {
         aot_fun=nelix-aot-audit-lines
       fi
       ;;
-    plan|apply-dry-run)
+    plan|apply-dry-run|apply-dry-run-locked)
       aot_fun=
       ;;
     upgrade-plan)
@@ -622,7 +817,9 @@ nelix_try_nelisp_aot_cache_fast_lane() {
   if nelix_run_aot_id_cache_shell_lane "$command" "$json" "$cache" "$profile" "$nix_program"; then
     return 0
   fi
-  if [ "$command" = "plan" ] || [ "$command" = "apply-dry-run" ]; then
+  if [ "$command" = "plan" ] ||
+     [ "$command" = "apply-dry-run" ] ||
+     [ "$command" = "apply-dry-run-locked" ]; then
     return 1
   fi
 
