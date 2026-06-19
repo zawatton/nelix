@@ -426,6 +426,8 @@ CLI requirements:
 - =lock migrate --dry-run= reports whether a compatible legacy lock needs a
   current v2 rewrite; =lock migrate= writes the current lock path and preserves
   the legacy file for compatibility
+- release gates must exercise this through the installed CLI, not only through
+  in-process ERT helpers
 - =apply --locked= and =sync --locked= must refuse mutation unless
   =nelix-lock-check= is clean and package rows match current
   manifest resolution

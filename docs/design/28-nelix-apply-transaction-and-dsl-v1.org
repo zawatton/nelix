@@ -338,6 +338,9 @@ Current compatibility rule:
 
 The regression suite commits fixture lockfiles under =test/fixtures= and
 round-trips real =nelix --json lock= output through the standard JSON parser.
+The installed Debian CLI gate also creates a legacy v1 lock, verifies that
+=lock migrate --dry-run= is read-only, runs the real migration, and validates
+the resulting v2 lock through the public CLI.
 
 The CLI also exposes a compact machine-readable schema contract:
 
