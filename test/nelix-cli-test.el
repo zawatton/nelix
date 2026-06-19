@@ -639,6 +639,41 @@
                    (nelix-cli-test--json-array-list
                     (alist-get 'package-required parsed))))))
 
+(ert-deftest nelix-cli-test-schema-manifest-dsl-contract-matches-json-schema-file ()
+  "The CLI manifest DSL schema contract matches the documented JSON schema."
+  (let* ((schema-file (nelix-cli-test--schema
+                       "nelix-manifest-dsl-v1.schema.json"))
+         (json (nelix-cli-format-result
+                (nelix-cli-dispatch
+                 '(:command "schema" :args ("manifest-dsl-v1") :json t))
+                t))
+         (parsed (json-parse-string json :object-type 'alist
+                                    :array-type 'list))
+         (properties (alist-get 'properties schema-file))
+         (required (alist-get 'required schema-file)))
+    (should (equal "ok" (alist-get 'status parsed)))
+    (should (equal (alist-get 'const (alist-get 'name properties))
+                   (alist-get 'name parsed)))
+    (should (equal (alist-get 'const (alist-get 'schema properties))
+                   (alist-get 'schema parsed)))
+    (should (= (alist-get 'const (alist-get 'schema-version properties))
+               (alist-get 'schema-version parsed)))
+    (should (equal (alist-get 'const (alist-get 'entrypoint properties))
+                   (alist-get 'entrypoint parsed)))
+    (should (equal (alist-get 'const (alist-get 'json-schema properties))
+                   (alist-get 'json-schema parsed)))
+    (dolist (key required)
+      (should (nelix-cli-test--alist-has-json-key-p parsed key)))
+    (dolist (key '("forms" "manifest-keys" "backends" "package-forms"
+                   "package-options" "remove-policy-values"
+                   "deferred-forms" "forbidden-forms"))
+      (let* ((property (alist-get (intern key) properties))
+             (items (alist-get 'items property))
+             (expected (alist-get 'enum items)))
+        (should (equal expected
+                       (nelix-cli-test--json-array-list
+                        (alist-get (intern key) parsed))))))))
+
 (ert-deftest nelix-cli-test-lock-json-round-trips-schema ()
   "Lock JSON can be parsed back by standard JSON consumers."
   (let ((anvil-pkg-profile-dir "/tmp/nelix-profile"))

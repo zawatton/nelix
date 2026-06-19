@@ -141,6 +141,17 @@ lock_schema_file() {
   fi
 }
 
+manifest_dsl_schema_file() {
+  if [ -f "$script_dir/../schema/nelix-manifest-dsl-v1.schema.json" ]; then
+    printf '%s\n' "$script_dir/../schema/nelix-manifest-dsl-v1.schema.json"
+  elif [ -f "$script_dir/../docs/schema/nelix-manifest-dsl-v1.schema.json" ]; then
+    printf '%s\n' "$script_dir/../docs/schema/nelix-manifest-dsl-v1.schema.json"
+  else
+    echo "nelix installed CLI gate: manifest DSL v1 JSON schema file is missing" >&2
+    exit 1
+  fi
+}
+
 validate_lock_json_schema_smoke() {
   schema_file="$(lock_schema_file)"
   lock_json="$tmp/lock.json"
@@ -231,6 +242,58 @@ validate_schema_summary_contract() {
                                  (sorted summary-package-required))
                     (error "schema summary package-required keys differ from JSON schema"))
                   (princ "nelix installed CLI schema summary matches JSON schema\n"))))' \
+    -- "$schema_file" "$schema_summary"
+}
+
+validate_manifest_dsl_schema_summary_contract() {
+  schema_file="$(manifest_dsl_schema_file)"
+  schema_summary="$tmp/schema_manifest.json"
+  emacs -Q --batch \
+    --eval '(require (quote cl-lib))' \
+    --eval '(require (quote json))' \
+    --eval '(let ((json-object-type (quote alist))
+                  (json-array-type (quote list))
+                  (json-key-type (quote string)))
+              (cl-labels ((jget (key object)
+                            (alist-get key object nil nil (function string=)))
+                          (sorted (items)
+                            (sort (copy-sequence items) (function string<))))
+                (let* ((args command-line-args-left)
+                       (_ (when (equal (car args) "--")
+                            (setq args (cdr args))))
+                       (schema (json-read-file (car args)))
+                       (summary (json-read-file (cadr args)))
+                       (schema-properties (jget "properties" schema))
+                       (required (jget "required" schema)))
+                  (unless (equal (jget "const" (jget "name" schema-properties))
+                                 (jget "name" summary))
+                    (error "manifest DSL schema summary name differs from JSON schema"))
+                  (unless (equal (jget "const" (jget "schema" schema-properties))
+                                 (jget "schema" summary))
+                    (error "manifest DSL schema summary schema differs from JSON schema"))
+                  (unless (= (jget "const" (jget "schema-version" schema-properties))
+                             (jget "schema-version" summary))
+                    (error "manifest DSL schema summary schema-version differs from JSON schema"))
+                  (unless (equal (jget "const" (jget "entrypoint" schema-properties))
+                                 (jget "entrypoint" summary))
+                    (error "manifest DSL schema summary entrypoint differs from JSON schema"))
+                  (unless (equal (jget "const" (jget "json-schema" schema-properties))
+                                 (jget "json-schema" summary))
+                    (error "manifest DSL schema summary json-schema differs from JSON schema"))
+                  (dolist (key required)
+                    (unless (assoc key summary)
+                      (error "manifest DSL schema summary is missing required key: %s" key)))
+                  (dolist (key (quote ("forms" "manifest-keys" "backends"
+                                       "package-forms" "package-options"
+                                       "remove-policy-values" "deferred-forms"
+                                       "forbidden-forms")))
+                    (let* ((property (jget key schema-properties))
+                           (items (jget "items" property))
+                           (expected (jget "enum" items))
+                           (actual (jget key summary)))
+                      (unless (equal (sorted expected) (sorted actual))
+                        (error "manifest DSL schema summary differs for %s" key))))
+                  (princ "nelix installed CLI manifest DSL schema summary matches JSON schema\n"))))' \
     -- "$schema_file" "$schema_summary"
 }
 
@@ -370,6 +433,7 @@ validate_schema_summary_contract schema_lock
 
 run_json schema_manifest schema manifest-dsl-v1
 expect_json schema_manifest '"name":"manifest-dsl-v1"'
+expect_json schema_manifest '"json-schema":"docs/schema/nelix-manifest-dsl-v1.schema.json"'
 expect_json schema_manifest '"forms":\['
 expect_json schema_manifest '"emacs-packages"'
 expect_json schema_manifest '"package"'
@@ -400,6 +464,7 @@ expect_json schema_manifest '"remove-policy":"manifest-declares-cli-still-confir
 expect_json schema_manifest '"classification":"package-options-group-feature"'
 expect_json schema_manifest '"platform-conditions":"package-option-platform-metadata"'
 expect_json schema_manifest '"private-data":"forbidden"'
+validate_manifest_dsl_schema_summary_contract
 
 run_json schema_transaction schema transaction-v1
 expect_json schema_transaction '"name":"transaction-v1"'

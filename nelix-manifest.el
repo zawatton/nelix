@@ -187,6 +187,7 @@ When nil, records are written under the user's state directory at
         :schema "nelix-environment"
         :schema-version nelix-environment-dsl-version
         :entrypoint "nelix-environment"
+        :json-schema "docs/schema/nelix-manifest-dsl-v1.schema.json"
         :forms (mapcar #'symbol-name nelix-environment-dsl-forms)
         :manifest-keys nelix-environment-dsl-manifest-keys
         :form-map (mapcar (lambda (pair)

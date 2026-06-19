@@ -21,4 +21,4 @@ override_dh_elpa_test:
 	:
 
 override_dh_compress:
-	dh_compress -X.sh
+	dh_compress -X.sh -X.schema.json

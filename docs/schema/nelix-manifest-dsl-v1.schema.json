@@ -1,0 +1,215 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nelix.example.invalid/schema/nelix-manifest-dsl-v1.schema.json",
+  "title": "Nelix manifest DSL schema v1 summary",
+  "type": "object",
+  "required": [
+    "name",
+    "schema",
+    "schema-version",
+    "entrypoint",
+    "json-schema",
+    "forms",
+    "manifest-keys",
+    "form-map",
+    "backends",
+    "backend-policy",
+    "package-forms",
+    "package-options",
+    "package-row-semantics",
+    "version-pin",
+    "remove-policy-values",
+    "deferred-forms",
+    "forbidden-forms",
+    "remove-policy",
+    "classification",
+    "platform-conditions",
+    "private-data",
+    "stable"
+  ],
+  "properties": {
+    "name": {
+      "const": "manifest-dsl-v1"
+    },
+    "schema": {
+      "const": "nelix-environment"
+    },
+    "schema-version": {
+      "const": 1
+    },
+    "entrypoint": {
+      "const": "nelix-environment"
+    },
+    "json-schema": {
+      "const": "docs/schema/nelix-manifest-dsl-v1.schema.json"
+    },
+    "forms": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "name",
+          "profile",
+          "nix-channel",
+          "imports",
+          "backend-policy",
+          "emacs-packages",
+          "linux-packages",
+          "debian-tools",
+          "bootstrap-apt-packages",
+          "pins",
+          "package",
+          "linux-package",
+          "version-pin",
+          "remove-policy"
+        ]
+      }
+    },
+    "manifest-keys": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "name",
+          "profile",
+          "nix-channel",
+          "imports",
+          "backend-policy",
+          "emacs",
+          "linux",
+          "debian-tools",
+          "bootstrap-apt",
+          "pins",
+          "package-rows",
+          "linux-package-rows",
+          "version-pins",
+          "remove-policy"
+        ]
+      }
+    },
+    "form-map": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/form-map-row"
+      }
+    },
+    "backends": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "nelix-native",
+          "nix",
+          "apt",
+          "dnf",
+          "git",
+          "elpa",
+          "homebrew",
+          "scoop",
+          "winget"
+        ]
+      }
+    },
+    "backend-policy": {
+      "const": "backend-symbols-or-os-rows"
+    },
+    "package-forms": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "package",
+          "linux-package"
+        ]
+      }
+    },
+    "package-options": {
+      "type": "array",
+      "items": {
+        "enum": [
+          ":backend",
+          ":pin",
+          ":version",
+          ":profile",
+          ":group",
+          ":feature",
+          ":platform",
+          ":when"
+        ]
+      }
+    },
+    "package-row-semantics": {
+      "const": "metadata-plus-target-list"
+    },
+    "version-pin": {
+      "const": "metadata-plus-pin-name"
+    },
+    "remove-policy-values": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "confirm",
+          "keep",
+          "prune"
+        ]
+      }
+    },
+    "deferred-forms": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "group",
+          "feature",
+          "platform",
+          "platform-when"
+        ]
+      }
+    },
+    "forbidden-forms": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "secret",
+          "secrets",
+          "private-repo",
+          "private-repos",
+          "credential",
+          "credentials",
+          "token",
+          "access-token",
+          "auth-header"
+        ]
+      }
+    },
+    "remove-policy": {
+      "const": "manifest-declares-cli-still-confirms"
+    },
+    "classification": {
+      "const": "package-options-group-feature"
+    },
+    "platform-conditions": {
+      "const": "package-option-platform-metadata"
+    },
+    "private-data": {
+      "const": "forbidden"
+    },
+    "stable": {
+      "const": true
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "form-map-row": {
+      "type": "object",
+      "required": [
+        "form",
+        "manifest-key"
+      ],
+      "properties": {
+        "form": {
+          "type": "string"
+        },
+        "manifest-key": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
