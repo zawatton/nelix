@@ -546,6 +546,8 @@ to dry-run.  It stages files only when =--stage= is passed explicitly.
   native artifact execution should consume the same numeric-ID cache contract
   in-process, and lock/apply transaction paths still need equivalent fast
   planning without weakening safety checks.
+  =make smoke-nelix-aot-native-cli-proof= is now the narrow public
+  standalone =.neln= proof gate for that command path.
 - Publish the signed APT repository to a real HTTPS host after
   =make publication-url-check= and =make publication-preflight= pass with
   the final APT/Fedora URLs, then run =make publication-public-smoke=

@@ -792,6 +792,8 @@ require_aot_plan_gate_docs() {
   require_contains docs/design/25-nelix-native-aot-manifest-engine.org \
     '=apply --dry-run= reports =status dry-run='
   require_contains docs/design/25-nelix-native-aot-manifest-engine.org \
+    '=make smoke-nelix-aot-native-cli-proof='
+  require_contains docs/design/25-nelix-native-aot-manifest-engine.org \
     '=NELIX_NELISP_AOT=0='
   require_contains docs/design/29-nelix-release-worktree-scope.org \
     '=plan=, =apply --dry-run=, =upgrade-plan=, and their JSON variants'
@@ -801,6 +803,12 @@ require_aot_plan_gate_docs() {
     'Debian payload gate: =make deb-local-gate= verifies'
   require_contains docs/design/29-nelix-release-worktree-scope.org \
     '=NELIX_NELISP_AOT:-auto='
+  require_contains docs/design/29-nelix-release-worktree-scope.org \
+    '=make smoke-nelix-aot-native-cli-proof='
+  require_contains Makefile \
+    'smoke-nelix-aot-native-cli-proof:'
+  require_contains Makefile \
+    'tools/nelix-aot-native-cli-proof-gate.sh'
   require_contains Makefile \
     "tar -xO ./usr/bin/nelix | grep -q 'NELIX_NELISP_AOT:-auto'"
   require_contains Makefile \

@@ -275,6 +275,12 @@ Status on 2026-06-17:
   verifies standalone NeLisp can inspect the native manifest, run the
   same artifact through the bytecode fallback path, and execute the
   embedded native function through =native-exec-elisp-artifact=.
+- =make smoke-nelix-aot-native-cli-proof= is the public standalone
+  =.neln= CLI proof gate.  It compiles
+  =scripts/nelix-aot-native-cli-proof.el=, runs
+  =nelisp native-exec-elisp-artifact= directly, and verifies numeric proof,
+  compact audit line proof, numeric-ID audit line proof, and numeric-ID
+  upgrade line proof without entering the full Nelix CLI.
 - =scripts/nelix-aot-native-subset.el= proves the native-eligible
   name-set comparison kernel as 8-bit integer set operations.  The host
   proof executes both leaf kernels and the composed equality code.  The
@@ -453,6 +459,9 @@ Do not auto-select replay-source runtime-image mode for speed.
   candidate-field iteration and compact audit/upgrade-plan proof codes.
   The standalone public CLI proof uses a compact composite artifact to
   verify the same payload bridge and sample mask code in one call.
+- =make smoke-nelix-aot-native-cli-proof= passes as an independent gate
+  for that public standalone CLI proof, so the native-subset command path
+  can be checked without running the full host-side artifact proof.
 - AOT fixture command returns the same package names as
   =nelix-fast-audit= / =nelix-fast-upgrade-plan=.
 - Real profile timing beats direct fast path before auto-selection:
