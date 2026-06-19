@@ -837,7 +837,7 @@ manifest targets."
           :all-packages packages)))
 
 (defun nelix-apply--legacy-backend
-    (manifest-file manifest selection backend lock-check)
+    (manifest-file manifest selection backend lock-check rollback-on-error)
   "Apply MANIFEST-FILE through the pre-plan non-Nix BACKEND path."
   (let* ((report (nelix-manifest-installation-report manifest backend))
          (locked-plan (and lock-check
@@ -848,7 +848,13 @@ manifest targets."
          (missing nil)
          (already nil)
          (installed-locked nil)
-         (pins (plist-get manifest :pins)))
+         (pins (plist-get manifest :pins))
+         (profile (plist-get manifest :profile))
+         (system (plist-get selection :system))
+         transaction-commands
+         transaction-plan
+         transaction
+         executed)
     (dolist (row report)
       (let ((locked-package (car locked-cursor)))
         (when locked-plan
@@ -864,20 +870,103 @@ manifest targets."
     (setq missing (nreverse missing)
           already (nreverse already)
           installed-locked (nreverse installed-locked))
+    (setq transaction-commands
+          (and (eq backend 'nelix-native)
+               (mapcar (lambda (target)
+                         (list :action 'install
+                               :name (nelix-manifest--target-name target)
+                               :backend backend
+                               :target target))
+                       missing)))
+    (when transaction-commands
+      (setq transaction-plan
+            (condition-case _
+                (nelix-plan manifest-file)
+              (error
+               (list :operation 'apply
+                     :manifest (plist-get manifest :file)
+                     :backend backend
+                     :backend-selection selection))))
+      (setq transaction-plan
+            (plist-put transaction-plan :commands transaction-commands))
+      (setq transaction-plan
+            (plist-put transaction-plan :locked (and lock-check t)))
+      (setq transaction-plan
+            (plist-put transaction-plan :lock-check lock-check))
+      (setq transaction-plan
+            (plist-put transaction-plan :lock-enforced
+                       (and locked-plan t)))
+      (setq transaction
+            (nelix-manifest--transaction-begin
+             transaction-commands rollback-on-error backend profile system))
+      (setq transaction
+            (nelix-manifest--transaction-record-begin
+             manifest-file transaction-plan transaction)))
     (when missing
-      (if (and locked-plan (eq backend 'nelix-native))
-          (mapc (lambda (package)
-                  (nelix-native-install-lock-package
-                   package
-                   (plist-get manifest :profile)
-                   (plist-get selection :system)
-                   (plist-get locked-plan :all-packages)))
-                installed-locked)
-        (nelix-backend-install backend missing
-                               (plist-get manifest :profile)
-                               (plist-get selection :system))))
+      (condition-case err
+          (if (and locked-plan (eq backend 'nelix-native))
+              (dolist (package installed-locked)
+                (let* ((name (plist-get package :name))
+                       (result
+                        (nelix-native-install-lock-package
+                         package profile system
+                         (plist-get locked-plan :all-packages))))
+                  (push (list :action 'install
+                              :name name
+                              :backend backend
+                              :ok t
+                              :result result)
+                        executed)
+                  (setq transaction
+                        (nelix-manifest--transaction-record-update
+                         manifest-file transaction-plan transaction 'running
+                         (nreverse (copy-sequence executed))))))
+            (dolist (target missing)
+              (let* ((name (nelix-manifest--target-name target))
+                     (result
+                      (nelix-backend-install
+                       backend (list target) profile system)))
+                (push (list :action 'install
+                            :name name
+                            :backend backend
+                            :ok t
+                            :result result)
+                      executed)
+                (setq transaction
+                      (nelix-manifest--transaction-record-update
+                       manifest-file transaction-plan transaction 'running
+                       (nreverse (copy-sequence executed)))))))
+        (error
+         (let* ((rollback
+                 (nelix-manifest--transaction-rollback transaction))
+                (message
+                 (format "nelix-apply: %S backend failed after %d executed action(s): %s; rollback=%s"
+                         backend
+                         (length executed)
+                         (error-message-string err)
+                         (if (plist-get rollback :ok) "ok" "not-ok"))))
+           (setq transaction
+                 (nelix-manifest--transaction-record-update
+                  manifest-file transaction-plan transaction 'error
+                  (nreverse (copy-sequence executed))
+                  rollback (error-message-string err)))
+           (signal 'anvil-pkg-error
+                   (list message
+                         :error (error-message-string err)
+                         :executed (nreverse executed)
+                         :transaction transaction
+                         :rollback rollback))))))
     (dolist (pin pins)
       (nelix-pin pin))
+    (when transaction
+      (setq executed (nreverse executed))
+      (setq transaction
+            (nelix-manifest--transaction-finish transaction))
+      (setq transaction-plan
+            (plist-put transaction-plan :executed executed))
+      (setq transaction
+            (nelix-manifest--transaction-record-update
+             manifest-file transaction-plan transaction 'ok executed)))
     (list :status 'ok
           :manifest (plist-get manifest :file)
           :backend backend
@@ -892,6 +981,8 @@ manifest targets."
           :lock-packages (plist-get locked-plan :packages)
           :lock-all-packages (plist-get locked-plan :all-packages)
           :locked-installed installed-locked
+          :executed executed
+          :transaction transaction
           :profile (plist-get manifest :profile)
           :nix-profile (and (eq backend 'nix) anvil-pkg-profile-dir))))
 
@@ -904,6 +995,24 @@ manifest targets."
                  (plist-get generation :active))
         (setq active generation)))
     (plist-get active :id)))
+
+(defun nelix-manifest--native-active-generation-id (profile-name)
+  "Return the active native PROFILE-NAME generation id, or nil."
+  (condition-case _
+      (plist-get (nelix-profile-read (or profile-name "default")) :generation)
+    (error nil)))
+
+(defun nelix-manifest--native-ensure-generation (profile-name system)
+  "Return a rollback generation for native PROFILE-NAME and SYSTEM.
+When the profile does not exist, create an empty generation before the first
+apply step so rollback has a concrete pre-apply target."
+  (or (nelix-manifest--native-active-generation-id profile-name)
+      (plist-get
+       (nelix-profile-create-generation
+        (or profile-name "default")
+        (or system (nelix-current-system))
+        nil)
+       :generation)))
 
 (defun nelix-manifest--run-nix-command-nelisp (argv)
   "Run Nix command ARGV through a shell PATH lookup for NeLisp."
@@ -1303,10 +1412,31 @@ file modification time, newest first."
           :file file
           :record record)))
 
-(defun nelix-manifest--transaction-begin (commands rollback-on-error)
+(defun nelix-manifest--transaction-active-generation (transaction)
+  "Return the active generation for TRANSACTION's backend."
+  (if (eq (plist-get transaction :backend) 'nelix-native)
+      (nelix-manifest--native-active-generation-id
+       (plist-get transaction :profile))
+    (if (anvil-pkg-compat--standalone-nelisp-p)
+        (nelix-manifest--active-generation-id-nelisp)
+      (nelix-manifest--active-generation-id))))
+
+(defun nelix-manifest--transaction-capture-generation (transaction)
+  "Return the rollback generation for TRANSACTION's backend."
+  (if (eq (plist-get transaction :backend) 'nelix-native)
+      (nelix-manifest--native-ensure-generation
+       (plist-get transaction :profile)
+       (plist-get transaction :system))
+    (nelix-manifest--transaction-active-generation transaction)))
+
+(defun nelix-manifest--transaction-begin
+    (commands rollback-on-error &optional backend profile system)
   "Capture pre-apply generation metadata for COMMANDS."
   (let ((transaction
          (list :enabled (and commands t)
+               :backend (or backend 'nix)
+               :profile profile
+               :system system
                :rollback-on-error (and rollback-on-error t)
                :generation-captured nil
                :rollback-available nil
@@ -1316,9 +1446,8 @@ file modification time, newest first."
     (when commands
       (condition-case err
           (let ((generation
-                 (if (anvil-pkg-compat--standalone-nelisp-p)
-                     (nelix-manifest--active-generation-id-nelisp)
-                   (nelix-manifest--active-generation-id))))
+                 (nelix-manifest--transaction-capture-generation
+                  transaction)))
             (setq transaction
                   (plist-put transaction :before-generation generation))
             (setq transaction
@@ -1340,9 +1469,8 @@ file modification time, newest first."
     (condition-case err
         (plist-put transaction
                    :after-generation
-                   (if (anvil-pkg-compat--standalone-nelisp-p)
-                       (nelix-manifest--active-generation-id-nelisp)
-                     (nelix-manifest--active-generation-id)))
+                   (nelix-manifest--transaction-active-generation
+                    transaction))
       (error
        (plist-put transaction
                   :after-generation-error
@@ -1361,13 +1489,18 @@ file modification time, newest first."
      (t
       (condition-case err
           (let (after)
-            (if (anvil-pkg-compat--standalone-nelisp-p)
-                (nelix-manifest--rollback-generation-nelisp generation)
-              (nelix-rollback generation))
+            (cond
+             ((eq (plist-get transaction :backend) 'nelix-native)
+              (nelix-profile-rollback
+               (plist-get transaction :profile)
+               generation))
+             ((anvil-pkg-compat--standalone-nelisp-p)
+              (nelix-manifest--rollback-generation-nelisp generation))
+             (t
+              (nelix-rollback generation)))
             (setq after
-                  (if (anvil-pkg-compat--standalone-nelisp-p)
-                      (nelix-manifest--active-generation-id-nelisp)
-                    (nelix-manifest--active-generation-id)))
+                  (nelix-manifest--transaction-active-generation
+                   transaction))
             (list :attempted t
                   :ok (equal after generation)
                   :generation generation
@@ -1504,8 +1637,9 @@ remove count."
                             (nelix-manifest--transaction-preview
                              nil rollback-on-error)))
                 plan)
-            (nelix-apply--legacy-backend
-             manifest-file manifest selection backend lock-check)))
+             (nelix-apply--legacy-backend
+              manifest-file manifest selection backend lock-check
+              rollback-on-error)))
       (setq report (nelix-manifest-installation-report manifest backend))
       (setq locked-plan
             (and lock-check

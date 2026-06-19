@@ -640,13 +640,13 @@ expect_json native_locked_apply '"name":"fixture-dep"'
 
 run_json native_locked_profile native profile --profile lockgate
 expect_json native_locked_profile '"operation":"native-profile"'
-expect_json native_locked_profile '"generation":2'
+expect_json native_locked_profile '"generation":3'
 expect_json native_locked_profile '"name":"fixture-dep"'
 expect_json native_locked_profile '"name":"fixture-app"'
 
 run_json native_locked_activate native activate --profile lockgate
 expect_json native_locked_activate '"operation":"native-activate"'
-expect_json native_locked_activate '"generation":2'
+expect_json native_locked_activate '"generation":3'
 expect_json native_locked_activate '"command":"fixture-dep"'
 expect_json native_locked_activate '"command":"fixture-app"'
 

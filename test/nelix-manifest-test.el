@@ -338,6 +338,96 @@
               (should (= 2 (length nix-calls))))))
       (delete-directory dir t))))
 
+(ert-deftest nelix-manifest-test-apply-native-rolls-back-on-command-failure ()
+  "nelix-apply rolls the native profile back to the pre-apply generation."
+  (let* ((dir (make-temp-file "nelix-manifest-native-apply-rollback-" t))
+         (root (make-temp-file "nelix-manifest-native-apply-root-" t))
+         (nelix-store-root (expand-file-name "store" root))
+         (nelix-profile-root (expand-file-name "profiles" root))
+         (nelix-transaction-log-root (expand-file-name "transactions" dir))
+         install-calls)
+    (unwind-protect
+        (progn
+          (nelix-manifest-test--write
+           dir "manifest.el"
+           "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :profile \"dev\" :linux '(fixture-a fixture-b) :backend-policy '(nelix-native))\n")
+          (cl-letf (((symbol-function 'nelix-manifest-installation-report)
+                     (lambda (_manifest backend)
+                       (should (eq backend 'nelix-native))
+                       (list (list :name "fixture-a"
+                                   :target 'fixture-a
+                                   :installed nil)
+                             (list :name "fixture-b"
+                                   :target 'fixture-b
+                                   :installed nil))))
+                    ((symbol-function 'nelix-plan)
+                     (lambda (manifest)
+                       (list :operation 'plan
+                             :manifest manifest
+                             :backend 'nelix-native
+                             :install (list (list :name "fixture-a")
+                                            (list :name "fixture-b"))
+                             :remove nil
+                             :keep nil
+                             :protected nil
+                             :commands nil
+                             :count 2)))
+                    ((symbol-function 'nelix-backend-install)
+                     (lambda (backend targets profile system)
+                       (should (eq backend 'nelix-native))
+                       (should (equal "dev" profile))
+                       (should (eq system 'x86_64-linux))
+                       (let ((name (nelix-manifest--target-name
+                                    (car targets))))
+                         (push name install-calls)
+                         (cond
+                          ((equal name "fixture-a")
+                           (nelix-profile-create-generation
+                            "dev" system
+                            (list (list :name "fixture-a"
+                                        :store-path "/tmp/fixture-a")))
+                           (list (list :status 'ok :name name)))
+                          ((equal name "fixture-b")
+                           (nelix-profile-create-generation
+                            "dev" system
+                            (list (list :name "fixture-a"
+                                        :store-path "/tmp/fixture-a")
+                                  (list :name "fixture-b"
+                                        :store-path "/tmp/fixture-b")))
+                           (error "native install failed"))
+                          (t
+                           (error "unexpected native target %s" name))))))
+                    ((symbol-function 'nelix-pin)
+                     (lambda (_name) t)))
+            (let ((err (should-error
+                        (nelix-apply (expand-file-name "manifest.el" dir))
+                        :type 'anvil-pkg-error)))
+              (should (string-match-p "rollback=ok" (cadr err)))
+              (should (equal '("fixture-b" "fixture-a") install-calls))
+              (let ((profile (nelix-profile-read "dev")))
+                (should (= 1 (plist-get profile :generation)))
+                (should-not (plist-get profile :entries)))
+              (let* ((transaction (plist-get (cddr err) :transaction))
+                     (record-file (plist-get transaction :record-file))
+                     (record (nelix-manifest-test--read-sexp-file
+                              record-file)))
+                (should (file-exists-p record-file))
+                (should (eq 'error (plist-get record :status)))
+                (should (= 1 (length (plist-get record :executed))))
+                (should (eq 'nelix-native
+                            (plist-get
+                             (plist-get record :transaction)
+                             :backend)))
+                (should (equal 1
+                               (plist-get
+                                (plist-get record :rollback-plan)
+                                :generation)))
+                (should (plist-get (plist-get record :rollback) :ok))
+                (should (plist-get (plist-get record :rollback)
+                                   :verified))))))
+      (delete-directory dir t)
+      (delete-directory root t))))
+
 (ert-deftest nelix-manifest-test-apply-reports-unverified-rollback ()
   "nelix-apply reports rollback failure when the active generation does not return."
   (let ((dir (make-temp-file "nelix-manifest-apply-rollback-mismatch-" t))

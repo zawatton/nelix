@@ -15,8 +15,10 @@ This document fixes the next practical safety layer after the real
 
 * 2. Apply Transaction Model
 
-For the Nix backend, =nelix apply= now treats profile mutation as a transaction
-bounded by the active Nix profile generation.
+For the Nix backend, =nelix apply= treats profile mutation as a transaction
+bounded by the active Nix profile generation.  The same transaction record
+shape now also applies to =nelix-native= real apply: the rollback boundary is
+the native profile generation recorded under =nelix-profile-root=.
 
 Default behavior:
 
@@ -48,8 +50,10 @@ Dry-run behavior:
 Safety invariants:
 
 - *apply-before snapshot*: real Nix =apply= captures the active profile
-  generation before the first install/remove command.  If no command would run,
-  no transaction record is written.
+  generation before the first install/remove command.  Real native =apply=
+  captures the active native profile generation; if the profile does not exist
+  yet, it creates an empty pre-apply generation so rollback has a concrete safe
+  target.  If no command would run, no transaction record is written.
 - *plan persistence*: the generated transaction record stores the exact
   =nelix-plan= plist that real apply is executing, including install/remove
   rows, command rows, lock metadata, remove safety metadata, and transaction
@@ -148,6 +152,13 @@ apply.
 
 Transaction rollback protects against command failure, not against applying an
 undesired but valid remove plan.  Remove review remains mandatory.
+
+Native transaction note: =nelix-native= installs can create one native profile
+generation per package/dependency operation.  The transaction journal records
+successful install steps and rolls the profile marker back to the captured
+pre-apply generation if a later native install fails.  Store paths are not
+deleted by rollback; they remain subject to native store GC, preserving the
+same generation-based recovery model as the native store.
 
 * 4. Debian Package Gate
 
