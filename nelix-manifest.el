@@ -246,6 +246,7 @@ When nil, records are written under the user's state directory at
         :schema nelix-transaction-schema-name
         :schema-version nelix-transaction-schema-version
         :format "sexp"
+        :json-schema "docs/schema/nelix-transaction-v1.schema.json"
         :required (nelix-schema--keyword-names
                    nelix-transaction-record-required-keys)
         :plan-required (nelix-schema--keyword-names

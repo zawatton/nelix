@@ -171,6 +171,17 @@ The schema output includes =status-values=, =rollback-plan-unavailable-reasons=,
 and =rollback-result-keys=.  External tooling must treat unknown future values
 as incompatible until the schema version changes.
 
+The machine-readable summary contract is also committed as:
+
+#+begin_example
+docs/schema/nelix-transaction-v1.schema.json
+#+end_example
+
+Package gates compare this JSON schema summary with
+=nelix --json schema transaction-v1= so changes to required record keys,
+state values, rollback-plan keys, rollback result keys, or recovery command
+wording must be intentional.
+
 ** 2.2 Record write ordering
 
 The record write order is part of the safety contract:
@@ -415,7 +426,9 @@ Rules:
 - =nelix --json schema transaction-v1= must report schema
   =nelix-apply-transaction=, schema version =1=, and the required top-level,
   plan, transaction metadata, rollback-plan, rollback argv, and executed-step
-  keys used by apply records.
+  keys used by apply records.  =docs/schema/nelix-transaction-v1.schema.json=
+  records the corresponding machine-readable summary contract and package
+  gates compare it with CLI schema output.
 
 Scope decisions for the user-requested Nix/Guix-style surface:
 

@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nelix.example.invalid/schema/nelix-transaction-v1.schema.json",
+  "title": "Nelix apply transaction schema v1 summary",
+  "type": "object",
+  "required": [
+    "name",
+    "schema",
+    "schema-version",
+    "format",
+    "json-schema",
+    "required",
+    "plan-required",
+    "transaction-required",
+    "rollback-plan-required",
+    "rollback-plan-available-required",
+    "status-values",
+    "rollback-plan-unavailable-reasons",
+    "rollback-result-keys",
+    "recovery",
+    "executed-required",
+    "stable"
+  ],
+  "properties": {
+    "name": {
+      "const": "transaction-v1"
+    },
+    "schema": {
+      "const": "nelix-apply-transaction"
+    },
+    "schema-version": {
+      "const": 1
+    },
+    "format": {
+      "const": "sexp"
+    },
+    "json-schema": {
+      "const": "docs/schema/nelix-transaction-v1.schema.json"
+    },
+    "required": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "schema",
+          "schema-version",
+          "id",
+          "status",
+          "manifest",
+          "profile",
+          "started-at",
+          "updated-at",
+          "plan",
+          "transaction",
+          "executed",
+          "rollback-plan",
+          "rollback",
+          "error"
+        ]
+      }
+    },
+    "plan-required": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "operation",
+          "manifest",
+          "commands"
+        ]
+      }
+    },
+    "transaction-required": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "enabled",
+          "backend",
+          "profile",
+          "system",
+          "rollback-on-error",
+          "generation-captured",
+          "rollback-available",
+          "before-generation",
+          "before-generation-error",
+          "after-generation",
+          "record-id",
+          "record-file",
+          "record-started-at",
+          "record-status"
+        ]
+      }
+    },
+    "rollback-plan-required": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "available"
+        ]
+      }
+    },
+    "rollback-plan-available-required": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "operation",
+          "generation",
+          "argv"
+        ]
+      }
+    },
+    "status-values": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "started",
+          "running",
+          "ok",
+          "error"
+        ]
+      }
+    },
+    "rollback-plan-unavailable-reasons": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "transaction-disabled",
+          "rollback-disabled",
+          "before-generation-missing"
+        ]
+      }
+    },
+    "rollback-result-keys": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "attempted",
+          "ok",
+          "generation",
+          "after-rollback-generation",
+          "verified",
+          "reason",
+          "error"
+        ]
+      }
+    },
+    "recovery": {
+      "const": "nelix transaction recover ID|FILE --dry-run"
+    },
+    "executed-required": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "action",
+          "name"
+        ]
+      }
+    },
+    "stable": {
+      "const": true
+    }
+  },
+  "additionalProperties": true
+}

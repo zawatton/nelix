@@ -7,7 +7,7 @@ SCRIPT_SRC = scripts/anvil-pkg-render.el scripts/anvil-pkg-nelisp-smoke.el scrip
 BIN_SRC = bin/nelix
 DOC_SRC = README.org examples/README.org docs/smoke-test.org packaging/README.org
 REGISTRY_SRC = $(sort $(wildcard registry/packages/*/*.el))
-EXPECTED_ERT_TESTS ?= 418
+EXPECTED_ERT_TESTS ?= 419
 EXPECTED_NELISP_ERT_TESTS ?= 130
 NELISP_CACHE_DIR ?= .cache/nelisp
 NELISP_SUITE_IMAGE ?= $(NELISP_CACHE_DIR)/anvil-pkg-suite.nlri
@@ -300,6 +300,8 @@ verify-deb-contents:
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/schema/nelix-manifest-dsl-v1.schema.json | grep -Fq '"title": "Nelix manifest DSL schema v1 summary"'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/doc/elpa-nelix/schema/nelix-lock-v2.schema.json'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/schema/nelix-lock-v2.schema.json | grep -Fq '"title": "Nelix lockfile schema v2"'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/doc/elpa-nelix/schema/nelix-transaction-v1.schema.json'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/schema/nelix-transaction-v1.schema.json | grep -Fq '"title": "Nelix apply transaction schema v1 summary"'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-extracted-nelix-debian.sh | grep -Fq 'NELIX_USER_MANIFEST_LOCKED'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-extracted-nelix-debian.sh | grep -Fq '1|true|yes|required)'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-extracted-nelix-debian.sh | grep -Fq 'NELIX_USER_MANIFEST_MIN_TARGETS'
@@ -395,6 +397,7 @@ verify-deb-contents:
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'validate_manifest_dsl_schema_summary_contract'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'schema_transaction schema transaction-v1'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq '"schema":"nelix-apply-transaction"'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'validate_transaction_schema_summary_contract'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq '"rollback-plan-available-required"'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'lock JSON package is missing schema-required key'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'lock_check lock-check'

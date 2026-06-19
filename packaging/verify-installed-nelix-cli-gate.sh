@@ -152,6 +152,17 @@ manifest_dsl_schema_file() {
   fi
 }
 
+transaction_schema_file() {
+  if [ -f "$script_dir/../schema/nelix-transaction-v1.schema.json" ]; then
+    printf '%s\n' "$script_dir/../schema/nelix-transaction-v1.schema.json"
+  elif [ -f "$script_dir/../docs/schema/nelix-transaction-v1.schema.json" ]; then
+    printf '%s\n' "$script_dir/../docs/schema/nelix-transaction-v1.schema.json"
+  else
+    echo "nelix installed CLI gate: transaction v1 JSON schema file is missing" >&2
+    exit 1
+  fi
+}
+
 validate_lock_json_schema_smoke() {
   schema_file="$(lock_schema_file)"
   lock_json="$tmp/lock.json"
@@ -294,6 +305,65 @@ validate_manifest_dsl_schema_summary_contract() {
                       (unless (equal (sorted expected) (sorted actual))
                         (error "manifest DSL schema summary differs for %s" key))))
                   (princ "nelix installed CLI manifest DSL schema summary matches JSON schema\n"))))' \
+    -- "$schema_file" "$schema_summary"
+}
+
+validate_transaction_schema_summary_contract() {
+  schema_file="$(transaction_schema_file)"
+  schema_summary="$tmp/schema_transaction.json"
+  emacs -Q --batch \
+    --eval '(require (quote cl-lib))' \
+    --eval '(require (quote json))' \
+    --eval '(let ((json-object-type (quote alist))
+                  (json-array-type (quote list))
+                  (json-key-type (quote string)))
+              (cl-labels ((jget (key object)
+                            (alist-get key object nil nil (function string=)))
+                          (sorted (items)
+                            (sort (copy-sequence items) (function string<))))
+                (let* ((args command-line-args-left)
+                       (_ (when (equal (car args) "--")
+                            (setq args (cdr args))))
+                       (schema (json-read-file (car args)))
+                       (summary (json-read-file (cadr args)))
+                       (schema-properties (jget "properties" schema))
+                       (required (jget "required" schema)))
+                  (unless (equal (jget "const" (jget "name" schema-properties))
+                                 (jget "name" summary))
+                    (error "transaction schema summary name differs from JSON schema"))
+                  (unless (equal (jget "const" (jget "schema" schema-properties))
+                                 (jget "schema" summary))
+                    (error "transaction schema summary schema differs from JSON schema"))
+                  (unless (= (jget "const" (jget "schema-version" schema-properties))
+                             (jget "schema-version" summary))
+                    (error "transaction schema summary schema-version differs from JSON schema"))
+                  (unless (equal (jget "const" (jget "format" schema-properties))
+                                 (jget "format" summary))
+                    (error "transaction schema summary format differs from JSON schema"))
+                  (unless (equal (jget "const" (jget "json-schema" schema-properties))
+                                 (jget "json-schema" summary))
+                    (error "transaction schema summary json-schema differs from JSON schema"))
+                  (dolist (key required)
+                    (unless (assoc key summary)
+                      (error "transaction schema summary is missing required key: %s" key)))
+                  (dolist (key (quote ("required" "plan-required"
+                                       "transaction-required"
+                                       "rollback-plan-required"
+                                       "rollback-plan-available-required"
+                                       "status-values"
+                                       "rollback-plan-unavailable-reasons"
+                                       "rollback-result-keys"
+                                       "executed-required")))
+                    (let* ((property (jget key schema-properties))
+                           (items (jget "items" property))
+                           (expected (jget "enum" items))
+                           (actual (jget key summary)))
+                      (unless (equal (sorted expected) (sorted actual))
+                        (error "transaction schema summary differs for %s" key))))
+                  (unless (equal (jget "const" (jget "recovery" schema-properties))
+                                 (jget "recovery" summary))
+                    (error "transaction schema summary recovery differs from JSON schema"))
+                  (princ "nelix installed CLI transaction schema summary matches JSON schema\n"))))' \
     -- "$schema_file" "$schema_summary"
 }
 
@@ -474,6 +544,7 @@ run_json schema_transaction schema transaction-v1
 expect_json schema_transaction '"name":"transaction-v1"'
 expect_json schema_transaction '"schema":"nelix-apply-transaction"'
 expect_json schema_transaction '"schema-version":1'
+expect_json schema_transaction '"json-schema":"docs/schema/nelix-transaction-v1.schema.json"'
 expect_json schema_transaction '"required":\['
 expect_json schema_transaction '"rollback-plan"'
 expect_json schema_transaction '"executed"'
@@ -498,6 +569,7 @@ expect_json schema_transaction '"verified"'
 expect_json schema_transaction '"recovery":"nelix transaction recover ID|FILE --dry-run"'
 expect_json schema_transaction '"executed-required":\['
 expect_json schema_transaction '"action"'
+validate_transaction_schema_summary_contract
 
 run_json packaged_registry registry list --system x86_64-linux
 expect_json packaged_registry '"operation":"registry-list"'
