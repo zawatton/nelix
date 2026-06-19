@@ -948,11 +948,21 @@ manifest targets."
       (list :attempted nil :ok nil :reason "before-generation-missing"))
      (t
       (condition-case err
-          (progn
+          (let (after)
             (if (anvil-pkg-compat--standalone-nelisp-p)
                 (nelix-manifest--rollback-generation-nelisp generation)
               (nelix-rollback generation))
-            (list :attempted t :ok t :generation generation))
+            (setq after
+                  (if (anvil-pkg-compat--standalone-nelisp-p)
+                      (nelix-manifest--active-generation-id-nelisp)
+                    (nelix-manifest--active-generation-id)))
+            (list :attempted t
+                  :ok (equal after generation)
+                  :generation generation
+                  :after-rollback-generation after
+                  :verified (equal after generation)
+                  :reason (unless (equal after generation)
+                            "rollback-generation-mismatch")))
         (error
          (list :attempted t
                :ok nil

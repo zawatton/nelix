@@ -247,7 +247,8 @@
   "nelix-apply rolls the Nix profile back to the pre-apply generation."
   (let ((dir (make-temp-file "nelix-manifest-apply-rollback-" t))
         nix-calls
-        rollback-generation)
+        rollback-generation
+        (active-generation 7))
     (unwind-protect
         (progn
           (nelix-manifest-test--write
@@ -260,23 +261,79 @@
                      (lambda () nil))
                     ((symbol-function 'pkg-list-generations)
                      (lambda ()
-                       '((:id 7 :date "before" :packages nil :active t))))
+                       (list (list :id active-generation
+                                   :date "generation"
+                                   :packages nil
+                                   :active t))))
                     ((symbol-function 'nelix-rollback)
                      (lambda (generation)
                        (setq rollback-generation generation)
+                       (setq active-generation generation)
                        t))
                     ((symbol-function 'anvil-pkg--call-nix)
                      (lambda (args)
                        (push args nix-calls)
                        (if (equal (car (last args)) "nixpkgs#fd")
                            (list :exit 1 :stdout "" :stderr "install failed")
+                         (setq active-generation 8)
                          (list :exit 0 :stdout "" :stderr "")))))
             (let ((err (should-error
                         (nelix-apply (expand-file-name "manifest.el" dir))
                         :type 'anvil-pkg-error)))
               (should (string-match-p "rollback=ok" (cadr err)))
               (should (equal 7 rollback-generation))
+              (let ((rollback (plist-get (cddr err) :rollback)))
+                (should (plist-get rollback :verified))
+                (should (equal 7 (plist-get rollback :generation)))
+                (should (equal 7 (plist-get rollback
+                                            :after-rollback-generation))))
               (should (= 2 (length nix-calls))))))
+      (delete-directory dir t))))
+
+(ert-deftest nelix-manifest-test-apply-reports-unverified-rollback ()
+  "nelix-apply reports rollback failure when the active generation does not return."
+  (let ((dir (make-temp-file "nelix-manifest-apply-rollback-mismatch-" t))
+        rollback-generation
+        (active-generation 7))
+    (unwind-protect
+        (progn
+          (nelix-manifest-test--write
+           dir "manifest.el"
+           "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep fd))\n")
+          (cl-letf (((symbol-function 'anvil-pkg-compat-executable-find)
+                     (lambda (program)
+                       (and (equal program "nix") "/usr/bin/nix")))
+                    ((symbol-function 'nelix-list)
+                     (lambda () nil))
+                    ((symbol-function 'pkg-list-generations)
+                     (lambda ()
+                       (list (list :id active-generation
+                                   :date "generation"
+                                   :packages nil
+                                   :active t))))
+                    ((symbol-function 'nelix-rollback)
+                     (lambda (generation)
+                       (setq rollback-generation generation)
+                       t))
+                    ((symbol-function 'anvil-pkg--call-nix)
+                     (lambda (args)
+                       (if (equal (car (last args)) "nixpkgs#fd")
+                           (list :exit 1 :stdout "" :stderr "install failed")
+                         (setq active-generation 8)
+                         (list :exit 0 :stdout "" :stderr "")))))
+            (let ((err (should-error
+                        (nelix-apply (expand-file-name "manifest.el" dir))
+                        :type 'anvil-pkg-error)))
+              (should (string-match-p "rollback=not-ok" (cadr err)))
+              (should (equal 7 rollback-generation))
+              (let ((rollback (plist-get (cddr err) :rollback)))
+                (should-not (plist-get rollback :verified))
+                (should-not (plist-get rollback :ok))
+                (should (equal 7 (plist-get rollback :generation)))
+                (should (equal 8 (plist-get rollback
+                                            :after-rollback-generation)))
+                (should (equal "rollback-generation-mismatch"
+                               (plist-get rollback :reason)))))))
       (delete-directory dir t))))
 
 (ert-deftest nelix-manifest-test-apply-nelisp-installs-missing-via-nix ()

@@ -27,7 +27,9 @@ Default behavior:
 4. On success, capture =:after-generation=.
 5. On command failure, call =nelix-rollback= with =:before-generation= when it
    was captured.
-6. Return failure to the CLI even when rollback succeeds, because the requested
+6. After rollback, query the active generation again.  Rollback is reported as
+   =:ok t= only when the active generation equals =:before-generation=.
+7. Return failure to the CLI even when rollback succeeds, because the requested
    convergence did not complete.
 
 Dry-run behavior:
@@ -62,7 +64,9 @@ Failure signals =anvil-pkg-error= with:
 - human message including =rollback=ok= or =rollback=not-ok=;
 - =:executed= command rows that completed before failure;
 - =:transaction= metadata;
-- =:rollback= result.
+- =:rollback= result with =:generation=, =:after-rollback-generation=,
+  =:verified=, and =:reason= when rollback did not return to the captured
+  generation.
 
 * 3. Remove Safety
 
