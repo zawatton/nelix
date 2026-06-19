@@ -76,6 +76,47 @@
     (goto-char (point-min))
     (read (current-buffer))))
 
+(ert-deftest nelix-manifest-test-lock-schema-summary-matches-json-schema ()
+  "The public lock-v2 summary stays aligned with the shipped JSON schema."
+  (require 'json)
+  (let ((json-object-type 'alist)
+        (json-array-type 'list)
+        (json-key-type 'string))
+    (let* ((schema-file
+            (expand-file-name "../docs/schema/nelix-lock-v2.schema.json"
+                              nelix-manifest-test--directory))
+           (schema-json (json-read-file schema-file))
+           (schema-properties
+            (alist-get "properties" schema-json nil nil #'string=))
+           (defs (alist-get "$defs" schema-json nil nil #'string=))
+           (package-schema
+            (alist-get "package" defs nil nil #'string=))
+           (summary (nelix-schema "lock-v2")))
+      (should (equal (alist-get "const"
+                                (alist-get "schema" schema-properties
+                                           nil nil #'string=)
+                                nil nil #'string=)
+                     (plist-get summary :schema)))
+      (should (= (alist-get "const"
+                            (alist-get "schema-version" schema-properties
+                                       nil nil #'string=)
+                            nil nil #'string=)
+                 (plist-get summary :schema-version)))
+      (should (= (alist-get "const"
+                            (alist-get "version" schema-properties
+                                       nil nil #'string=)
+                            nil nil #'string=)
+                 (plist-get summary :version)))
+      (should (equal (alist-get "const"
+                                (alist-get "format" schema-properties
+                                           nil nil #'string=)
+                                nil nil #'string=)
+                     (plist-get summary :format)))
+      (should (equal (alist-get "required" schema-json nil nil #'string=)
+                     (plist-get summary :required)))
+      (should (equal (alist-get "required" package-schema nil nil #'string=)
+                     (plist-get summary :package-required))))))
+
 (ert-deftest nelix-manifest-test-normalizes-minimal-form ()
   "nelix-manifest normalizes defaults and validates list fields."
   (let ((manifest (nelix-manifest

@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Verify the installed /usr/bin/nelix CLI can run lock/plan/apply.
+# Verify an installed nelix CLI can run lock/plan/apply.
 set -euo pipefail
 
-if [ ! -x /usr/bin/nelix ]; then
-  echo "installed nelix CLI is missing: /usr/bin/nelix" >&2
+nelix_bin=${NELIX_BIN:-/usr/bin/nelix}
+
+if [ ! -x "$nelix_bin" ]; then
+  echo "installed nelix CLI is missing: $nelix_bin" >&2
   exit 1
 fi
 
@@ -86,7 +88,7 @@ run_json() {
       "HOME=$tmp/home" \
       "XDG_STATE_HOME=$tmp/state" \
       "NELIX_FAKE_NIX_LOG=$fake_log" \
-      /usr/bin/nelix --json "$@" >"$out" 2>"$err"; then
+      "$nelix_bin" --json "$@" >"$out" 2>"$err"; then
     sed 's/^/nelix_installed_cli_stdout /' "$out" >&2
     sed 's/^/nelix_installed_cli_stderr /' "$err" >&2
     exit 1
@@ -159,6 +161,55 @@ validate_lock_json_schema_smoke() {
     -- "$schema_file" "$lock_json"
 }
 
+validate_schema_summary_contract() {
+  label="$1"
+  schema_file="$(lock_schema_file)"
+  schema_summary="$tmp/$label.json"
+  emacs -Q --batch \
+    --eval '(require (quote cl-lib))' \
+    --eval '(require (quote json))' \
+    --eval '(let ((json-object-type (quote alist))
+                  (json-array-type (quote list))
+                  (json-key-type (quote string)))
+              (cl-labels ((jget (key object)
+                            (alist-get key object nil nil (function string=)))
+                          (sorted (items)
+                            (sort (copy-sequence items) (function string<))))
+                (let* ((args command-line-args-left)
+                       (_ (when (equal (car args) "--")
+                            (setq args (cdr args))))
+                       (schema (json-read-file (car args)))
+                       (summary (json-read-file (cadr args)))
+                       (schema-properties (jget "properties" schema))
+                       (defs (jget "$defs" schema))
+                       (package-schema (jget "package" defs))
+                       (schema-required (jget "required" schema))
+                       (schema-package-required (jget "required" package-schema))
+                       (summary-required (jget "required" summary))
+                       (summary-package-required
+                        (jget "package-required" summary)))
+                  (unless (equal (jget "const" (jget "schema" schema-properties))
+                                 (jget "schema" summary))
+                    (error "schema summary name differs from JSON schema"))
+                  (unless (= (jget "const" (jget "schema-version" schema-properties))
+                             (jget "schema-version" summary))
+                    (error "schema summary schema-version differs from JSON schema"))
+                  (unless (= (jget "const" (jget "version" schema-properties))
+                             (jget "version" summary))
+                    (error "schema summary version differs from JSON schema"))
+                  (unless (equal (jget "const" (jget "format" schema-properties))
+                                 (jget "format" summary))
+                    (error "schema summary format differs from JSON schema"))
+                  (unless (equal (sorted schema-required)
+                                 (sorted summary-required))
+                    (error "schema summary required keys differ from JSON schema"))
+                  (unless (equal (sorted schema-package-required)
+                                 (sorted summary-package-required))
+                    (error "schema summary package-required keys differ from JSON schema"))
+                  (princ "nelix installed CLI schema summary matches JSON schema\n"))))' \
+    -- "$schema_file" "$schema_summary"
+}
+
 expect_log() {
   pattern="$1"
   if ! grep -Eq "$pattern" "$fake_log"; then
@@ -200,43 +251,43 @@ latest_transaction_record() {
   ls -t "$txn_dir"/apply-*.el | head -n 1
 }
 
-/usr/bin/nelix --help | grep -Fq 'registry list [--system SYSTEM]' || {
+"$nelix_bin" --help | grep -Fq 'registry list [--system SYSTEM]' || {
   echo "nelix installed CLI gate: help omits registry list command" >&2
   exit 1
 }
-/usr/bin/nelix --help | grep -Fq 'native remove NAME [--profile PROFILE] [--system SYSTEM]' || {
+"$nelix_bin" --help | grep -Fq 'native remove NAME [--profile PROFILE] [--system SYSTEM]' || {
   echo "nelix installed CLI gate: help omits native remove command" >&2
   exit 1
 }
-/usr/bin/nelix --help | grep -Fq 'native rollback [--profile PROFILE] [--generation GENERATION]' || {
+"$nelix_bin" --help | grep -Fq 'native rollback [--profile PROFILE] [--generation GENERATION]' || {
   echo "nelix installed CLI gate: help omits native rollback command" >&2
   exit 1
 }
-/usr/bin/nelix --help | grep -Fq 'schema [manifest-dsl-v1|lock-v2|all]' || {
+"$nelix_bin" --help | grep -Fq 'schema [manifest-dsl-v1|lock-v2|all]' || {
   echo "nelix installed CLI gate: help omits schema command" >&2
   exit 1
 }
-/usr/bin/nelix --help | grep -Fq 'lock-check MANIFEST' || {
+"$nelix_bin" --help | grep -Fq 'lock-check MANIFEST' || {
   echo "nelix installed CLI gate: help omits lock-check command" >&2
   exit 1
 }
-/usr/bin/nelix --help | grep -Fq 'lock validate MANIFEST' || {
+"$nelix_bin" --help | grep -Fq 'lock validate MANIFEST' || {
   echo "nelix installed CLI gate: help omits lock validate command" >&2
   exit 1
 }
-/usr/bin/nelix --help | grep -Fq 'lock diff MANIFEST' || {
+"$nelix_bin" --help | grep -Fq 'lock diff MANIFEST' || {
   echo "nelix installed CLI gate: help omits lock diff command" >&2
   exit 1
 }
-/usr/bin/nelix --help | grep -Fq 'lock migrate MANIFEST [--dry-run]' || {
+"$nelix_bin" --help | grep -Fq 'lock migrate MANIFEST [--dry-run]' || {
   echo "nelix installed CLI gate: help omits lock migrate command" >&2
   exit 1
 }
-/usr/bin/nelix --help | grep -Fq 'transaction list [--limit N]' || {
+"$nelix_bin" --help | grep -Fq 'transaction list [--limit N]' || {
   echo "nelix installed CLI gate: help omits transaction list command" >&2
   exit 1
 }
-/usr/bin/nelix --help | grep -Fq 'transaction show ID|FILE' || {
+"$nelix_bin" --help | grep -Fq 'transaction show ID|FILE' || {
   echo "nelix installed CLI gate: help omits transaction show command" >&2
   exit 1
 }
@@ -249,6 +300,13 @@ expect_json schema_all '"name":"lock-v2"'
 expect_json schema_all '"schema":"nelix-lock"'
 expect_json schema_all '"schema-version":2'
 expect_json schema_all '"required":\['
+
+run_json schema_lock schema lock-v2
+expect_json schema_lock '"name":"lock-v2"'
+expect_json schema_lock '"schema":"nelix-lock"'
+expect_json schema_lock '"schema-version":2'
+expect_json schema_lock '"package-required":\['
+validate_schema_summary_contract schema_lock
 
 run_json schema_manifest schema manifest-dsl-v1
 expect_json schema_manifest '"name":"manifest-dsl-v1"'
@@ -366,7 +424,7 @@ expect_json_any transaction_show_ok \
   '"action":"remove","name":"bat"' \
   '"name":"bat","action":"remove"'
 
-NELIX_BIN=/usr/bin/nelix bash "$script_dir/verify-nelix-native-cli-gate.sh"
-NELIX_BIN=/usr/bin/nelix bash "$script_dir/verify-nelix-aot-cache-gate.sh"
+NELIX_BIN="$nelix_bin" bash "$script_dir/verify-nelix-native-cli-gate.sh"
+NELIX_BIN="$nelix_bin" bash "$script_dir/verify-nelix-aot-cache-gate.sh"
 
 echo "nelix installed CLI gate ok"
