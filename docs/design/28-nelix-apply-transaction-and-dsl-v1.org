@@ -100,6 +100,9 @@ It runs =/usr/bin/nelix= with a fake =nix= executable and verifies:
 - =plan MANIFEST= reports install/remove rows;
 - =apply MANIFEST --dry-run= reports transaction metadata without mutating.
 
+The source-tree NeLisp gate also runs =apply MANIFEST --locked --dry-run= so
+locked mode is checked without loading the lock file as executable Elisp.
+
 =make deb-release-gate= now runs =deb-local-gate=, installs the freshly built
 =.deb= with =install-built-deb=, then runs =verify-installed-debian=,
 =verify-installed-cli-gate=, and =verify-user-environment=.  This ordering is

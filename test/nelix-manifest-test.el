@@ -316,6 +316,41 @@
               (should-not nix-called))))
       (delete-directory dir t))))
 
+(ert-deftest nelix-manifest-test-apply-nelisp-locked-enforces-lock ()
+  "NeLisp runtime apply --locked checks and attaches v2 lock rows."
+  (let ((dir (make-temp-file "nelix-manifest-nelisp-locked-apply-" t)))
+    (unwind-protect
+        (progn
+          (nelix-manifest-test--write
+           dir "manifest.el"
+           "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep))\n")
+          (cl-letf (((symbol-function 'anvil-pkg-compat--standalone-nelisp-p)
+                     (lambda () t))
+                    ((symbol-function 'nelix-list)
+                     (lambda () nil))
+                    ((symbol-function 'anvil-pkg-compat-executable-find)
+                     (lambda (program)
+                       (and (member program '("nix" "sha256sum"))
+                            (format "/usr/bin/%s" program))))
+                    ((symbol-function 'anvil-pkg--detect-nix-version)
+                     (lambda () "2.34.7")))
+            (let* ((manifest-file (expand-file-name "manifest.el" dir))
+                   (_lock (nelix-lock-write manifest-file))
+                   (report (nelix-apply manifest-file
+                                        :locked t
+                                        :dry-run t))
+                   (lock-row (car (plist-get report :locked-installed))))
+              (should (plist-get report :locked))
+              (should (plist-get report :lock-enforced))
+              (should (plist-get (plist-get report :lock-check) :ok))
+              (should (eq 'dry-run (plist-get report :status)))
+              (should (equal "ripgrep" (plist-get lock-row :name)))
+              (should (equal "ripgrep"
+                             (plist-get
+                              (car (plist-get report :install))
+                              :target))))))
+      (delete-directory dir t))))
+
 (ert-deftest nelix-manifest-test-prune-plan-nelisp-uses-name-only-profile ()
   "NeLisp prune-plan uses the name-only profile fast path and protects pins."
   (let ((dir (make-temp-file "nelix-manifest-nelisp-prune-" t)))

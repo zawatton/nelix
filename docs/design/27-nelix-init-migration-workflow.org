@@ -191,12 +191,14 @@ packaging/verify-extracted-nelix-debian.sh ../elpa-nelix_0.1.0-4_all.deb 0.1.0-4
 
 * 7. Open Edges
 
-- =lock= and mutating =apply= still run through Emacs batch in the default CLI
-  path.  =nelix --runtime nelisp --json validate= works for the standard
-  manifest without entering the full standalone NeLisp manifest loader, and the
-  read-only =audit / plan / apply --dry-run / upgrade-plan= path is covered by
-  the AOT cache fast lane.  Full lock/apply transaction execution on NeLisp
-  remains part of the runtime/process maturity track.
+- =nelix --runtime nelisp --json validate= works for the standard manifest
+  without entering the full standalone NeLisp manifest loader, and the read-only
+  =audit / plan / apply --dry-run / upgrade-plan= path is covered by the AOT
+  cache fast lane.  The standalone NeLisp Nix apply path now supports
+  transaction rollback and =apply --locked --dry-run= without loading the lock
+  as executable Elisp.  Full real-user =apply --locked= should still be treated
+  as a gated runtime/process maturity track until the installed package gate
+  covers a real profile mutation with a locked manifest.
 - =apply= converges the profile and can remove unmanaged entries.  This is
   intentional, but docs and UI must keep the review step prominent.
 - Transitional Debian wrapper packages need a final policy: either keep them in

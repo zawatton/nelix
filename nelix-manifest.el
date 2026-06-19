@@ -1401,6 +1401,7 @@ remove count."
 (defun nelix-apply--nelisp (manifest-file &rest args)
   "Apply MANIFEST-FILE through a compact NeLisp Nix path."
   (let ((dry-run (plist-get args :dry-run))
+        (locked (plist-get args :locked))
         (rollback-on-error
          (if (plist-member args :rollback-on-error)
              (plist-get args :rollback-on-error)
@@ -1414,15 +1415,45 @@ remove count."
         remove-safety
         transaction
         executed
+        lock-check
+        locked-plan
+        locked-packages
+        locked-cursor
         plan)
-    (when (plist-get args :locked)
-      (signal 'anvil-pkg-error
-              (list "nelix-apply: --locked is not supported by NeLisp runtime yet")))
     (nelix-audit--nelisp-load-stage manifest-file)
     (nelix-audit--nelisp-report-stage)
+    (nelix-manifest--nelisp-progress :apply-lock-check-begin)
+    (setq lock-check
+          (and locked
+               (let ((check (nelix-lock-check--nelisp
+                             manifest-file
+                             nelix-manifest--audit-manifest)))
+                 (unless (plist-get (plist-get check :schema-check) :ok)
+                   (signal 'anvil-pkg-error
+                           (list (format "nelix locked mode: lock schema incompatible for %s"
+                                         (expand-file-name manifest-file)))))
+                 (unless (plist-get check :ok)
+                   (signal 'anvil-pkg-error
+                           (list (format "nelix locked mode: lock drift for %s"
+                                         (expand-file-name manifest-file)))))
+                 check)))
+    (nelix-manifest--nelisp-progress :apply-lock-check-end)
+    (setq locked-plan
+          (and lock-check
+               (nelix-manifest--locked-package-plan
+                manifest-file
+                nelix-manifest--audit-manifest
+                nelix-manifest--audit-selection
+                nelix-manifest--audit-report)))
+    (nelix-manifest--nelisp-progress :apply-locked-plan-end)
+    (setq locked-packages (plist-get locked-plan :packages))
+    (setq locked-cursor locked-packages)
     (dolist (row nelix-manifest--audit-report)
       (let* ((name (plist-get row :name))
-             (target (plist-get row :target)))
+             (target (plist-get row :target))
+             (locked-package (car locked-cursor)))
+        (when locked-plan
+          (setq locked-cursor (cdr locked-cursor)))
         (if (plist-get row :installed)
             (push (list :action 'keep
                         :name name
@@ -1434,21 +1465,24 @@ remove count."
                         :pinned nil
                         :entry (plist-get row :entry))
                   keep)
-          (push (list :action 'install
-                      :name name
-                      :backend 'nix
-                      :target target
-                      :resolved-target target
-                      :installed-name nil
-                      :pinned (and (member name
-                                           (plist-get
-                                            nelix-manifest--audit-manifest
-                                            :pins))
-                                   t)
-                      :lock nil
-                      :argv (nelix-manifest--nix-install-argv
-                             nelix-manifest--audit-manifest target))
-                install))))
+          (let ((target* (or (plist-get locked-package :resolved-target)
+                             (plist-get locked-package :target)
+                             target)))
+            (push (list :action 'install
+                        :name name
+                        :backend 'nix
+                        :target target*
+                        :resolved-target target*
+                        :installed-name nil
+                        :pinned (and (member name
+                                             (plist-get
+                                              nelix-manifest--audit-manifest
+                                              :pins))
+                                     t)
+                        :lock locked-package
+                        :argv (nelix-manifest--nix-install-argv
+                               nelix-manifest--audit-manifest target*))
+                  install)))))
     (dolist (entry nelix-manifest--audit-extra)
       (push (list :action 'remove
                   :name (plist-get entry :name)
@@ -1487,11 +1521,15 @@ remove count."
                 :commands commands
                 :count (+ (length install) (length remove))
                 :empty (and (null install) (null remove))
-                :locked nil
-                :lock-check nil
-                :lock-enforced nil
-                :lock-packages nil
-                :locked-installed nil
+                :locked (and lock-check t)
+                :lock-check lock-check
+                :lock-enforced (and locked-plan t)
+                :lock-packages locked-packages
+                :locked-installed
+                (delq nil
+                      (mapcar (lambda (action)
+                                (plist-get action :lock))
+                              install))
                 :remove-safety remove-safety))
     (if dry-run
         (plist-put plan :transaction
@@ -1879,6 +1917,189 @@ runtime formatter."
    ((consp value) (format "'%S" value))
    (t (format "%S" value))))
 
+(defun nelix-lock--substring-index (needle haystack &optional start)
+  "Return the first index of NEEDLE in HAYSTACK at or after START."
+  (let* ((needle-len (length needle))
+         (limit (- (length haystack) needle-len))
+         (i (or start 0))
+         found)
+    (while (and (null found) (<= i limit))
+      (if (equal needle (substring haystack i (+ i needle-len)))
+          (setq found i)
+        (setq i (1+ i))))
+    found))
+
+(defun nelix-lock--substring-until (text start delimiters)
+  "Return substring of TEXT from START until one of DELIMITERS."
+  (let ((i start)
+        (n (length text))
+        stop)
+    (while (and (< i n) (null stop))
+      (if (member (substring text i (1+ i)) delimiters)
+          (setq stop i)
+        (setq i (1+ i))))
+    (substring text start (or stop i))))
+
+(defun nelix-lock--text-string (text key)
+  "Return generated lock TEXT string value for KEY."
+  (let* ((prefix (format ":%s \"" key))
+         (start (nelix-lock--substring-index prefix text)))
+    (when start
+      (setq start (+ start (length prefix)))
+      (let ((end (nelix-lock--substring-index "\"" text start)))
+        (and end (substring text start end))))))
+
+(defun nelix-lock--text-integer (text key)
+  "Return generated lock TEXT integer value for KEY."
+  (let* ((prefix (format ":%s " key))
+         (start (nelix-lock--substring-index prefix text))
+         value)
+    (when start
+      (setq start (+ start (length prefix)))
+      (setq value (nelix-lock--substring-until
+                   text start '(" " "\t" "\n" ")"))))
+    (and value (string-to-number value))))
+
+(defun nelix-lock--text-symbol (text key)
+  "Return generated lock TEXT symbol value for KEY."
+  (let* ((prefix (format ":%s '" key))
+         (start (nelix-lock--substring-index prefix text))
+         value)
+    (when start
+      (setq start (+ start (length prefix)))
+      (setq value (nelix-lock--substring-until
+                   text start '(" " "\t" "\n" ")"))))
+    (and value (intern value))))
+
+(defun nelix-lock--row-string (row key)
+  "Return generated lock ROW string value for KEY.
+
+The generated lock currently emits nil as a literal symbol.  Nil string
+fields are returned as nil."
+  (nelix-lock--text-string row key))
+
+(defun nelix-lock--row-symbol (row key)
+  "Return generated lock ROW symbol value for KEY."
+  (let* ((prefix (format ":%s " key))
+         (start (nelix-lock--substring-index prefix row))
+         value)
+    (when start
+      (setq start (+ start (length prefix)))
+      (setq value (nelix-lock--substring-until
+                   row start '(" " "\t" "\n" ")"))))
+    (cond
+     ((null value) nil)
+     ((equal value "nil") nil)
+     ((equal value "t") t)
+     (t (intern value)))))
+
+(defun nelix-lock--row-bool (row key)
+  "Return generated lock ROW boolean value for KEY."
+  (let* ((prefix (format ":%s " key))
+         (start (nelix-lock--substring-index prefix row))
+         value)
+    (when start
+      (setq start (+ start (length prefix)))
+      (setq value (nelix-lock--substring-until
+                   row start '(" " "\t" "\n" ")"))))
+    (and (equal value "t") t)))
+
+(defun nelix-lock--text-manifest-files (text)
+  "Return generated lock manifest file rows from TEXT."
+  (let ((pos 0)
+        start role-start role path-start path digest-start digest
+        rows)
+    (while (setq start (nelix-lock--substring-index "(:role " text pos))
+      (setq role-start (+ start (length "(:role ")))
+      (setq role (nelix-lock--substring-until
+                  text role-start '(" " "\t" "\n" ")")))
+      (setq path-start
+            (nelix-lock--substring-index " :path \"" text role-start))
+      (setq digest-start
+            (and path-start
+                 (nelix-lock--substring-index " :digest \"" text path-start)))
+      (when (and path-start digest-start)
+        (setq path-start (+ path-start (length " :path \"")))
+        (setq path
+              (substring text path-start
+                         (nelix-lock--substring-index "\"" text path-start)))
+        (setq digest-start (+ digest-start (length " :digest \"")))
+        (setq digest
+              (substring text digest-start
+                         (nelix-lock--substring-index "\"" text digest-start)))
+        (push (list :role (intern role)
+                    :path path
+                    :digest digest)
+              rows))
+      (setq pos (1+ role-start)))
+    (nreverse rows)))
+
+(defun nelix-lock--text-package-row (row)
+  "Return one generated lock package ROW as a plist."
+  (list :name (nelix-lock--row-string row "name")
+        :target (nelix-lock--row-string row "target")
+        :resolved-target (nelix-lock--row-string row "resolved-target")
+        :installed-name (nelix-lock--row-string row "installed-name")
+        :pinned (nelix-lock--row-bool row "pinned")
+        :backend (nelix-lock--row-symbol row "backend")
+        :system (nelix-lock--row-symbol row "system")
+        :source (nelix-lock--row-symbol row "source")
+        :nix-channel (nelix-lock--row-string row "nix-channel")
+        :attr-path (nelix-lock--row-string row "attr-path")
+        :original-url (nelix-lock--row-string row "original-url")))
+
+(defun nelix-lock--text-packages (text)
+  "Return generated lock package rows from TEXT."
+  (let ((pos 0)
+        start
+        starts
+        rows)
+    (while (setq start (nelix-lock--substring-index "(:name \"" text pos))
+      (push start starts)
+      (setq pos (+ start (length "(:name \""))))
+    (setq starts (nreverse starts))
+    (while starts
+      (let* ((start (car starts))
+             (end (or (cadr starts)
+                      (or (nelix-lock--substring-index "\n)" text start)
+                          (length text))))
+             (row (substring text start end)))
+        (push (nelix-lock--text-package-row row) rows)
+        (setq starts (cdr starts))))
+    (nreverse rows)))
+
+(defun nelix-lock-read--nelisp-text (lock-file)
+  "Read generated LOCK-FILE without evaluating it.
+
+This avoids loading the full lock S-expression in standalone NeLisp,
+where large quoted package rows are still a runtime risk."
+  (let* ((text (anvil-pkg-compat-read-file lock-file))
+         (schema (nelix-lock--text-string text "schema"))
+         (schema-version (nelix-lock--text-integer text "schema-version"))
+         (version (nelix-lock--text-integer text "version")))
+    (unless (and (equal schema nelix-lock-schema-name)
+                 (integerp schema-version)
+                 (= schema-version nelix-lock-schema-version)
+                 (integerp version)
+                 (= version nelix-lock-schema-version))
+      (signal 'anvil-pkg-error
+              (list (format "nelix-lock-read: unsupported generated lock schema in %s"
+                            lock-file))))
+    (list :schema schema
+          :schema-version schema-version
+          :version version
+          :format (nelix-lock--text-symbol text "format")
+          :lock (nelix-lock--text-string text "lock")
+          :manifest-digest (nelix-lock--text-string text "manifest-digest")
+          :manifest-files (nelix-lock--text-manifest-files text)
+          :profile (nelix-lock--text-string text "profile")
+          :backend (nelix-lock--text-symbol text "backend")
+          :system (nelix-lock--text-symbol text "system")
+          :nix-channel (nelix-lock--text-string text "nix-channel")
+          :nix-version (nelix-lock--text-string text "nix-version")
+          :generated-at (nelix-lock--text-string text "generated-at")
+          :packages (nelix-lock--text-packages text))))
+
 ;;;###autoload
 (defun nelix-lock (&rest plist)
   "Record and return a normalized lock PLIST.
@@ -1920,12 +2141,14 @@ This is the constructor used inside generated lock files."
       (signal 'anvil-pkg-error
               (list (format "nelix-lock-read: file does not exist: %s"
                             lock-file))))
-    (nelix-manifest--load-elisp-file lock-file)
-    (unless nelix-lock-last
-      (signal 'anvil-pkg-error
-        (list (format "nelix-lock-read: %s did not call nelix-lock"
-                            lock-file))))
-    nelix-lock-last))
+    (if (anvil-pkg-compat--standalone-nelisp-p)
+        (nelix-lock-read--nelisp-text lock-file)
+      (nelix-manifest--load-elisp-file lock-file)
+      (unless nelix-lock-last
+        (signal 'anvil-pkg-error
+          (list (format "nelix-lock-read: %s did not call nelix-lock"
+                              lock-file))))
+      nelix-lock-last)))
 
 (defun nelix-manifest--maybe-lock-read (manifest-file)
   "Return MANIFEST-FILE lock data, or nil when no lock exists."
@@ -2005,6 +2228,33 @@ This is the constructor used inside generated lock files."
           :expected expected
           :actual actual
           :expected-files expected-files
+          :actual-files actual-files)))
+
+(defun nelix-lock-check--nelisp (manifest-file &optional manifest)
+  "Return a lightweight lock check for standalone NeLisp.
+
+The standalone runtime avoids loading or deeply comparing the full lock
+S-expression.  Schema and combined manifest/import digest are still
+verified before locked apply may mutate a profile."
+  (nelix-manifest--nelisp-progress :lock-check-read-begin)
+  (let* ((lock (nelix-lock-read manifest-file))
+         (schema-check (nelix-lock-schema-check lock))
+         actual-files actual expected)
+    (nelix-manifest--nelisp-progress :lock-check-read-end)
+    (unless manifest
+      (setq manifest (nelix-manifest-load manifest-file))
+      (nelix-manifest--nelisp-progress :lock-check-manifest-loaded))
+    (setq actual-files (nelix-manifest--lock-files manifest))
+    (setq actual (nelix-manifest--combined-file-digest actual-files))
+    (setq expected (plist-get lock :manifest-digest))
+    (list :ok (and (plist-get schema-check :ok)
+                   (equal expected actual))
+          :manifest (expand-file-name manifest-file)
+          :lock (nelix-manifest-lock-file-name manifest-file)
+          :schema-check schema-check
+          :expected expected
+          :actual actual
+          :expected-files (plist-get lock :manifest-files)
           :actual-files actual-files)))
 
 (defun nelix-manifest--nix-flakeref (manifest target)

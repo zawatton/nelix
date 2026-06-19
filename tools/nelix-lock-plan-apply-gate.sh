@@ -201,6 +201,16 @@ reject_log 'profile install'
 reject_log 'profile remove'
 
 : >"$FAKE_LOG"
+run_nelix locked_dry_run --json apply "$MANIFEST" --locked --dry-run
+expect_out locked_dry_run '"status":"dry-run"'
+expect_out locked_dry_run '"locked":true'
+expect_out locked_dry_run '"lock-enforced":true'
+expect_out locked_dry_run '"lock-check":'
+expect_out locked_dry_run '"locked-installed":'
+reject_log 'profile install'
+reject_log 'profile remove'
+
+: >"$FAKE_LOG"
 run_nelix apply --json apply "$MANIFEST" --allow-remove-count 1
 expect_out apply '"status":"ok"'
 expect_out apply '"installed":\["ripgrep","fd"\]'
