@@ -225,6 +225,59 @@ loading init.  Set =NELIX_INIT_MIGRATION_MAX_MISSING=N=,
 =NELIX_INIT_MIGRATION_MAX_REMOVE=N= to enforce init-specific limits; when unset,
 the corresponding =NELIX_USER_MANIFEST_MAX_*= values are reused.
 
+Latest source-tree result on 2026-06-19:
+
+#+begin_src sh
+NELIX_LISPDIR=/home/madblack-21/Cowork/Notes/dev/anvil-pkg \
+NELIX_USER_MANIFEST=/home/madblack-21/.emacs.d/nelix-package.el \
+NELIX_USER_MANIFEST_NELISP=required \
+NELIX_USER_MANIFEST_LOCKED=required \
+NELIX_USER_MANIFEST_MIN_TARGETS=150 \
+NELIX_USER_MANIFEST_MAX_REMOVE=5 \
+NELIX_USER_MANIFEST_NELISP_MAX_SECONDS=60 \
+NELIX_USER_MANIFEST_NELISP_TIMEOUT=180s \
+packaging/verify-nelix-user-manifest-dsl.sh
+#+end_src
+
+Result:
+
+#+begin_example
+target-count=203
+list: Emacs/NeLisp JSON compare ok
+audit: missing=0 extra=0, Emacs/NeLisp JSON compare ok
+plan --dry-run: Emacs/NeLisp JSON compare ok
+apply --dry-run: remove=0 max=5, Emacs/NeLisp JSON compare ok
+plan/apply --dry-run: action-set compare ok
+upgrade-plan: Emacs/NeLisp JSON compare ok
+lock-check: ok
+locked apply --dry-run: ok
+#+end_example
+
+The same source-tree init migration verifier passes in =load-only= mode, which
+proves the real =~/.emacs.d/early-init.el= and =~/.emacs.d/init.el= load and
+define =my-nelix-audit= after the read-only Nelix checks:
+
+#+begin_src sh
+NELIX_INIT_MIGRATION_AUDIT=load-only \
+NELIX_INIT_MIGRATION_REQUIRE_DEB=skip \
+NELIX_INIT_MIGRATION_MIN_TARGETS=150 \
+NELIX_INIT_MIGRATION_MAX_REMOVE=5 \
+packaging/verify-nelix-user-init-migration.sh
+#+end_src
+
+Full =NELIX_INIT_MIGRATION_AUDIT=required= currently fails for the expected
+bootstrap reason:
+
+#+begin_example
+installed elpa-nelix: 0.1.0-3
+required by ~/.emacs.d/custom-lisp/nelix-linux.el: 0.1.0-4
+#+end_example
+
+This is not a manifest/runtime mismatch: the read-only Nelix commands report
+=missing=0=, =extra=0=, and =remove=0=.  It means the next operational step on
+this machine is to install =../elpa-nelix_0.1.0-4_all.deb= before treating
+=my-nelix-audit= as green.
+
 * 7. Debian Package Verification
 
 Installed package verification requires =elpa-nelix >= 0.1.0-4= because older

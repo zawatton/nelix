@@ -222,6 +222,41 @@ Failure signals =anvil-pkg-error= with:
   =:verified=, and =:reason= when rollback did not return to the captured
   generation.
 
+** 2.4 Requirement coverage
+
+The current transaction contract covers the operational safety requirements as
+follows:
+
+| Requirement | Contract |
+|-------------+----------|
+| apply前 snapshot | Capture =:before-generation= before the first mutating command.  Nix uses the active profile generation; =nelix-native= creates/captures a profile generation so rollback has a concrete target. |
+| 実行 plan の保存 | Write the full =nelix-plan= plist into the transaction record at =started=, before any install/remove command. |
+| 成功済み step の記録 | Rewrite the transaction record after each successful command row with appended =:executed= rows and =:status running=. |
+| 失敗時 rollback plan | Derive =:rollback-plan= from =:before-generation= and =:rollback-on-error=.  On failure, attempt rollback when available and persist =:rollback=. |
+| =--dry-run= と実 apply の差分保証 | =plan --dry-run= and =apply --dry-run= share the same plan path and gates compare =install=, =remove=, =keep=, =protected=, and =commands=.  Dry-run never writes transaction records or queries generation history. |
+| lockfile 更新タイミング | =apply --locked= validates the lock before transaction begin.  =apply= does not rewrite locks; =nelix lock= and =nelix lock migrate= are the explicit lock mutation commands. |
+
+Current implementation evidence:
+
+- =test/nelix-manifest-test.el= covers successful transaction records,
+  rollback-on-command-failure, disabled rollback, rollback verification
+  mismatch, native rollback, and transaction record shape validation.
+- =tools/nelix-lock-plan-apply-gate.sh= runs the public CLI with a fake Nix
+  backend, verifies dry-run has no install/remove side effects, verifies real
+  locked apply records an =ok= transaction, forces an install failure, requires
+  =profile rollback --to-generation 7=, and checks the persisted =error=
+  transaction record.
+- =packaging/verify-installed-nelix-cli-gate.sh= repeats the public installed
+  CLI checks from the packaged payload.
+
+Open design edge:
+
+- There is no automatic "resume interrupted transaction" command yet.  The
+  durable recovery contract is manual: inspect =transaction show=, then run
+  =nelix rollback GENERATION= using =:rollback-plan=.  A future
+  =nelix transaction recover APPLY-ID= command must use the same record schema
+  and must not infer recovery state from current profile contents alone.
+
 * 3. Remove Safety
 
 Real =apply= refuses unmanaged remove actions unless the caller explicitly
