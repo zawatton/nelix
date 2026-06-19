@@ -107,6 +107,33 @@ check_deb_version() {
   fi
 }
 
+preflight_required_init_audit() {
+  case "$audit_mode" in
+    required) ;;
+    *) return 0 ;;
+  esac
+
+  if ! command -v dpkg-query >/dev/null 2>&1 ||
+     ! command -v dpkg >/dev/null 2>&1; then
+    return 0
+  fi
+
+  expected_deb_version="${NELIX_INIT_MIGRATION_EXPECTED_DEB_VERSION:-0.1.0-5}"
+  installed_deb_version="$(dpkg-query -W -f='${Version}' elpa-nelix 2>/dev/null || true)"
+  if [ -z "$installed_deb_version" ]; then
+    return 0
+  fi
+
+  if ! dpkg --compare-versions "$installed_deb_version" ge "$expected_deb_version"; then
+    echo "elpa-nelix is too old for required init audit: installed=$installed_deb_version expected>=$expected_deb_version" >&2
+    matching_deb="$repo_dir/../elpa-nelix_${expected_deb_version}_all.deb"
+    if [ -f "$matching_deb" ]; then
+      echo "run: sudo apt install --reinstall $matching_deb" >&2
+    fi
+    exit 1
+  fi
+}
+
 resolved_nelix_bin="$nelix_bin"
 case "$nelix_bin" in
   */*) ;;
@@ -130,6 +157,8 @@ case "${NELIX_INIT_MIGRATION_REQUIRE_DEB:-auto}" in
     exit 64
     ;;
 esac
+
+preflight_required_init_audit
 
 run_nelix_json() {
   env NELIX_LISPDIR="$nelix_lispdir" "$nelix_bin" "$@" >/dev/null

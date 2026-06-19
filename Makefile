@@ -304,6 +304,8 @@ verify-deb-contents:
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-init-migration.sh | grep -Fq 'run_nelix_json --json lock "$$manifest"'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-init-migration.sh | grep -Fq 'cache_backup="$$runtime_tmp/manifest.nelix-aot-targets.backup"'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-init-migration.sh | grep -Fq 'NELIX_INIT_MIGRATION_AUDIT'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-init-migration.sh | grep -Fq 'elpa-nelix is too old for required init audit'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-init-migration.sh | grep -Fq 'sudo apt install --reinstall'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/README.org.gz | gzip -dc | grep -q 'NELIX_INIT_MIGRATION_AUDIT=load-only'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/doc/elpa-nelix/packaging/verify-extracted-nelix-debian.sh'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/doc/elpa-nelix/schema/nelix-manifest-dsl-v1.schema.json'
