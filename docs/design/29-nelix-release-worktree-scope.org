@@ -402,12 +402,12 @@ to dry-run.  It stages files only when =--stage= is passed explicitly.
 
 * Current release facts
 
-- Debian revision: =0.1.0-4=
-- Local Debian artifact: =../elpa-nelix_0.1.0-4_all.deb=
+- Debian revision: =0.1.0-5=
+- Local Debian artifact: =../elpa-nelix_0.1.0-5_all.deb=
 - Debian source gate passed: =make deb-source-gate= produced
-  =../nelix_0.1.0.orig.tar.gz=, =../nelix_0.1.0-4.dsc=,
-  =../nelix_0.1.0-4.debian.tar.xz=, and
-  =../nelix_0.1.0-4_source.changes=, then linted the source changes.
+  =../nelix_0.1.0.orig.tar.gz=, =../nelix_0.1.0-5.dsc=,
+  =../nelix_0.1.0-5.debian.tar.xz=, and
+  =../nelix_0.1.0-5_source.changes=, then linted the source changes.
 - Local gate passed: =make deb-local-gate=
 - Local APT repository gate passed: =make apt-repo-gate=
 - Signed/static/HTTP APT gate passed: =make apt-http-gate=
@@ -451,7 +451,7 @@ to dry-run.  It stages files only when =--stage= is passed explicitly.
   [[*Exact staging plan][Exact staging plan]] are checked with =git add -n= and select only
   source/doc/test/packaging files, not generated Debian outputs.  The same
   audit checks that =DEB_VERSION= and the top =debian/changelog= version both
-  remain =0.1.0-4=.
+  remain =0.1.0-5=.
 - Debian source packaging uses =debian/source/options= to ignore local
   generated caches and repository outputs during source diff generation.
 - Native registry: static remote indexes and package recipe rows are
@@ -542,7 +542,7 @@ to dry-run.  It stages files only when =--stage= is passed explicitly.
 
 * Remaining before public release
 
-- Install =../elpa-nelix_0.1.0-4_all.deb= and run =make deb-full-gate= on the
+- Install =../elpa-nelix_0.1.0-5_all.deb= and run =make deb-full-gate= on the
   target Debian host.  The full gate now includes the installed-command real
   manifest runtime check, so =~/.emacs.d/nelix-package.el= is verified through
   =/usr/bin/nelix --runtime nelisp= for list/audit/plan/apply dry-runs,

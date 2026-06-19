@@ -53,7 +53,7 @@ The local APT repository target creates:
 
 #+begin_example
 ../nelix-apt-repo/
-  pool/main/n/nelix/elpa-nelix_0.1.0-4_all.deb
+  pool/main/n/nelix/elpa-nelix_0.1.0-5_all.deb
   dists/unstable/Release
   dists/unstable/InRelease
   dists/unstable/Release.gpg
@@ -83,7 +83,7 @@ to =../nelix-apt-public=:
 
 #+begin_example
 ../nelix-apt-public/
-  pool/main/n/nelix/elpa-nelix_0.1.0-4_all.deb
+  pool/main/n/nelix/elpa-nelix_0.1.0-5_all.deb
   dists/unstable/Release
   dists/unstable/InRelease
   dists/unstable/Release.gpg
@@ -118,7 +118,7 @@ exists.  It also checks that both the =Packages= row and the payload version
 match =DEB_VERSION=.
 
 =make deb-source-gate= builds the first-upload source artifacts with
-=dpkg-buildpackage -S -sa= and lints =../nelix_0.1.0-4_source.changes=.
+=dpkg-buildpackage -S -sa= and lints =../nelix_0.1.0-5_source.changes=.
 =debian/source/options= keeps local generated caches and repository
 outputs such as =.cache/=, =nelix-apt-public/=, and =nelix-rpmbuild/=
 out of the source diff, so developer smoke artifacts do not break the

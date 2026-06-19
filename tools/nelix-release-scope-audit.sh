@@ -342,6 +342,20 @@ require_autopkgtest_gate_strength() {
   require_contains packaging/verify-nelix-native-cli-gate.sh \
     'native apply --dry-run mutated lockgate profile'
   require_contains packaging/verify-nelix-native-cli-gate.sh \
+    'mvp_checkpoint recipe-registry'
+  require_contains packaging/verify-nelix-native-cli-gate.sh \
+    'mvp_checkpoint fetch'
+  require_contains packaging/verify-nelix-native-cli-gate.sh \
+    'mvp_checkpoint hash-verify'
+  require_contains packaging/verify-nelix-native-cli-gate.sh \
+    'mvp_checkpoint unpack'
+  require_contains packaging/verify-nelix-native-cli-gate.sh \
+    'mvp_checkpoint profile-activation'
+  require_contains packaging/verify-nelix-native-cli-gate.sh \
+    'mvp_checkpoint rollback'
+  require_contains packaging/verify-nelix-native-cli-gate.sh \
+    'mvp_checkpoint lockfile-recording'
+  require_contains packaging/verify-nelix-native-cli-gate.sh \
     'NELIX_REGISTRY_INCLUDE_PACKAGED=0'
   require_contains debian/elpa-nelix.elpa \
     'registry/packages/system/*.el registry/packages/system'

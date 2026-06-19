@@ -48,8 +48,21 @@ Native store MVP evidence is currently tracked as follows:
 
 The packaged gate prints
 =nelix native store MVP ok: recipe-registry fetch hash-verify unpack profile-activation rollback lockfile-recording=
-only after these CLI checks pass, and =verify-deb-contents= verifies that the
-packaged verifier still contains that MVP anchor.
+only after these CLI checks pass.  It also prints one checkpoint per MVP
+capability:
+
+#+begin_example
+nelix native store MVP checkpoint: recipe-registry ok
+nelix native store MVP checkpoint: fetch ok
+nelix native store MVP checkpoint: hash-verify ok
+nelix native store MVP checkpoint: unpack ok
+nelix native store MVP checkpoint: profile-activation ok
+nelix native store MVP checkpoint: rollback ok
+nelix native store MVP checkpoint: lockfile-recording ok
+#+end_example
+
+=verify-deb-contents= verifies that the packaged verifier still contains the
+checkpoint calls and final MVP anchor.
 
 The intent is not to clone Nix byte-for-byte.  The intent is to
 recreate the useful Nix mechanisms in Nelisp/Elisp:
@@ -1200,6 +1213,10 @@ The next concrete deliverables should be:
     The native lock path is also gated: the lock JSON and S-expression lockfile
     must retain dependency closure rows, =:recipe-source=, =:recipe-install=,
     =:recipe-dependencies=, and the source hashes needed for locked replay.
+    The verifier emits explicit MVP checkpoint lines for recipe registry,
+    fetch, hash verification, unpack, profile activation, rollback, and
+    lockfile recording; Debian package content checks ensure those checkpoint
+    calls remain packaged.
 
 =nelix-apply= can now review native backend changes with =--dry-run= before
 mutating native store profiles.  Broader real fetch/build recipe coverage is

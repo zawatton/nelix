@@ -298,6 +298,10 @@ reject_json() {
   fi
 }
 
+mvp_checkpoint() {
+  printf 'nelix native store MVP checkpoint: %s ok\n' "$1"
+}
+
 native_lock_manifest="$tmp/native-lock-manifest.el"
 cat >"$native_lock_manifest" <<'EOF'
 (require 'nelix-manifest)
@@ -344,6 +348,7 @@ grep -q "$sha256_dep" "$native_lock_manifest.nelix-lock" || {
   echo "nelix native CLI gate: native lock omitted dependency source hash" >&2
   exit 1
 }
+mvp_checkpoint lockfile-recording
 
 run_json registry_list registry list --system x86_64-linux
 expect_json registry_list '"operation":"registry-list"'
@@ -406,6 +411,7 @@ grep -q ':path "packages/local/fixture-archive.el"' "$generated_index" || {
   echo "nelix native CLI gate: generated registry index omitted fixture-archive path" >&2
   exit 1
 }
+mvp_checkpoint recipe-registry
 
 run_json audit native audit
 expect_json audit '"operation":"native-audit"'
@@ -464,6 +470,8 @@ test "$archive_output" = "fixture-archive-ok unpack" || {
   echo "nelix native CLI gate: archive activation output mismatch: $archive_output" >&2
   exit 1
 }
+mvp_checkpoint fetch
+mvp_checkpoint unpack
 
 cat >"$registry/fixture-bad-hash.el" <<EOF
 (require 'nelix-registry)
@@ -497,6 +505,7 @@ if [ -d "$data/nelix/store" ] && find "$data/nelix/store" -name '*fixture-bad-ha
   echo "nelix native CLI gate: failed hash install exposed a store entry" >&2
   exit 1
 fi
+mvp_checkpoint hash-verify
 
 run_json install native install fixture-tool --profile default --system x86_64-linux
 expect_json install '"operation":"native-install"'
@@ -597,6 +606,7 @@ test "$rollback_output" = "fixture-tool-ok rollback" || {
   echo "nelix native CLI gate: rollback activation output mismatch: $rollback_output" >&2
   exit 1
 }
+mvp_checkpoint rollback
 
 run_json install_app native install fixture-app --profile default --system x86_64-linux
 expect_json install_app '"operation":"native-install"'
@@ -698,6 +708,7 @@ test "$locked_app_output" = "fixture-app-ok locked" || {
   echo "nelix native CLI gate: locked app output mismatch: $locked_app_output" >&2
   exit 1
 }
+mvp_checkpoint profile-activation
 
 run_json gc native gc --dry-run --profile default
 expect_json gc '"operation":"native-gc"'
