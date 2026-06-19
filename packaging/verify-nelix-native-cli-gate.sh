@@ -823,12 +823,12 @@ test "$locked_app_output" = "fixture-app-ok locked" || {
   echo "nelix native CLI gate: locked app output mismatch: $locked_app_output" >&2
   exit 1
 }
-mvp_checkpoint profile-symlink
+mvp_checkpoint profile-activation
 
 run_json gc native gc --dry-run --profile default
 expect_json gc '"operation":"native-gc"'
 expect_json gc '"dry-run":true'
 expect_json gc '"removed":null'
 
-echo "nelix native store MVP ok: recipe-registry fetch hash-verify unpack profile-symlink rollback lockfile-recording"
+echo "nelix native store MVP ok: recipe-registry fetch hash-verify unpack profile-activation rollback lockfile-recording"
 echo "nelix native CLI gate ok"

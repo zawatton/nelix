@@ -141,7 +141,7 @@ SMOKE_BUILD_PAIRS = \
   examples/stdenv-hello.el:gnu-hello \
   examples/python-black.el:black
 
-.PHONY: all check verify-local release-scope-audit release-scope-status release-scope-stage release-scope-stage-a release-scope-stage-b release-scope-stage-c release-scope-stage-d publication-local-gate publication-url-check publication-preflight publication-public-smoke deb-orig deb-source deb-source-lint deb-source-gate deb-build verify-deb-contents deb-lint deb-local-gate install-built-deb deb-release-gate deb-full-gate fix-debian-ownership apt-repo verify-apt-repo apt-repo-gate apt-sign-repo verify-signed-apt-repo apt-signed-repo-gate apt-publish-static verify-apt-public-tree apt-publication-preflight apt-http-smoke apt-http-gate apt-public-url-smoke fedora-source fedora-source-verify fedora-source-gate fedora-rpm-build fedora-rpm-lint fedora-repo fedora-publish-static verify-fedora-public-tree fedora-publication-preflight fedora-dnf-smoke fedora-local-gate fedora-container-gate fedora-public-url-smoke verify-user-manifest-dsl verify-user-runtime-gate verify-installed-user-manifest-runtime verify-installed-debian verify-installed-cli-gate verify-user-environment verify-user-init-migration autopkgtest-debian check-whitespace nix-check test compile compile-tests check-declare install install-elisp install-doc install-bin uninstall clean deb-clean distclean lint help smoke-render smoke-pairs-check smoke-eval-pairs-check smoke-build-pairs-check smoke-eval smoke-build smoke-nelisp smoke-nelix-nelisp smoke-nelix-cli-nelisp smoke-nelix-manifest-dsl-schema smoke-nelix-lock-schema smoke-nelix-lock-plan-apply smoke-nelix-lock-plan-apply-nelisp smoke-nelix-native-cli smoke-nelix-aot-cache-cli smoke-nelix-aot-engine-nelisp smoke-nelix-aot-cache-fast-lane smoke-nelix-aot-artifact-nelisp smoke-nelix-aot-native-cli-proof smoke-nelix-aot-native-artifact-host smoke-nelix-cli-image-build smoke-nelix-cli-image smoke-nelisp-capabilities smoke-nelisp-suite-readiness smoke-nelisp-suite-loadability smoke-nelisp-suite smoke-nelisp-suite-image-build smoke-nelisp-suite-image smoke-nelisp-local smoke-clean
+.PHONY: all check verify-local release-scope-audit release-scope-status release-scope-stage release-scope-stage-a release-scope-stage-b release-scope-stage-c release-scope-stage-d publication-local-gate publication-url-check publication-preflight publication-public-smoke deb-orig deb-source deb-source-lint deb-source-gate deb-build verify-deb-contents deb-lint deb-local-gate install-built-deb deb-release-gate deb-full-gate fix-debian-ownership apt-repo verify-apt-repo apt-repo-gate apt-sign-repo verify-signed-apt-repo apt-signed-repo-gate apt-publish-static verify-apt-public-tree apt-publication-preflight apt-http-smoke apt-http-gate apt-public-url-smoke fedora-source fedora-source-verify fedora-source-gate fedora-rpm-build fedora-rpm-lint fedora-repo fedora-publish-static verify-fedora-public-tree fedora-publication-preflight fedora-dnf-smoke fedora-local-gate fedora-container-gate fedora-public-url-smoke verify-user-manifest-dsl verify-user-runtime-gate verify-installed-user-manifest-runtime verify-installed-debian verify-installed-cli-gate verify-user-environment verify-user-init-migration autopkgtest-debian check-whitespace nix-check test compile compile-tests check-declare install install-elisp install-doc install-bin uninstall clean deb-clean distclean lint help smoke-render smoke-pairs-check smoke-eval-pairs-check smoke-build-pairs-check smoke-eval smoke-build smoke-nelisp smoke-nelix-nelisp smoke-nelix-cli-nelisp smoke-nelix-manifest-dsl-schema smoke-nelix-lock-schema smoke-nelix-lock-plan-apply smoke-nelix-lock-plan-apply-nelisp smoke-nelix-lock-plan-apply-nelisp-direct smoke-nelix-native-cli smoke-nelix-aot-cache-cli smoke-nelix-aot-engine-nelisp smoke-nelix-aot-cache-fast-lane smoke-nelix-aot-artifact-nelisp smoke-nelix-aot-native-cli-proof smoke-nelix-aot-native-artifact-host smoke-nelix-cli-image-build smoke-nelix-cli-image smoke-nelisp-capabilities smoke-nelisp-suite-readiness smoke-nelisp-suite-loadability smoke-nelisp-suite smoke-nelisp-suite-image-build smoke-nelisp-suite-image smoke-nelisp-local smoke-clean
 
 all: check
 
@@ -413,14 +413,14 @@ verify-deb-contents:
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-native-cli-gate.sh | grep -Fq 'mvp_checkpoint fetch'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-native-cli-gate.sh | grep -Fq 'mvp_checkpoint hash-verify'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-native-cli-gate.sh | grep -Fq 'mvp_checkpoint unpack'
-	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-native-cli-gate.sh | grep -Fq 'mvp_checkpoint profile-symlink'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-native-cli-gate.sh | grep -Fq 'mvp_checkpoint profile-activation'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-native-cli-gate.sh | grep -Fq 'mvp_checkpoint rollback'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-native-cli-gate.sh | grep -Fq 'mvp_checkpoint lockfile-recording'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-native-cli-gate.sh | grep -Fq 'native_lock_nelisp_validate'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-native-cli-gate.sh | grep -Fq 'rollback_after_dependency native rollback --profile default --generation 1'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-native-cli-gate.sh | grep -Fq 'dependency rollback left dependency profile tree file behind'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-native-cli-gate.sh | grep -Fq 'activation profile tree file is not a symlink'
-	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-native-cli-gate.sh | grep -Fq 'nelix native store MVP ok: recipe-registry fetch hash-verify unpack profile-symlink rollback lockfile-recording'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-native-cli-gate.sh | grep -Fq 'nelix native store MVP ok: recipe-registry fetch hash-verify unpack profile-activation rollback lockfile-recording'
 	grep -Fq 'fetch, hash verification, unpack, profile symlink, rollback' docs/design/22-nelix-native-store.org
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'registry list [--system SYSTEM]'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'packaged_registry'
@@ -680,7 +680,8 @@ help:
 	@echo "make smoke-nelix-cli-image — verify explicit NeLisp runtime-image CLI mode"
 	@echo "make smoke-nelix-manifest-dsl-schema — verify manifest DSL v1 schema and CLI summary contract"
 	@echo "make smoke-nelix-lock-schema — verify lockfile schema, CLI summary, JSON, and migration contract"
-	@echo "make smoke-nelix-lock-plan-apply-nelisp — verify lock/plan/apply/rollback through standalone NeLisp"
+	@echo "make smoke-nelix-lock-plan-apply-nelisp — verify lock/plan/apply/rollback through NeLisp default runtime"
+	@echo "make smoke-nelix-lock-plan-apply-nelisp-direct — verify the slower direct standalone NeLisp transaction path"
 	@echo "make smoke-nelix-native-cli — verify native store CLI install/list/profile/activate/gc with fixture registry"
 	@echo "make apt-repo     — build a local APT repository at $(APT_REPO_DIR)"
 	@echo "make verify-apt-repo — inspect generated APT repository metadata"
@@ -1045,6 +1046,9 @@ smoke-nelix-lock-plan-apply:
 	tools/nelix-lock-plan-apply-gate.sh
 
 smoke-nelix-lock-plan-apply-nelisp:
+	NELIX_RUNTIME=nelisp tools/nelix-lock-plan-apply-gate.sh
+
+smoke-nelix-lock-plan-apply-nelisp-direct:
 	NELIX_RUNTIME=nelisp NELIX_NELISP_AOT=0 tools/nelix-lock-plan-apply-gate.sh
 
 smoke-nelix-native-cli:

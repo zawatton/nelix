@@ -498,7 +498,9 @@ nelix_run_aot_id_cache_shell_lane() {
   "$nix_program" profile list --profile "$profile" \
     | sed -n 's/\x1b\[[0-9;]*m//g; s/^Name:[[:space:]]*//p' \
     | awk -F '\t' -v command="$command" -v json="$json" \
-        -v locked="$locked" -v cache_file="$cache" '
+        -v locked="$locked" -v cache_file="$cache" \
+        -v lock_present="$([ -f "${manifest}.nelix-lock" ] && printf true || printf false)" \
+        -v profile_path="$profile" '
         function norm(s, t) {
           t = s
           sub(/-[0-9]+$/, "", t)
@@ -523,11 +525,22 @@ nelix_run_aot_id_cache_shell_lane() {
           }
           printf "]"
         }
+        function json_action_object(action, name) {
+          printf "{\"action\":%s,\"name\":%s,\"backend\":\"nix\"", j(action), j(name)
+          if (action == "install") {
+            printf ",\"target\":%s,\"resolved-target\":%s", j(name), j(name)
+            printf ",\"installed-name\":null,\"argv\":[\"profile\",\"install\",\"--profile\",%s,%s]", j(profile_path), j("nixpkgs#" name)
+          } else if (action == "remove") {
+            printf ",\"target\":null,\"resolved-target\":null"
+            printf ",\"installed-name\":%s,\"argv\":[\"profile\",\"remove\",%s,\"--profile\",%s]", j(name), j(name), j(profile_path)
+          }
+          printf "}"
+        }
         function json_actions(action, arr, n,   i) {
           printf "["
           for (i = 1; i <= n; i++) {
             if (i > 1) printf ","
-            printf "{\"action\":%s,\"name\":%s,\"backend\":\"nix\"}", j(action), j(arr[i])
+            json_action_object(action, arr[i])
           }
           printf "]"
         }
@@ -744,7 +757,10 @@ nelix_run_aot_id_cache_shell_lane() {
             } else if (command == "plan" || command == "apply-dry-run") {
               printf "{\"operation\":\"apply\",\"status\":%s,\"dry-run\":true", j(apply_status)
               printf ",\"manifest\":%s", j(manifest)
+              printf ",\"lock\":%s", j(manifest ".nelix-lock")
+              printf ",\"lock-present\":%s", lock_present
               printf ",\"profile\":%s", j(profile_name)
+              printf ",\"nix-profile\":%s", j(profile_path)
               printf ",\"system\":%s", j(system_value)
               printf ",\"install\":"; json_actions("install", missing, missing_count)
               printf ",\"remove\":"; json_actions("remove", extra, extra_count)
@@ -753,15 +769,16 @@ nelix_run_aot_id_cache_shell_lane() {
               printf ",\"commands\":["
               for (i = 1; i <= missing_count; i++) {
                 if (i > 1) printf ","
-                printf "{\"action\":\"install\",\"name\":%s,\"backend\":\"nix\"}", j(missing[i])
+                json_action_object("install", missing[i])
               }
               for (i = 1; i <= extra_count; i++) {
                 if (missing_count > 0 || i > 1) printf ","
-                printf "{\"action\":\"remove\",\"name\":%s,\"backend\":\"nix\"}", j(extra[i])
+                json_action_object("remove", extra[i])
               }
               printf "]"
               printf ",\"count\":%d", missing_count + extra_count
               printf ",\"empty\":%s", bool(missing_count == 0 && extra_count == 0)
+              printf ",\"remove-safety\":{\"remove-count\":%d,\"allow-remove\":false,\"allow-remove-count\":null,\"allowed\":%s,\"required\":%s}", extra_count, bool(extra_count == 0), bool(extra_count > 0)
               printf ",\"lock-drift\":null"
               printf ",\"skipped\":{\"lock-drift\":\"nelisp-aot\",\"lock-read\":\"nelisp-aot\",\"transaction\":\"nelisp-aot\"}"
               if (locked == "1") {
@@ -796,12 +813,14 @@ nelix_run_aot_id_cache_shell_lane() {
             printf "backend\tnix\nfallback\t:nelisp-aot-cache\naot-cache\t%s\n", cache_file
           } else if (command == "plan" || command == "apply-dry-run") {
             printf "operation\tapply\nstatus\t%s\ndry-run\ttrue\n", apply_status
-            printf "manifest\t%s\nprofile\t%s\nsystem\t%s\n", manifest, profile_name, system_value
+            printf "manifest\t%s\nlock\t%s.nelix-lock\nlock-present\t%s\n", manifest, manifest, lock_present
+            printf "profile\t%s\nnix-profile\t%s\nsystem\t%s\n", profile_name, profile_path, system_value
             line_names("install", missing, missing_count)
             line_names("remove", extra, extra_count)
             line_names("keep", keep, keep_count)
             line_names("protected", protected, protected_count)
             printf "count\t%d\nempty\t%s\n", missing_count + extra_count, bool(missing_count == 0 && extra_count == 0)
+            printf "remove-count\t%d\nremove-required\t%s\n", extra_count, bool(extra_count > 0)
             if (locked == "1") {
               printf "locked\ttrue\nlock-enforced\ttrue\nlock-check\tok\n"
             }
