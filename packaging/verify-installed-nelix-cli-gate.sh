@@ -344,6 +344,7 @@ expect_json lock '"lock":'
 expect_json lock '"schema":"nelix-lock"'
 expect_json lock '"schema-version":2'
 validate_lock_json_schema_smoke
+lock_fingerprint_before="$(cksum "$manifest.nelix-lock")"
 
 run_json lock_validate lock validate "$manifest"
 expect_json lock_validate '"ok":true'
@@ -401,6 +402,11 @@ expect_log 'profile install --profile .+nixpkgs#ripgrep'
 expect_log 'profile install --profile .+nixpkgs#fd'
 expect_log 'profile remove bat --profile '
 expect_log 'profile history --json --profile '
+lock_fingerprint_after="$(cksum "$manifest.nelix-lock")"
+if [ "$lock_fingerprint_before" != "$lock_fingerprint_after" ]; then
+  echo "nelix installed CLI gate: locked apply rewrote lock file" >&2
+  exit 1
+fi
 
 ok_record="$(latest_transaction_record)"
 run_json transaction_list transaction list --limit 5

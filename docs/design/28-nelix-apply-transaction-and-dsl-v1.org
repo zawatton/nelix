@@ -182,7 +182,8 @@ It runs =/usr/bin/nelix= with a fake =nix= executable and verifies:
 - =plan MANIFEST= reports install/remove rows;
 - =apply MANIFEST --dry-run= reports transaction metadata without mutating.
 - =apply MANIFEST --locked --allow-remove-count 1= enforces the lock and
-  reaches the expected fake Nix profile install/remove commands.
+  reaches the expected fake Nix profile install/remove commands without
+  rewriting =MANIFEST.nelix-lock=.
 - =transaction list= and =transaction show= can read the persisted apply record
   and report command counts, executed rows, and the rollback plan.
 
