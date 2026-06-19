@@ -680,6 +680,8 @@
     (should (member "verified"
                     (nelix-cli-test--json-array-list
                      (alist-get 'rollback-result-keys transaction))))
+    (should (equal "nelix transaction recover ID|FILE --dry-run"
+                   (alist-get 'recovery transaction)))
     (should (member "action"
                     (nelix-cli-test--json-array-list
                      (alist-get 'executed-required transaction))))))
@@ -1080,7 +1082,14 @@
                  (show-result
                   (nelix-cli-dispatch
                    '(:command "transaction" :args ("show" "apply-alpha"))))
+                 (recover-result
+                  (nelix-cli-dispatch
+                   '(:command "transaction"
+                     :args ("recover" "apply-alpha" "--dry-run"))))
                  (record (plist-get show-result :record))
+                 (recover-json (nelix-cli-format-result recover-result t))
+                 (parsed-recover (json-parse-string recover-json
+                                                    :object-type 'alist))
                  (json (nelix-cli-format-result show-result t))
                  (parsed (json-parse-string json :object-type 'alist))
                  (parsed-record (alist-get 'record parsed)))
@@ -1102,9 +1111,34 @@
                            (plist-get record :schema)))
             (should (eq 'error (plist-get record :status)))
             (should (equal "install failed" (plist-get record :error)))
+            (should (eq 'ok (plist-get recover-result :status)))
+            (should (equal 'transaction-recover
+                           (plist-get recover-result :operation)))
+            (should (plist-get recover-result :dry-run))
+            (should (equal 7 (plist-get recover-result :generation)))
+            (should (equal '("rollback" "7")
+                           (plist-get recover-result :manual-command)))
+            (should (equal "transaction-recover"
+                           (alist-get 'operation parsed-recover)))
+            (should (equal ["rollback" "7"]
+                           (alist-get 'manual-command parsed-recover)))
             (should (equal "error" (alist-get 'status parsed-record)))
             (should (equal "nelix-apply-transaction"
                            (alist-get 'schema parsed-record)))))
+      (delete-directory dir t))))
+
+(ert-deftest nelix-cli-test-transaction-recover-requires-dry-run ()
+  "Transaction recovery is read-only until a real recover command is designed."
+  (let* ((dir (make-temp-file "nelix-cli-transaction-recover-" t))
+         (nelix-transaction-log-root dir)
+         (file (expand-file-name "apply-alpha.el" dir)))
+    (unwind-protect
+        (progn
+          (nelix-cli-test--write-transaction-record file 'error)
+          (should-error
+           (nelix-cli-dispatch
+            '(:command "transaction" :args ("recover" "apply-alpha")))
+           :type 'anvil-pkg-error))
       (delete-directory dir t))))
 
 (ert-deftest nelix-cli-test-formats-string-list-as-lines ()

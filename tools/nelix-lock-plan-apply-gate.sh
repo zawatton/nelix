@@ -284,5 +284,11 @@ expect_out transaction_show_error '"ok":true'
 expect_out transaction_show_error '"verified":true'
 expect_out transaction_show_error '"rollback-plan":'
 expect_out transaction_show_error '"generation":7'
+run_nelix transaction_recover_error --json transaction recover "$error_record" --dry-run
+expect_out transaction_recover_error '"operation":"transaction-recover"'
+expect_out transaction_recover_error '"dry-run":true'
+expect_out transaction_recover_error '"record-status":"error"'
+expect_out transaction_recover_error '"generation":7'
+expect_out transaction_recover_error '"manual-command":\["rollback","7"\]'
 
 echo "nelix_lock_gate_result label=nelix_lock_plan_apply_gate rc=0"

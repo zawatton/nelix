@@ -261,6 +261,7 @@ When nil, records are written under the user's state directory at
         :rollback-plan-unavailable-reasons
         nelix-transaction-rollback-unavailable-reasons
         :rollback-result-keys nelix-transaction-rollback-result-keys
+        :recovery "nelix transaction recover ID|FILE --dry-run"
         :executed-required '("action" "name")
         :stable t))
 
@@ -1951,6 +1952,64 @@ file modification time, newest first."
           :operation 'transaction-show
           :file file
           :record record)))
+
+(defun nelix-transaction--recover-command (record rollback-plan)
+  "Return a public manual rollback command for RECORD and ROLLBACK-PLAN."
+  (let* ((transaction (plist-get record :transaction))
+         (backend (plist-get transaction :backend))
+         (generation (plist-get rollback-plan :generation))
+         (profile (plist-get transaction :profile)))
+    (cond
+     ((eq backend 'nelix-native)
+      (append (list "native" "rollback")
+              (and profile (list "--profile" profile))
+              (and generation
+                   (list "--generation" (number-to-string generation)))))
+     (generation
+      (list "rollback" (number-to-string generation)))
+     (t nil))))
+
+;;;###autoload
+(defun nelix-transaction-recover (id-or-file &rest args)
+  "Return the recovery plan for transaction record ID-OR-FILE.
+
+This command is intentionally read-only for schema v1 records.  ARGS must
+contain `:dry-run t'; callers can execute the returned `:manual-command' after
+reviewing the record."
+  (let ((dry-run (plist-get args :dry-run)))
+    (unless dry-run
+      (signal 'anvil-pkg-error
+              (list "nelix transaction recover: real recovery is not implemented; use --dry-run")))
+    (let* ((file (nelix-transaction--resolve-file id-or-file))
+           (record (nelix-transaction-record-read file))
+           (rollback-plan (plist-get record :rollback-plan))
+           (transaction (plist-get record :transaction))
+           (manual-command
+            (nelix-transaction--recover-command record rollback-plan)))
+      (unless (plist-get rollback-plan :available)
+        (signal 'anvil-pkg-error
+                (list (format "nelix transaction recover: rollback unavailable for %s: %s"
+                              id-or-file
+                              (or (plist-get rollback-plan :reason)
+                                  "unknown")))))
+      (unless manual-command
+        (signal 'anvil-pkg-error
+                (list (format "nelix transaction recover: rollback command unavailable for %s"
+                              id-or-file))))
+      (list :status 'ok
+            :operation 'transaction-recover
+            :dry-run t
+            :file file
+            :record-id (plist-get record :id)
+            :record-status (plist-get record :status)
+            :backend (plist-get transaction :backend)
+            :profile (plist-get transaction :profile)
+            :generation (plist-get rollback-plan :generation)
+            :rollback-plan rollback-plan
+            :manual-command manual-command
+            :command-count (length (plist-get (plist-get record :plan)
+                                              :commands))
+            :executed-count (length (plist-get record :executed))))))
 
 (defun nelix-manifest--transaction-active-generation (transaction)
   "Return the active generation for TRANSACTION's backend."

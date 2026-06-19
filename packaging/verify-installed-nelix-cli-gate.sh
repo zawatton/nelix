@@ -402,6 +402,10 @@ latest_transaction_record() {
   echo "nelix installed CLI gate: help omits transaction show command" >&2
   exit 1
 }
+"$nelix_bin" --help | grep -Fq 'transaction recover ID|FILE --dry-run' || {
+  echo "nelix installed CLI gate: help omits transaction recover command" >&2
+  exit 1
+}
 
 run_json schema_all schema
 expect_json schema_all '"name":"manifest-dsl-v1"'
@@ -491,6 +495,7 @@ expect_json schema_transaction '"rollback-disabled"'
 expect_json schema_transaction '"before-generation-missing"'
 expect_json schema_transaction '"rollback-result-keys":\['
 expect_json schema_transaction '"verified"'
+expect_json schema_transaction '"recovery":"nelix transaction recover ID|FILE --dry-run"'
 expect_json schema_transaction '"executed-required":\['
 expect_json schema_transaction '"action"'
 
@@ -700,6 +705,12 @@ expect_json transaction_show_error '"verified":true'
 expect_json_any transaction_show_error \
   '"action":"install","name":"ripgrep"' \
   '"name":"ripgrep","action":"install"'
+run_json transaction_recover_error transaction recover "$failed_record" --dry-run
+expect_json transaction_recover_error '"operation":"transaction-recover"'
+expect_json transaction_recover_error '"dry-run":true'
+expect_json transaction_recover_error '"record-status":"error"'
+expect_json transaction_recover_error '"generation":7'
+expect_json transaction_recover_error '"manual-command":\["rollback","7"\]'
 
 : >"$fake_log"
 run_json locked_apply apply "$manifest" --locked --allow-remove-count 1
