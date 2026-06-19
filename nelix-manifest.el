@@ -100,6 +100,16 @@
   '("name" "target" "backend" "system" "source")
   "Required package row keys in the public Nelix lock schema v2.")
 
+(defconst nelix-lock-schema-commands
+  '("lock" "lock validate" "lock diff" "lock migrate")
+  "Public CLI commands that own lockfile schema v2 lifecycle.")
+
+(defconst nelix-lock-schema-compatibility
+  '("legacy-v1-readable-migrate-required"
+    "legacy-v2-readable"
+    "future-version-rejected")
+  "Stable compatibility policy labels for lockfile schema v2.")
+
 (defconst nelix-transaction-schema-name "nelix-apply-transaction"
   "Stable schema name recorded in Nelix apply transaction records.")
 
@@ -180,6 +190,13 @@ When nil, records are written under the user's state directory at
         :schema-version nelix-lock-schema-version
         :version nelix-lock-schema-version
         :format "sexp"
+        :source-of-truth "MANIFEST.nelix-lock"
+        :json-output "nelix --json lock MANIFEST"
+        :commands nelix-lock-schema-commands
+        :compatibility nelix-lock-schema-compatibility
+        :migration "nelix lock migrate MANIFEST [--dry-run]"
+        :validation "nelix lock validate MANIFEST"
+        :diff "nelix lock diff MANIFEST"
         :json-schema "docs/schema/nelix-lock-v2.schema.json"
         :required nelix-lock-schema-required-json-keys
         :package-required nelix-lock-schema-package-required-json-keys

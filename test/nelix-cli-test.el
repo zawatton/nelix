@@ -463,6 +463,20 @@
                    (alist-get 'private-data manifest)))
     (should (equal "nelix-lock" (alist-get 'schema lock)))
     (should (= 2 (alist-get 'schema-version lock)))
+    (should (equal "MANIFEST.nelix-lock"
+                   (alist-get 'source-of-truth lock)))
+    (should (equal "nelix --json lock MANIFEST"
+                   (alist-get 'json-output lock)))
+    (should (member "lock migrate"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'commands lock))))
+    (should (member "legacy-v1-readable-migrate-required"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'compatibility lock))))
+    (should (equal "nelix lock validate MANIFEST"
+                   (alist-get 'validation lock)))
+    (should (equal "nelix lock diff MANIFEST"
+                   (alist-get 'diff lock)))
     (should (member "manifest-files"
                     (nelix-cli-test--json-array-list
                      (alist-get 'required lock))))
@@ -560,6 +574,11 @@
                (alist-get 'version parsed)))
     (should (equal (alist-get 'const (alist-get 'format properties))
                    (alist-get 'format parsed)))
+    (should (equal "nelix --json lock MANIFEST"
+                   (alist-get 'json-output parsed)))
+    (should (member "future-version-rejected"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'compatibility parsed))))
     (should (equal required
                    (nelix-cli-test--json-array-list
                     (alist-get 'required parsed))))

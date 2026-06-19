@@ -441,6 +441,22 @@ This command is read-only and generated from the runtime constants used by
 Package gates check it so downstream automation can rely on the DSL, lock, and
 transaction version boundaries without parsing Elisp source files.
 
+For =lock-v2=, the schema summary is itself the operational contract:
+
+- =source-of-truth= is =MANIFEST.nelix-lock=.
+- =json-output= is =nelix --json lock MANIFEST=.
+- =commands= lists the public lock lifecycle commands: =lock=,
+  =lock validate=, =lock diff=, and =lock migrate=.
+- =compatibility= records the stable compatibility labels:
+  =legacy-v1-readable-migrate-required=, =legacy-v2-readable=, and
+  =future-version-rejected=.
+- =migration=, =validation=, and =diff= name the exact CLI commands external
+  tools should call instead of loading the S-expression file directly.
+
+This keeps the S-expression lockfile as the runtime source of truth while
+giving non-Elisp tooling a stable JSON command and a discoverable lifecycle
+contract.
+
 Do not replace the S-expression lockfile until NeLisp and Emacs both have a
 stable JSON parser/writer path for this data.
 

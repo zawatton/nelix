@@ -356,6 +356,15 @@ run_json schema_lock schema lock-v2
 expect_json schema_lock '"name":"lock-v2"'
 expect_json schema_lock '"schema":"nelix-lock"'
 expect_json schema_lock '"schema-version":2'
+expect_json schema_lock '"source-of-truth":"MANIFEST.nelix-lock"'
+expect_json schema_lock '"json-output":"nelix --json lock MANIFEST"'
+expect_json schema_lock '"commands":\['
+expect_json schema_lock '"lock migrate"'
+expect_json schema_lock '"compatibility":\['
+expect_json schema_lock '"legacy-v1-readable-migrate-required"'
+expect_json schema_lock '"future-version-rejected"'
+expect_json schema_lock '"validation":"nelix lock validate MANIFEST"'
+expect_json schema_lock '"diff":"nelix lock diff MANIFEST"'
 expect_json schema_lock '"package-required":\['
 validate_schema_summary_contract schema_lock
 
