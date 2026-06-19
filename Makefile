@@ -248,6 +248,7 @@ verify-deb-contents:
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'NELIX_BIN'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'NELIX_LISPDIR'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'nelix user manifest timing:'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'elapsed-ms='
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'nelix user manifest target-count:'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'report_top_level_count list'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'report_json_counts plan'
@@ -746,7 +747,7 @@ clean:
 
 deb-clean:
 	rm -rf debian/.debhelper debian/elpa-nelix
-	rm -f debian/debhelper-build-stamp debian/files debian/*.substvars debian/*.debhelper
+	rm -f debian/debhelper-build-stamp debian/files debian/*.substvars debian/*.debhelper debian/*.debhelper.log
 
 distclean: clean smoke-clean deb-clean
 	rm -rf "$(APT_REPO_DIR)" "$(APT_TEST_GNUPGHOME)" "$(APT_PUBLISH_DIR)"

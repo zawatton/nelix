@@ -248,25 +248,31 @@ check_remove_candidates() {
   fi
 }
 
+now_millis() {
+  date +%s%3N
+}
+
 run_nelix_timed() {
   label="$1"
   out_file="$2"
   err_file="$3"
   shift 3
-  start="$(date +%s)"
+  start="$(now_millis)"
   if run_nelix_with_timeout "$@" >"$out_file" 2>"$err_file"; then
     rc=0
   else
     rc=$?
   fi
-  end="$(date +%s)"
-  elapsed=$((end - start))
-  printf 'nelix user manifest timing: %s elapsed=%ss max=%ss\n' \
-    "$label" "$elapsed" "$nelisp_max_seconds" >&2
+  end="$(now_millis)"
+  elapsed_ms=$((end - start))
+  elapsed=$((elapsed_ms / 1000))
+  max_ms=$((nelisp_max_seconds * 1000))
+  printf 'nelix user manifest timing: %s elapsed-ms=%s elapsed=%ss max=%ss\n' \
+    "$label" "$elapsed_ms" "$elapsed" "$nelisp_max_seconds" >&2
   if [ "$rc" -ne 0 ]; then
     return "$rc"
   fi
-  if [ "$nelisp_max_seconds" -gt 0 ] && [ "$elapsed" -gt "$nelisp_max_seconds" ]; then
+  if [ "$nelisp_max_seconds" -gt 0 ] && [ "$elapsed_ms" -gt "$max_ms" ]; then
     echo "nelix user manifest $label exceeded NELIX_USER_MANIFEST_NELISP_MAX_SECONDS=${nelisp_max_seconds}s" >&2
     return 1
   fi
