@@ -132,6 +132,21 @@ expect_out() {
   fi
 }
 
+expect_out_any() {
+  local label="$1"
+  shift
+  local pattern
+  for pattern in "$@"; do
+    if grep -Eq "$pattern" "$TMP_DIR/$label.out"; then
+      return 0
+    fi
+  done
+  echo "nelix_lock_gate_fail label=$label reason=missing-output-any patterns=$*" >&2
+  sed 's/^/nelix_lock_gate_stdout /' "$TMP_DIR/$label.out" >&2
+  sed 's/^/nelix_lock_gate_stderr /' "$TMP_DIR/$label.err" >&2
+  exit 1
+}
+
 expect_log() {
   local pattern="$1"
   if ! grep -Eq "$pattern" "$FAKE_LOG"; then
@@ -197,7 +212,7 @@ expect_log 'profile history --json --profile '
 
 : >"$FAKE_LOG"
 NELIX_FAKE_NIX_FAIL_TARGET='nixpkgs#fd' run_nelix_expect_fail rollback_on_failure --json apply "$MANIFEST" --allow-remove-count 1
-expect_out rollback_on_failure '"status":"error"'
+expect_out_any rollback_on_failure '"status":"error"' '^nelix: nelix-apply: command failed'
 expect_out rollback_on_failure 'rollback=ok'
 expect_log 'profile rollback --profile .+ --to-generation 7'
 

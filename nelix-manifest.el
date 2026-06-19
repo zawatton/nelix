@@ -810,6 +810,65 @@ manifest targets."
         (setq active generation)))
     (plist-get active :id)))
 
+(defun nelix-manifest--run-nix-command-nelisp (argv)
+  "Run Nix command ARGV through a shell PATH lookup for NeLisp."
+  (if (or (boundp 'emacs-version)
+          (not (anvil-pkg-compat--runtime-nelisp-p))
+          (not (eq anvil-pkg--call-nix-fn #'anvil-pkg--call-nix-default)))
+      (nelix-manifest--run-nix-command argv)
+    (anvil-pkg--ensure-nix)
+    (let ((res (anvil-pkg-compat-call-process
+                "sh"
+                (append (list "-c" "exec \"$@\"" "nelix-nix"
+                              anvil-pkg-nix-program)
+                        argv))))
+      (unless (eq 0 (plist-get res :exit))
+        (signal 'anvil-pkg-nix-failed
+                (list (format "nix %s failed (exit %s): %s"
+                              (mapconcat #'identity argv " ")
+                              (plist-get res :exit)
+                              (anvil-pkg-compat-string-trim
+                               (or (plist-get res :stderr) "")))
+                      :stderr (plist-get res :stderr))))
+      (list :argv argv
+            :exit (plist-get res :exit)
+            :stdout (plist-get res :stdout)
+            :stderr (plist-get res :stderr)))))
+
+(defun nelix-manifest--active-generation-id-nelisp ()
+  "Return the active Nix profile generation id through the NeLisp runner."
+  (if (or (boundp 'emacs-version)
+          (not (anvil-pkg-compat--runtime-nelisp-p))
+          (not (eq anvil-pkg--call-nix-fn #'anvil-pkg--call-nix-default)))
+      (nelix-manifest--active-generation-id)
+    (let* ((res (nelix-manifest--run-nix-command-nelisp
+                 (append (list "profile" "history" "--json")
+                         (anvil-pkg--profile-args))))
+           (generations (anvil-pkg--parse-history
+                         (or (plist-get res :stdout) "")))
+           active)
+      (anvil-pkg--generations-cache-put generations)
+      (dolist (generation generations)
+        (when (and (null active)
+                   (plist-get generation :active))
+          (setq active generation)))
+      (plist-get active :id))))
+
+(defun nelix-manifest--rollback-generation-nelisp (generation)
+  "Rollback the Nix profile to GENERATION through the NeLisp runner."
+  (if (or (boundp 'emacs-version)
+          (not (anvil-pkg-compat--runtime-nelisp-p))
+          (not (eq anvil-pkg--call-nix-fn #'anvil-pkg--call-nix-default)))
+      (nelix-rollback generation)
+    (nelix-manifest--run-nix-command-nelisp
+     (append (list "profile" "rollback")
+             (anvil-pkg--profile-args)
+             (list "--to-generation" (number-to-string generation))))
+    (condition-case _
+        (nelix-manifest--active-generation-id-nelisp)
+      (error nil))
+    t))
+
 (defun nelix-manifest--transaction-preview (commands rollback-on-error)
   "Return dry-run transaction metadata for COMMANDS."
   (list :enabled (and commands t)
@@ -830,7 +889,10 @@ manifest targets."
                :after-generation nil)))
     (when commands
       (condition-case err
-          (let ((generation (nelix-manifest--active-generation-id)))
+          (let ((generation
+                 (if (anvil-pkg-compat--standalone-nelisp-p)
+                     (nelix-manifest--active-generation-id-nelisp)
+                   (nelix-manifest--active-generation-id))))
             (setq transaction
                   (plist-put transaction :before-generation generation))
             (setq transaction
@@ -852,7 +914,9 @@ manifest targets."
     (condition-case err
         (plist-put transaction
                    :after-generation
-                   (nelix-manifest--active-generation-id))
+                   (if (anvil-pkg-compat--standalone-nelisp-p)
+                       (nelix-manifest--active-generation-id-nelisp)
+                     (nelix-manifest--active-generation-id)))
       (error
        (plist-put transaction
                   :after-generation-error
@@ -871,7 +935,9 @@ manifest targets."
      (t
       (condition-case err
           (progn
-            (nelix-rollback generation)
+            (if (anvil-pkg-compat--standalone-nelisp-p)
+                (nelix-manifest--rollback-generation-nelisp generation)
+              (nelix-rollback generation))
             (list :attempted t :ok t :generation generation))
         (error
          (list :attempted t
@@ -930,7 +996,9 @@ mutation and rolls back to it when a command fails.  Pass
 Real apply refuses unmanaged removals unless ARGS contains
 `:allow-remove t' or `:allow-remove-count N' matching the planned
 remove count."
-  (let* ((dry-run (plist-get args :dry-run))
+  (if (anvil-pkg-compat--standalone-nelisp-p)
+      (apply #'nelix-apply--nelisp manifest-file args)
+    (let* ((dry-run (plist-get args :dry-run))
          (rollback-on-error
           (if (plist-member args :rollback-on-error)
               (plist-get args :rollback-on-error)
@@ -941,6 +1009,7 @@ remove count."
          (selection (nelix-manifest-select-backend manifest))
          (backend (plist-get selection :backend))
          (lock-check (and (plist-get args :locked)
+                          (not (anvil-pkg-compat--standalone-nelisp-p))
                           (nelix-manifest--require-lock-ok
                            manifest-file)))
          (report nil)
@@ -951,6 +1020,10 @@ remove count."
          remove-safety
          executed
          transaction)
+    (when (and (plist-get args :locked)
+               (anvil-pkg-compat--standalone-nelisp-p))
+      (signal 'anvil-pkg-error
+              (list "nelix-apply: --locked is not supported by NeLisp runtime yet")))
     (unless backend
       (signal 'anvil-pkg-error
               (list (format "nelix-apply: no available backend for %s"
@@ -1072,7 +1145,7 @@ remove count."
                            :error (error-message-string err)
                            :executed (nreverse executed)
                            :transaction transaction
-                           :rollback rollback)))))))))
+                           :rollback rollback))))))))))
 
 (defun nelix-manifest--list-difference (a b)
   "Return members of A that are not equal to any member of B."
@@ -1115,7 +1188,8 @@ remove count."
 (defun nelix-manifest--lock-drift (manifest-file)
   "Return lock drift details for MANIFEST-FILE, or nil."
   (let ((lock-path (nelix-manifest-lock-file-name manifest-file)))
-    (when (anvil-pkg-compat-file-exists-p lock-path)
+    (when (and (anvil-pkg-compat-file-exists-p lock-path)
+               (not (anvil-pkg-compat--standalone-nelisp-p)))
       (let ((check (nelix-lock-check manifest-file)))
         (unless (plist-get check :ok)
           check)))))
@@ -1311,45 +1385,155 @@ remove count."
             (list "nelix-upgrade-plan: nelix-fast is not loaded"))))
 
 (defun nelix-apply--nelisp (manifest-file &rest args)
-  "Apply MANIFEST-FILE through the NeLisp Nix fast path."
-  (when (plist-get args :locked)
-    (signal 'anvil-pkg-error
-            (list "nelix-apply: --locked is not supported by NeLisp runtime yet")))
-  (nelix-audit--nelisp-load-stage manifest-file)
-  (nelix-audit--nelisp-report-stage)
-  (setq nelix-manifest--apply-missing nil)
-  (setq nelix-manifest--apply-already nil)
-  (dolist (nelix-manifest--apply-row nelix-manifest--audit-report)
-    (if (plist-get nelix-manifest--apply-row :installed)
-        (push (plist-get nelix-manifest--apply-row :target)
-              nelix-manifest--apply-already)
-      (push (plist-get nelix-manifest--apply-row :target)
-            nelix-manifest--apply-missing)))
-  (setq nelix-manifest--apply-missing
-        (nreverse nelix-manifest--apply-missing))
-  (setq nelix-manifest--apply-already
-        (nreverse nelix-manifest--apply-already))
-  (when nelix-manifest--apply-missing
-    (nelix-install nelix-manifest--apply-missing))
-  (setq nelix-manifest--apply-pins
-        (plist-get nelix-manifest--audit-manifest :pins))
-  (dolist (pin nelix-manifest--apply-pins)
-    (nelix-pin pin))
-  (list :status 'ok
-        :manifest (plist-get nelix-manifest--audit-manifest :file)
-        :backend 'nix
-        :backend-selection nelix-manifest--audit-selection
-        :installed nelix-manifest--apply-missing
-        :already-present nelix-manifest--apply-already
-        :pinned nelix-manifest--apply-pins
-        :skipped nil
-        :locked nil
-        :lock-check nil
-        :lock-enforced nil
-        :lock-packages nil
-        :locked-installed nil
-        :profile (plist-get nelix-manifest--audit-manifest :profile)
-        :nix-profile anvil-pkg-profile-dir))
+  "Apply MANIFEST-FILE through a compact NeLisp Nix path."
+  (let ((dry-run (plist-get args :dry-run))
+        (rollback-on-error
+         (if (plist-member args :rollback-on-error)
+             (plist-get args :rollback-on-error)
+           t))
+        (allow-remove (plist-get args :allow-remove))
+        (allow-remove-count (plist-get args :allow-remove-count))
+        install
+        keep
+        remove
+        commands
+        remove-safety
+        transaction
+        executed
+        plan)
+    (when (plist-get args :locked)
+      (signal 'anvil-pkg-error
+              (list "nelix-apply: --locked is not supported by NeLisp runtime yet")))
+    (nelix-audit--nelisp-load-stage manifest-file)
+    (nelix-audit--nelisp-report-stage)
+    (dolist (row nelix-manifest--audit-report)
+      (let* ((name (plist-get row :name))
+             (target (plist-get row :target)))
+        (if (plist-get row :installed)
+            (push (list :action 'keep
+                        :name name
+                        :backend 'nix
+                        :target target
+                        :resolved-target target
+                        :installed-name (plist-get (plist-get row :entry)
+                                                   :name)
+                        :pinned nil
+                        :entry (plist-get row :entry))
+                  keep)
+          (push (list :action 'install
+                      :name name
+                      :backend 'nix
+                      :target target
+                      :resolved-target target
+                      :installed-name nil
+                      :pinned (and (member name
+                                           (plist-get
+                                            nelix-manifest--audit-manifest
+                                            :pins))
+                                   t)
+                      :lock nil
+                      :argv (nelix-manifest--nix-install-argv
+                             nelix-manifest--audit-manifest target))
+                install))))
+    (dolist (entry nelix-manifest--audit-extra)
+      (push (list :action 'remove
+                  :name (plist-get entry :name)
+                  :backend 'nix
+                  :target nil
+                  :resolved-target nil
+                  :installed-name (plist-get entry :name)
+                  :pinned nil
+                  :entry entry
+                  :argv (nelix-manifest--nix-remove-argv entry))
+            remove))
+    (setq install (nreverse install)
+          keep (nreverse keep)
+          remove (nreverse remove)
+          commands (append install remove)
+          remove-safety (nelix-manifest--remove-safety
+                         remove allow-remove allow-remove-count))
+    (setq plan
+          (list :operation 'apply
+                :status (if dry-run 'dry-run 'planned)
+                :dry-run (and dry-run t)
+                :manifest (plist-get nelix-manifest--audit-manifest :file)
+                :lock (nelix-manifest-lock-file-name manifest-file)
+                :lock-present
+                (and (anvil-pkg-compat-file-exists-p
+                      (nelix-manifest-lock-file-name manifest-file))
+                     t)
+                :backend 'nix
+                :backend-selection nelix-manifest--audit-selection
+                :profile (plist-get nelix-manifest--audit-manifest :profile)
+                :nix-profile anvil-pkg-profile-dir
+                :install install
+                :remove remove
+                :keep keep
+                :protected nil
+                :commands commands
+                :count (+ (length install) (length remove))
+                :empty (and (null install) (null remove))
+                :locked nil
+                :lock-check nil
+                :lock-enforced nil
+                :lock-packages nil
+                :locked-installed nil
+                :remove-safety remove-safety))
+    (if dry-run
+        (plist-put plan :transaction
+                   (nelix-manifest--transaction-preview
+                    commands rollback-on-error))
+      (nelix-manifest--require-remove-safe
+       remove allow-remove allow-remove-count)
+      (setq transaction
+            (nelix-manifest--transaction-begin
+             commands rollback-on-error))
+      (condition-case err
+          (progn
+            (dolist (action commands)
+              (push (append (list :action (plist-get action :action)
+                                  :name (plist-get action :name))
+                            (nelix-manifest--run-nix-command-nelisp
+                             (plist-get action :argv)))
+                    executed))
+            (dolist (pin (plist-get nelix-manifest--audit-manifest :pins))
+              (nelix-pin pin))
+            (setq executed (nreverse executed))
+            (setq transaction
+                  (nelix-manifest--transaction-finish transaction))
+            (setq plan (plist-put plan :status 'ok))
+            (setq plan (plist-put plan :dry-run nil))
+            (setq plan (plist-put plan :executed executed))
+            (setq plan (plist-put plan :transaction transaction))
+            (setq plan (plist-put
+                        plan
+                        :installed
+                        (mapcar (lambda (row) (plist-get row :name))
+                                install)))
+            (setq plan (plist-put
+                        plan
+                        :removed
+                        (mapcar (lambda (row) (plist-get row :name))
+                                remove)))
+            (setq plan (plist-put
+                        plan
+                        :pinned
+                        (plist-get nelix-manifest--audit-manifest :pins)))
+            plan)
+        (error
+         (let* ((rollback
+                 (nelix-manifest--transaction-rollback transaction))
+                (message
+                 (format "nelix-apply: command failed after %d executed action(s): %s; rollback=%s"
+                         (length executed)
+                         (error-message-string err)
+                         (if (plist-get rollback :ok) "ok" "not-ok"))))
+           (signal 'anvil-pkg-error
+                   (list message
+                         :error (error-message-string err)
+                         :executed (nreverse executed)
+                         :transaction transaction
+                         :rollback rollback))))))))
 
 ;;;###autoload
 (defun nelix-audit (manifest-file)
@@ -1648,10 +1832,35 @@ registry again."
          manifest backend packages)
       packages)))
 
+(defun nelix-manifest--string-source (string)
+  "Return a readable Elisp string literal for STRING.
+
+NeLisp's standalone formatter is intentionally still small and may not
+quote top-level strings with `%S'.  Lock files are source files, so
+string literals are emitted explicitly here instead of depending on the
+runtime formatter."
+  (let ((i 0)
+        (n (length string))
+        (out "\""))
+    (while (< i n)
+      (let ((piece (substring string i (1+ i))))
+        (setq out
+              (concat out
+                      (cond
+                       ((equal piece "\\") "\\\\")
+                       ((equal piece "\"") "\\\"")
+                       ((equal piece "\n") "\\n")
+                       ((equal piece "\r") "\\r")
+                       ((equal piece "\t") "\\t")
+                       (t piece)))))
+      (setq i (1+ i)))
+    (concat out "\"")))
+
 (defun nelix-manifest--format-lock-value (value)
   "Return Elisp source for VALUE in a generated lock file."
   (cond
    ((or (null value) (eq value t)) (format "%S" value))
+   ((stringp value) (nelix-manifest--string-source value))
    ((symbolp value) (format "'%S" value))
    ((consp value) (format "'%S" value))
    (t (format "%S" value))))
@@ -1706,9 +1915,13 @@ This is the constructor used inside generated lock files."
 
 (defun nelix-manifest--maybe-lock-read (manifest-file)
   "Return MANIFEST-FILE lock data, or nil when no lock exists."
-  (condition-case _
-      (nelix-lock-read manifest-file)
-    (error nil)))
+  (if (anvil-pkg-compat--standalone-nelisp-p)
+      (and (anvil-pkg-compat-file-exists-p
+            (nelix-manifest-lock-file-name manifest-file))
+           '(:nelix-lock-present t))
+    (condition-case _
+        (nelix-lock-read manifest-file)
+      (error nil))))
 
 ;;;###autoload
 (defun nelix-lock-write (manifest-file)
