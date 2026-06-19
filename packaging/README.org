@@ -210,7 +210,10 @@ available, but treats that path as advisory unless
 the validate fast lane and the read-only AOT cache lane for =audit=, =plan=,
 =apply --dry-run=, and =upgrade-plan=, verifying that they report
 =:nelisp-aot-cache= instead of falling back to the slow full standalone
-manifest path.  The verifier also supports
+manifest path.  It also compares selected JSON result fields from Emacs and
+NeLisp runtimes for =list=, =audit=, =plan --dry-run=, =apply --dry-run=, and
+=upgrade-plan= so the fast lane cannot be merely fast while returning a
+different package diff.  The verifier also supports
 =NELIX_USER_MANIFEST_LOCKED=required=, which temporarily writes
 =MANIFEST.nelix-lock=, runs =apply --locked --dry-run=, and restores the
 previous lock file so the real profile is not mutated.  When combined with

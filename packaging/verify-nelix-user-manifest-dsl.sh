@@ -63,6 +63,16 @@ expect_json_fragment() {
   fi
 }
 
+compare_runtime_json() {
+  label="$1"
+  emacs_json="$2"
+  nelisp_json="$3"
+  shift 3
+  emacs -Q --batch \
+    -l "$repo_dir/packaging/compare-nelix-json.el" \
+    -- "$label" "$emacs_json" "$nelisp_json" "$@"
+}
+
 run_locked_readonly_checks() (
   locked_tmp="$(mktemp -d)"
   lock_file="$manifest.nelix-lock"
@@ -156,6 +166,14 @@ run_nelisp_aot_readonly() {
     return 1
   fi
   expect_json_fragment list "$nelisp_tmp/list.json" '[' || return 1
+  if ! run_nelix_with_timeout --json list \
+    >"$nelisp_tmp/list-emacs.json" \
+    2>"$nelisp_tmp/list-emacs.err"; then
+    sed -n '1,3p' "$nelisp_tmp/list-emacs.json" >&2
+    sed -n '1,20p' "$nelisp_tmp/list-emacs.err" >&2
+    return 1
+  fi
+  compare_runtime_json list "$nelisp_tmp/list-emacs.json" "$nelisp_tmp/list.json" "." || return 1
 
   if ! run_nelix_with_timeout --runtime nelisp --json audit "$manifest" \
     >"$nelisp_tmp/audit.json" \
@@ -166,6 +184,15 @@ run_nelisp_aot_readonly() {
   fi
   expect_json_fragment audit "$nelisp_tmp/audit.json" '"fallback":":nelisp-aot-cache"' || return 1
   expect_json_fragment audit "$nelisp_tmp/audit.json" '"backend":"nix"' || return 1
+  if ! run_nelix_with_timeout --json audit "$manifest" \
+    >"$nelisp_tmp/audit-emacs.json" \
+    2>"$nelisp_tmp/audit-emacs.err"; then
+    sed -n '1,3p' "$nelisp_tmp/audit-emacs.json" >&2
+    sed -n '1,20p' "$nelisp_tmp/audit-emacs.err" >&2
+    return 1
+  fi
+  compare_runtime_json audit "$nelisp_tmp/audit-emacs.json" "$nelisp_tmp/audit.json" \
+    missing extra || return 1
 
   if ! run_nelix_with_timeout --runtime nelisp --json plan "$manifest" --dry-run \
     >"$nelisp_tmp/plan.json" \
@@ -177,6 +204,15 @@ run_nelisp_aot_readonly() {
   expect_json_fragment plan "$nelisp_tmp/plan.json" '"status":"planned"' || return 1
   expect_json_fragment plan "$nelisp_tmp/plan.json" '"fallback":":nelisp-aot-cache"' || return 1
   expect_json_fragment plan "$nelisp_tmp/plan.json" '"backend":"nix"' || return 1
+  if ! run_nelix_with_timeout --json plan "$manifest" --dry-run \
+    >"$nelisp_tmp/plan-emacs.json" \
+    2>"$nelisp_tmp/plan-emacs.err"; then
+    sed -n '1,3p' "$nelisp_tmp/plan-emacs.json" >&2
+    sed -n '1,20p' "$nelisp_tmp/plan-emacs.err" >&2
+    return 1
+  fi
+  compare_runtime_json plan "$nelisp_tmp/plan-emacs.json" "$nelisp_tmp/plan.json" \
+    install remove protected || return 1
 
   if ! run_nelix_with_timeout --runtime nelisp --json apply "$manifest" --dry-run \
     >"$nelisp_tmp/apply-dry-run.json" \
@@ -189,6 +225,17 @@ run_nelisp_aot_readonly() {
   expect_json_fragment apply-dry-run "$nelisp_tmp/apply-dry-run.json" '"fallback":":nelisp-aot-cache"' || return 1
   expect_json_fragment apply-dry-run "$nelisp_tmp/apply-dry-run.json" '"backend":"nix"' || return 1
   expect_json_fragment apply-dry-run "$nelisp_tmp/apply-dry-run.json" '"remove":[' || return 1
+  if ! run_nelix_with_timeout --json apply "$manifest" --dry-run \
+    >"$nelisp_tmp/apply-dry-run-emacs.json" \
+    2>"$nelisp_tmp/apply-dry-run-emacs.err"; then
+    sed -n '1,3p' "$nelisp_tmp/apply-dry-run-emacs.json" >&2
+    sed -n '1,20p' "$nelisp_tmp/apply-dry-run-emacs.err" >&2
+    return 1
+  fi
+  compare_runtime_json apply-dry-run \
+    "$nelisp_tmp/apply-dry-run-emacs.json" \
+    "$nelisp_tmp/apply-dry-run.json" \
+    install remove protected || return 1
 
   if ! run_nelix_with_timeout --runtime nelisp --json upgrade-plan "$manifest" \
     >"$nelisp_tmp/upgrade-plan.json" \
@@ -200,6 +247,17 @@ run_nelisp_aot_readonly() {
   expect_json_fragment upgrade-plan "$nelisp_tmp/upgrade-plan.json" '"operation":"upgrade"' || return 1
   expect_json_fragment upgrade-plan "$nelisp_tmp/upgrade-plan.json" '"fallback":":nelisp-aot-cache"' || return 1
   expect_json_fragment upgrade-plan "$nelisp_tmp/upgrade-plan.json" '"backend":"nix"' || return 1
+  if ! run_nelix_with_timeout --json upgrade-plan "$manifest" \
+    >"$nelisp_tmp/upgrade-plan-emacs.json" \
+    2>"$nelisp_tmp/upgrade-plan-emacs.err"; then
+    sed -n '1,3p' "$nelisp_tmp/upgrade-plan-emacs.json" >&2
+    sed -n '1,20p' "$nelisp_tmp/upgrade-plan-emacs.err" >&2
+    return 1
+  fi
+  compare_runtime_json upgrade-plan \
+    "$nelisp_tmp/upgrade-plan-emacs.json" \
+    "$nelisp_tmp/upgrade-plan.json" \
+    upgrade pinned missing || return 1
 
   if ! run_nelix_with_timeout --runtime nelisp --json lock-check "$manifest" \
     >"$nelisp_tmp/lock-check.json" \
