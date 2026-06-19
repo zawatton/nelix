@@ -210,6 +210,30 @@ validate_schema_summary_contract() {
     -- "$schema_file" "$schema_summary"
 }
 
+validate_plan_apply_dry_run_equivalence() {
+  plan_json="$tmp/plan.json"
+  dry_run_json="$tmp/dry_run.json"
+  emacs -Q --batch \
+    --eval '(require (quote cl-lib))' \
+    --eval '(require (quote json))' \
+    --eval '(let ((json-object-type (quote alist))
+                  (json-array-type (quote list))
+                  (json-key-type (quote string)))
+              (cl-labels ((jget (key object)
+                            (alist-get key object nil nil (function string=))))
+                (let* ((args command-line-args-left)
+                       (_ (when (equal (car args) "--")
+                            (setq args (cdr args))))
+                       (plan (json-read-file (car args)))
+                       (dry-run (json-read-file (cadr args))))
+                  (dolist (key (quote ("install" "remove" "keep" "protected"
+                                       "commands" "count" "empty")))
+                    (unless (equal (jget key plan) (jget key dry-run))
+                      (error "plan/apply dry-run mismatch for %s" key)))
+                  (princ "nelix installed CLI plan/apply dry-run equivalence ok\n"))))' \
+    -- "$plan_json" "$dry_run_json"
+}
+
 expect_log() {
   pattern="$1"
   if ! grep -Eq "$pattern" "$fake_log"; then
@@ -378,6 +402,7 @@ run_json dry_run apply "$manifest" --dry-run
 expect_json dry_run '"status":"dry-run"'
 expect_json dry_run '"transaction":'
 expect_json dry_run '"rollback-on-error":true'
+validate_plan_apply_dry_run_equivalence
 reject_log 'profile install'
 reject_log 'profile remove'
 

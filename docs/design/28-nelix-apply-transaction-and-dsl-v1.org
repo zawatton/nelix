@@ -71,7 +71,9 @@ Safety invariants:
 - *dry-run equivalence*: =apply --dry-run= and real =apply= must be based on the
   same =nelix-plan= path.  Dry-run may omit generation capture and record
   writes, but it must expose the same install/remove/protected command intent
-  that real apply would execute after remove-safety confirmation.
+  that real apply would execute after remove-safety confirmation.  The
+  installed CLI gate compares =plan --dry-run= and =apply --dry-run= JSON for
+  =install=, =remove=, =keep=, =protected=, =commands=, =count=, and =empty=.
 - *lockfile timing*: =apply --locked= validates and loads the lockfile before
   transaction begin and before any profile mutation.  Current apply does not
   rewrite the lockfile; lockfile creation, migration, and refresh are explicit
