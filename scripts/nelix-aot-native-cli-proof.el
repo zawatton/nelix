@@ -296,20 +296,20 @@ Expected value for the smoke payload is 556:
 
 (defun nelix-aot-native-cli-large-id-scan-proof (text)
   "Return a compact proof for a larger numeric-ID manifest payload.
-The expected gate payload has 204 target-id rows.  The extra points prove
+The expected gate payload has 768 target-id rows.  The extra points prove
 that the payload is large enough to exercise the standalone string scanner
 and that it still starts with the Nelix AOT protocol header."
   (+ (nelix-aot-native-cli-count-target-id text)
-     (if (>= (str-len text) 2500) 1 0)
+     (if (>= (str-len text) 8192) 1 0)
      (if (= (str-byte-at text 0) 78) 1 0)))
 
 (defun nelix-aot-native-cli-large-id-summary-proof (text)
   "Return a machine-readable summary for the larger numeric-ID proof.
 The public gate checks this exact string so the standalone native path has
 to scan the full payload and return a string result, not only a small code."
-  (if (= (nelix-aot-native-cli-count-target-id text) 204)
-      (if (>= (str-len text) 2500)
-          "target-id-rows\t204\npayload-threshold\tlarge\nscan-proof\tok\n"
+  (if (= (nelix-aot-native-cli-count-target-id text) 768)
+      (if (>= (str-len text) 8192)
+          "target-id-rows\t768\npayload-threshold\tlarge\nscan-proof\tok\n"
         "error\tpayload-too-small\n")
     "error\tbad-target-id-count\n"))
 

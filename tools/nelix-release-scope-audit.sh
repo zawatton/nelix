@@ -888,7 +888,7 @@ require_aot_plan_gate_docs() {
   require_contains Makefile \
     'nelix-aot-native-cli-large-id-summary-proof'
   require_contains tools/nelix-aot-native-cli-proof-gate.sh \
-    'target-id-rows\t204'
+    'target-id-rows\t768'
   require_contains tools/nelix-aot-native-cli-proof-gate.sh \
     'large-id-proof-code'
   require_contains Makefile \

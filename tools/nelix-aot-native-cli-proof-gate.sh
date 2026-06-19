@@ -86,7 +86,7 @@ large_id_payload="$(
   {
     printf 'NELIX-AOT-MANIFEST-V1\n'
     i=1
-    while [ "$i" -le 204 ]; do
+    while [ "$i" -le 768 ]; do
       id=$(( (i - 1) % 4 + 1 ))
       printf 'target-id\t%s\t%s\n' "$id" "$id"
       i=$(( i + 1 ))
@@ -95,14 +95,14 @@ large_id_payload="$(
   }
 )"
 large_id_scan_proof="$("$NELISP" native-exec-elisp-artifact "$artifact" nelix-aot-native-cli-large-id-scan-proof "$large_id_payload")"
-test "$large_id_scan_proof" = "206" || {
+test "$large_id_scan_proof" = "770" || {
   echo "error: standalone large ID scan proof returned $large_id_scan_proof" >&2
   exit 1
 }
 
 large_id_summary_output="$("$NELISP" native-exec-elisp-artifact "$artifact" nelix-aot-native-cli-large-id-summary-proof "$large_id_payload")"
-large_id_summary_expected="$(printf 'target-id-rows\t204\npayload-threshold\tlarge\nscan-proof\tok')"
-large_id_summary_expected_lisp='"target-id-rows\t204\npayload-threshold\tlarge\nscan-proof\tok\n"'
+large_id_summary_expected="$(printf 'target-id-rows\t768\npayload-threshold\tlarge\nscan-proof\tok')"
+large_id_summary_expected_lisp='"target-id-rows\t768\npayload-threshold\tlarge\nscan-proof\tok\n"'
 { test "$large_id_summary_output" = "$large_id_summary_expected" ||
   test "$large_id_summary_output" = "$large_id_summary_expected_lisp"; } || {
   echo "error: standalone large ID summary proof returned $large_id_summary_output" >&2
