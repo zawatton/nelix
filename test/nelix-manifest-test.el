@@ -69,6 +69,13 @@
                        "\n")
             ")\n")))
 
+(defun nelix-manifest-test--read-sexp-file (file)
+  "Read and return the first Lisp object from FILE."
+  (with-temp-buffer
+    (insert-file-contents file)
+    (goto-char (point-min))
+    (read (current-buffer))))
+
 (ert-deftest nelix-manifest-test-normalizes-minimal-form ()
   "nelix-manifest normalizes defaults and validates list fields."
   (let ((manifest (nelix-manifest
@@ -189,9 +196,10 @@
 
 (ert-deftest nelix-manifest-test-apply-installs-removes-and-pins ()
   "nelix-apply converges missing and extra Nix profile entries."
-  (let ((dir (make-temp-file "nelix-manifest-apply-" t))
-        nix-calls
-        pinned-targets)
+  (let* ((dir (make-temp-file "nelix-manifest-apply-" t))
+         (nelix-transaction-log-root (expand-file-name "transactions" dir))
+         nix-calls
+         pinned-targets)
     (unwind-protect
         (progn
           (nelix-manifest-test--write
@@ -240,15 +248,34 @@
                                      (nreverse nix-calls))))
               (should (equal 7 (plist-get (plist-get report :transaction)
                                           :before-generation)))
+              (let* ((transaction (plist-get report :transaction))
+                     (record-file (plist-get transaction :record-file))
+                     (record (nelix-manifest-test--read-sexp-file
+                              record-file)))
+                (should (file-exists-p record-file))
+                (should (equal "nelix-apply-transaction"
+                               (plist-get record :schema)))
+                (should (= 1 (plist-get record :schema-version)))
+                (should (eq 'ok (plist-get record :status)))
+                (should (= 2 (length (plist-get record :executed))))
+                (should (= 2 (length (plist-get
+                                      (plist-get record :plan)
+                                      :commands))))
+                (should (plist-get (plist-get record :rollback-plan)
+                                   :available))
+                (should (equal 7 (plist-get
+                                  (plist-get record :rollback-plan)
+                                  :generation))))
               (should (equal '("ripgrep") (nreverse pinned-targets))))))
       (delete-directory dir t))))
 
 (ert-deftest nelix-manifest-test-apply-rolls-back-on-command-failure ()
   "nelix-apply rolls the Nix profile back to the pre-apply generation."
-  (let ((dir (make-temp-file "nelix-manifest-apply-rollback-" t))
-        nix-calls
-        rollback-generation
-        (active-generation 7))
+  (let* ((dir (make-temp-file "nelix-manifest-apply-rollback-" t))
+         (nelix-transaction-log-root (expand-file-name "transactions" dir))
+         nix-calls
+         rollback-generation
+         (active-generation 7))
     (unwind-protect
         (progn
           (nelix-manifest-test--write
@@ -287,6 +314,21 @@
                 (should (equal 7 (plist-get rollback :generation)))
                 (should (equal 7 (plist-get rollback
                                             :after-rollback-generation))))
+              (let* ((transaction (plist-get (cddr err) :transaction))
+                     (record-file (plist-get transaction :record-file))
+                     (record (nelix-manifest-test--read-sexp-file
+                              record-file)))
+                (should (file-exists-p record-file))
+                (should (eq 'error (plist-get record :status)))
+                (should (= 1 (length (plist-get record :executed))))
+                (should (string-match-p "install failed"
+                                        (plist-get record :error)))
+                (should (plist-get (plist-get record :rollback-plan)
+                                   :available))
+                (should (plist-get (plist-get record :rollback) :ok))
+                (should (equal 7 (plist-get
+                                  (plist-get record :rollback-plan)
+                                  :generation))))
               (should (= 2 (length nix-calls))))))
       (delete-directory dir t))))
 

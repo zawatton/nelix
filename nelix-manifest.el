@@ -64,6 +64,15 @@
   '("name" "target" "backend" "system" "source")
   "Required package row keys in the public Nelix lock schema v2.")
 
+(defcustom nelix-transaction-log-root nil
+  "Directory used for Nelix apply transaction records.
+
+When nil, records are written under the user's state directory at
+~/.local/state/nelix/transactions."
+  :type '(choice (const :tag "Default state directory" nil)
+                 directory)
+  :group 'anvil-pkg)
+
 (defun nelix-schema--manifest-dsl-v1 ()
   "Return the public manifest DSL v1 schema summary."
   (list :name "manifest-dsl-v1"
@@ -949,6 +958,107 @@ manifest targets."
         :rollback-available nil
         :dry-run t))
 
+(defun nelix-manifest--state-root ()
+  "Return the user state root for Nelix metadata."
+  (expand-file-name
+   (or (anvil-pkg-compat-getenv "XDG_STATE_HOME")
+       "~/.local/state")))
+
+(defun nelix-manifest--transaction-log-root ()
+  "Return the transaction log root directory."
+  (expand-file-name
+   (or nelix-transaction-log-root
+       (expand-file-name "nelix/transactions"
+                         (nelix-manifest--state-root)))))
+
+(defun nelix-manifest--timestamp ()
+  "Return a compact timestamp for transaction records."
+  (format-time-string "%Y-%m-%dT%H:%M:%S%z"))
+
+(defun nelix-manifest--transaction-record-write (file record)
+  "Write transaction RECORD to FILE."
+  (anvil-pkg-compat-make-directory (file-name-directory file) t)
+  (anvil-pkg-compat-write-file
+   file
+   (concat ";;; generated Nelix apply transaction record -*- lexical-binding: t; -*-\n\n"
+           (prin1-to-string record)
+           "\n")))
+
+(defun nelix-manifest--transaction-rollback-plan (transaction)
+  "Return the rollback plan implied by TRANSACTION."
+  (let ((generation (plist-get transaction :before-generation)))
+    (cond
+     ((not (plist-get transaction :enabled))
+      (list :available nil :reason "transaction-disabled"))
+     ((not (plist-get transaction :rollback-on-error))
+      (list :available nil :reason "rollback-disabled"))
+     ((not generation)
+      (list :available nil :reason "before-generation-missing"))
+     (t
+      (list :available t
+            :operation 'rollback
+            :generation generation
+            :argv (append (list "profile" "rollback")
+                          (anvil-pkg--profile-args)
+                          (list "--to-generation"
+                                (number-to-string generation))))))))
+
+(defun nelix-manifest--transaction-record (status manifest-file plan
+                                                  transaction executed
+                                                  &optional rollback error)
+  "Return a transaction record for STATUS and current apply state."
+  (list :schema "nelix-apply-transaction"
+        :schema-version 1
+        :id (plist-get transaction :record-id)
+        :status status
+        :manifest (expand-file-name manifest-file)
+        :profile anvil-pkg-profile-dir
+        :started-at (plist-get transaction :record-started-at)
+        :updated-at (nelix-manifest--timestamp)
+        :plan plan
+        :transaction transaction
+        :executed executed
+        :rollback-plan (nelix-manifest--transaction-rollback-plan
+                        transaction)
+        :rollback rollback
+        :error error))
+
+(defun nelix-manifest--transaction-record-begin
+    (manifest-file plan transaction)
+  "Persist the initial PLAN snapshot for TRANSACTION."
+  (if (not (plist-get transaction :enabled))
+      transaction
+    (let* ((root (nelix-manifest--transaction-log-root))
+           (_dir (anvil-pkg-compat-make-directory root t))
+           (file (make-temp-file (expand-file-name "apply-" root)
+                                 nil ".el"))
+           (id (file-name-base file))
+           (started-at (nelix-manifest--timestamp)))
+      (setq transaction (plist-put transaction :record-id id))
+      (setq transaction (plist-put transaction :record-file file))
+      (setq transaction (plist-put transaction :record-started-at started-at))
+      (setq transaction (plist-put transaction :record-status 'started))
+      (nelix-manifest--transaction-record-write
+       file
+       (nelix-manifest--transaction-record
+        'started manifest-file plan transaction nil))
+      transaction)))
+
+(defun nelix-manifest--transaction-record-update
+    (manifest-file plan transaction status executed &optional rollback error)
+  "Update TRANSACTION record with STATUS, EXECUTED, ROLLBACK, and ERROR."
+  (let ((file (plist-get transaction :record-file)))
+    (if (not file)
+        transaction
+      (setq transaction (plist-put transaction :record-status status))
+      (setq transaction (plist-put transaction :record-updated-at
+                                  (nelix-manifest--timestamp)))
+      (nelix-manifest--transaction-record-write
+       file
+       (nelix-manifest--transaction-record
+        status manifest-file plan transaction executed rollback error))
+      transaction)))
+
 (defun nelix-manifest--transaction-begin (commands rollback-on-error)
   "Capture pre-apply generation metadata for COMMANDS."
   (let ((transaction
@@ -1189,6 +1299,9 @@ remove count."
         (setq transaction
               (nelix-manifest--transaction-begin
                commands rollback-on-error))
+        (setq transaction
+              (nelix-manifest--transaction-record-begin
+               manifest-file plan transaction))
         (condition-case err
             (progn
               (dolist (action commands)
@@ -1196,7 +1309,11 @@ remove count."
                                     :name (plist-get action :name))
                               (nelix-manifest--run-nix-command
                                (plist-get action :argv)))
-                      executed))
+                      executed)
+                (setq transaction
+                      (nelix-manifest--transaction-record-update
+                       manifest-file plan transaction 'running
+                       (nreverse (copy-sequence executed)))))
               (dolist (pin (plist-get manifest :pins))
                 (nelix-pin pin))
               (setq executed (nreverse executed))
@@ -1205,7 +1322,6 @@ remove count."
               (setq plan (plist-put plan :status 'ok))
               (setq plan (plist-put plan :dry-run nil))
               (setq plan (plist-put plan :executed executed))
-              (setq plan (plist-put plan :transaction transaction))
               (setq plan (plist-put plan :installed
                                     (mapcar (lambda (row) (plist-get row :name))
                                             (plist-get plan :install))))
@@ -1213,6 +1329,10 @@ remove count."
                                     (mapcar (lambda (row) (plist-get row :name))
                                             (plist-get plan :remove))))
               (setq plan (plist-put plan :pinned (plist-get manifest :pins)))
+              (setq transaction
+                    (nelix-manifest--transaction-record-update
+                     manifest-file plan transaction 'ok executed))
+              (setq plan (plist-put plan :transaction transaction))
               plan)
           (error
            (let* ((rollback
@@ -1222,6 +1342,11 @@ remove count."
                            (length executed)
                            (error-message-string err)
                            (if (plist-get rollback :ok) "ok" "not-ok"))))
+             (setq transaction
+                   (nelix-manifest--transaction-record-update
+                    manifest-file plan transaction 'error
+                    (nreverse (copy-sequence executed))
+                    rollback (error-message-string err)))
              (signal 'anvil-pkg-error
                      (list message
                            :error (error-message-string err)
@@ -1617,6 +1742,9 @@ remove count."
       (setq transaction
             (nelix-manifest--transaction-begin
              commands rollback-on-error))
+      (setq transaction
+            (nelix-manifest--transaction-record-begin
+             manifest-file plan transaction))
       (condition-case err
           (progn
             (dolist (action commands)
@@ -1624,7 +1752,11 @@ remove count."
                                   :name (plist-get action :name))
                             (nelix-manifest--run-nix-command-nelisp
                              (plist-get action :argv)))
-                    executed))
+                    executed)
+              (setq transaction
+                    (nelix-manifest--transaction-record-update
+                     manifest-file plan transaction 'running
+                     (nreverse (copy-sequence executed)))))
             (dolist (pin (plist-get nelix-manifest--audit-manifest :pins))
               (nelix-pin pin))
             (setq executed (nreverse executed))
@@ -1633,7 +1765,6 @@ remove count."
             (setq plan (plist-put plan :status 'ok))
             (setq plan (plist-put plan :dry-run nil))
             (setq plan (plist-put plan :executed executed))
-            (setq plan (plist-put plan :transaction transaction))
             (setq plan (plist-put
                         plan
                         :installed
@@ -1648,6 +1779,10 @@ remove count."
                         plan
                         :pinned
                         (plist-get nelix-manifest--audit-manifest :pins)))
+            (setq transaction
+                  (nelix-manifest--transaction-record-update
+                   manifest-file plan transaction 'ok executed))
+            (setq plan (plist-put plan :transaction transaction))
             plan)
         (error
          (let* ((rollback
@@ -1657,6 +1792,11 @@ remove count."
                          (length executed)
                          (error-message-string err)
                          (if (plist-get rollback :ok) "ok" "not-ok"))))
+           (setq transaction
+                 (nelix-manifest--transaction-record-update
+                  manifest-file plan transaction 'error
+                  (nreverse (copy-sequence executed))
+                  rollback (error-message-string err)))
            (signal 'anvil-pkg-error
                    (list message
                          :error (error-message-string err)

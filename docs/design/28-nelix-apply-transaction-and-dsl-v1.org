@@ -23,19 +23,26 @@ Default behavior:
 1. Build the normal plan.
 2. Before executing install/remove commands, call =pkg-list-generations= and
    capture the active =:id= as =:before-generation=.
-3. Execute command rows in order.
-4. On success, capture =:after-generation=.
-5. On command failure, call =nelix-rollback= with =:before-generation= when it
+3. Persist the planned transaction under
+   =$XDG_STATE_HOME/nelix/transactions/=, or
+   =~/.local/state/nelix/transactions/= when =XDG_STATE_HOME= is unset.
+4. Execute command rows in order and rewrite the transaction record after every
+   successful step with the current =:executed= rows.
+5. On success, capture =:after-generation= and mark the record =:status ok=.
+6. On command failure, write =:status error= with =:executed=,
+   =:rollback-plan=, =:rollback=, and =:error=, then call =nelix-rollback= with
+   =:before-generation= when it
    was captured.
-6. After rollback, query the active generation again.  Rollback is reported as
+7. After rollback, query the active generation again.  Rollback is reported as
    =:ok t= only when the active generation equals =:before-generation=.
-7. Return failure to the CLI even when rollback succeeds, because the requested
+8. Return failure to the CLI even when rollback succeeds, because the requested
    convergence did not complete.
 
 Dry-run behavior:
 
 - never queries generation history;
 - returns =:transaction= metadata with =:dry-run t=;
+- never writes a transaction record;
 - shows whether rollback would be enabled for a real apply.
 
 Opt-out:
@@ -56,8 +63,17 @@ Current returned transaction shape:
  :generation-captured t
  :rollback-available t
  :before-generation 7
- :after-generation 8)
+ :after-generation 8
+ :record-id "apply-..."
+ :record-file "~/.local/state/nelix/transactions/apply-....el"
+ :record-status ok)
 #+end_example
+
+The transaction record is a generated S-expression plist with schema
+=nelix-apply-transaction= version =1=.  It stores the planned command rows, the
+latest executed rows, the transaction metadata, the rollback plan, and the
+rollback result on failure.  This is the durable audit trail for "what was going
+to happen" and "how far apply got" before rollback.
 
 Failure signals =anvil-pkg-error= with:
 
