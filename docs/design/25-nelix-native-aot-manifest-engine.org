@@ -413,6 +413,12 @@ Status on 2026-06-18:
   =transaction recover --dry-run=.  These commands inspect persisted
   transaction record files through a shell record reader instead of starting
   the full standalone NeLisp CLI for each read-only transaction query.
+- JSON Nix =apply ... --allow-remove-count N= and
+  =apply ... --locked --allow-remove-count N= now use the same cached target
+  data to execute profile install/remove commands directly from the shell,
+  write the schema v1 transaction record, and run profile rollback on command
+  failure.  The direct full standalone NeLisp apply path remains available
+  through =NELIX_NELISP_AOT=0= for debugging and compatibility.
 - Fast-lane real-profile measurements on 2026-06-18:
 
 | Step | Measurement |

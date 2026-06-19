@@ -356,8 +356,11 @@ make verify-installed-cli-gate   # after installing the freshly built package
 
 The first two gates prove the source-tree CLI in Emacs and standalone NeLisp
 paths.  The NeLisp gate uses the user-facing default runtime, so supported
-read-only manifest commands may take the AOT cache fast lane while real apply
-still exercises the standalone fallback path.  Transaction list/show/recover
+read-only manifest commands may take the AOT cache fast lane.  Nix real apply
+with explicit remove confirmation also uses the default-runtime shell apply
+fast lane, executing install/remove commands, writing the transaction record,
+and invoking rollback on command failure without bootstrapping the full
+standalone CLI.  Transaction list/show/recover
 inspection uses the default-runtime record-reader fast lane, so the gate still
 proves transaction records while avoiding another full CLI bootstrap for each
 read-only inspection.  Use =make smoke-nelix-lock-plan-apply-nelisp-direct=

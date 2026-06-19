@@ -225,6 +225,11 @@ inspection commands (=transaction list=, =transaction show=, and
 =transaction recover --dry-run=) from the persisted record files, while
 =NELIX_NELISP_AOT=0= keeps the slower full direct path available for
 debugging.
+For Nix profiles, JSON =apply ... --allow-remove-count N= and
+=apply ... --locked --allow-remove-count N= also use the default fast lane:
+they execute the planned install/remove commands from the shell, persist the
+schema v1 transaction record, and roll back to the captured profile generation
+when a command fails.
 It records the
 AOT cache target count too; set =NELIX_USER_MANIFEST_MIN_TARGETS= when the
 gate must prove a large real manifest such as the current 200-package

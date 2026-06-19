@@ -97,6 +97,31 @@ run_nelix() {
   fi
 }
 
+run_nelix_runtime() {
+  local label="$1"
+  local runtime="$2"
+  shift 2
+  local out_file="$TMP_DIR/$label.out"
+  local err_file="$TMP_DIR/$label.err"
+  set +e
+  env \
+    "PATH=$TMP_DIR/bin:$PATH" \
+    "HOME=$TMP_DIR/home" \
+    "XDG_STATE_HOME=$TMP_DIR/state" \
+    "NELIX_LISPDIR=$REPO_ROOT" \
+    "NELIX_RUNTIME=$runtime" \
+    "NELIX_FAKE_NIX_LOG=$FAKE_LOG" \
+    "$REPO_ROOT/bin/nelix" "$@" >"$out_file" 2>"$err_file"
+  local rc=$?
+  set -e
+  printf 'nelix_lock_gate_result label=%s rc=%s\n' "$label" "$rc"
+  if [ "$rc" -ne 0 ]; then
+    sed 's/^/nelix_lock_gate_stdout /' "$out_file" >&2
+    sed 's/^/nelix_lock_gate_stderr /' "$err_file" >&2
+    exit "$rc"
+  fi
+}
+
 run_nelix_expect_fail() {
   local label="$1"
   shift
@@ -277,6 +302,11 @@ expect_out_any transaction_show_ok \
 expect_out_any transaction_show_ok \
   '"action":"remove","name":"bat"' \
   '"name":"bat","action":"remove"'
+run_nelix_runtime transaction_show_ok_emacs emacs --json transaction show "$ok_record"
+expect_out transaction_show_ok_emacs '"operation":"transaction-show"'
+expect_out transaction_show_ok_emacs '"schema":"nelix-apply-transaction"'
+expect_out transaction_show_ok_emacs '"schema-version":1'
+expect_out transaction_show_ok_emacs '"status":"ok"'
 
 : >"$FAKE_LOG"
 run_nelix apply --json apply "$MANIFEST" --allow-remove-count 1
@@ -309,11 +339,19 @@ expect_out transaction_show_error '"ok":true'
 expect_out transaction_show_error '"verified":true'
 expect_out transaction_show_error '"rollback-plan":'
 expect_out transaction_show_error '"generation":7'
+run_nelix_runtime transaction_show_error_emacs emacs --json transaction show "$error_record"
+expect_out transaction_show_error_emacs '"operation":"transaction-show"'
+expect_out transaction_show_error_emacs '"schema":"nelix-apply-transaction"'
+expect_out transaction_show_error_emacs '"status":"error"'
 run_nelix transaction_recover_error --json transaction recover "$error_record" --dry-run
 expect_out transaction_recover_error '"operation":"transaction-recover"'
 expect_out transaction_recover_error '"dry-run":true'
 expect_out transaction_recover_error '"record-status":"error"'
 expect_out transaction_recover_error '"generation":7'
 expect_out transaction_recover_error '"manual-command":\["rollback","7"\]'
+run_nelix_runtime transaction_recover_error_emacs emacs --json transaction recover "$error_record" --dry-run
+expect_out transaction_recover_error_emacs '"operation":"transaction-recover"'
+expect_out transaction_recover_error_emacs '"record-status":"error"'
+expect_out transaction_recover_error_emacs '"manual-command":\["rollback","7"\]'
 
 echo "nelix_lock_gate_result label=nelix_lock_plan_apply_gate rc=0"

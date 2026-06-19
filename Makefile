@@ -362,6 +362,8 @@ verify-deb-contents:
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/bin/nelix | grep -q 'AOT lock-check failed'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/bin/nelix | grep -q 'nelix_try_transaction_fast_lane'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/bin/nelix | grep -q 'transaction-recover'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/bin/nelix | grep -q 'nelix_run_aot_apply_shell_lane'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/bin/nelix | grep -q 'apply-real-locked'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/bin/nelix | grep -q 'nelix-transaction-log-root'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -q './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/nelix-cli.el'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -q './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/nelix-aot-native-cli-proof.el'

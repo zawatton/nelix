@@ -1399,6 +1399,359 @@ nelix_run_aot_id_cache_shell_lane() {
       ' "$cache" -
 }
 
+nelix_run_aot_apply_shell_lane() {
+  command=$1
+  json=$2
+  cache=$3
+  profile=$4
+  nix_program=$5
+  allow_remove_count=$6
+  locked=0
+
+  [ "$json" -eq 1 ] || return 1
+  command -v perl >/dev/null 2>&1 || return 1
+
+  case "$command" in
+    apply-real)
+      ;;
+    apply-real-locked)
+      nelix_aot_locked_dry_run_check "$manifest" "$cache" ||
+        nelix_aot_locked_error "$manifest"
+      locked=1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  perl - "$manifest" "$cache" "$profile" "$nix_program" "$allow_remove_count" "$locked" "$(nelix_transaction_log_root_shell)" <<'PERL'
+use strict;
+use warnings;
+use POSIX qw(strftime);
+
+my ($manifest, $cache, $profile, $nix, $allow_remove_count, $locked, $txn_root) = @ARGV;
+$allow_remove_count = "" unless defined $allow_remove_count;
+
+sub js {
+  my ($s) = @_;
+  $s = "" unless defined $s;
+  $s =~ s/\\/\\\\/g; $s =~ s/"/\\"/g; $s =~ s/\r/\\r/g; $s =~ s/\n/\\n/g; $s =~ s/\t/\\t/g;
+  return '"' . $s . '"';
+}
+
+sub sx {
+  my ($s) = @_;
+  $s = "" unless defined $s;
+  $s =~ s/\\/\\\\/g; $s =~ s/"/\\"/g; $s =~ s/\r/\\r/g; $s =~ s/\n/\\n/g; $s =~ s/\t/\\t/g;
+  return '"' . $s . '"';
+}
+
+sub sym_or_nil {
+  my ($s) = @_;
+  return "nil" unless defined $s && $s ne "";
+  return $s;
+}
+
+sub run_capture {
+  my (@cmd) = @_;
+  open my $fh, '-|', @cmd or die "run @cmd: $!";
+  local $/;
+  my $out = <$fh>;
+  close $fh;
+  my $rc = $? >> 8;
+  return ($rc, defined($out) ? $out : "");
+}
+
+sub run_status {
+  my (@cmd) = @_;
+  system @cmd;
+  return $? >> 8;
+}
+
+sub profile_names {
+  my ($rc, $out) = run_capture($nix, 'profile', 'list', '--profile', $profile);
+  exit 2 if $rc != 0;
+  my @names;
+  for my $line (split /\n/, $out) {
+    $line =~ s/\e\[[0-9;]*m//g;
+    push @names, $1 if $line =~ /^Name:\s*(.+?)\s*$/;
+  }
+  return @names;
+}
+
+sub before_generation {
+  my ($rc, $out) = run_capture($nix, 'profile', 'history', '--json', '--profile', $profile);
+  return "" if $rc != 0;
+  return $1 if $out =~ /"id"\s*:\s*([0-9]+)/;
+  return "";
+}
+
+sub load_cache {
+  open my $fh, '<', $cache or die "cache $cache: $!";
+  my (@targets, @id_targets, @pins, %name_by_id);
+  my $has_id = 0;
+  while (my $line = <$fh>) {
+    chomp $line;
+    my @f = split /\t/, $line;
+    next unless @f;
+    if ($f[0] eq 'name-id' && defined $f[1] && defined $f[2]) {
+      $name_by_id{$f[1]} = $f[2];
+    } elsif ($f[0] eq 'target-id') {
+      $has_id = 1;
+      my $display = $name_by_id{$f[1]} || $f[1];
+      my @candidates = map { $name_by_id{$_} || $_ } @f[2 .. $#f];
+      @candidates = ($display) unless @candidates;
+      push @id_targets, [$display, @candidates];
+    } elsif ($f[0] eq 'target') {
+      my $display = $f[1];
+      my @candidates = @f[2 .. $#f];
+      @candidates = ($display) unless @candidates;
+      push @targets, [$display, @candidates];
+    } elsif ($f[0] eq 'pin-id') {
+      push @pins, map { $name_by_id{$_} || $_ } @f[1 .. $#f];
+    } elsif ($f[0] eq 'pin') {
+      push @pins, @f[1 .. $#f];
+    }
+  }
+  close $fh;
+  @targets = @id_targets if $has_id;
+  return (\@targets, \@pins);
+}
+
+sub norm {
+  my ($s) = @_;
+  $s =~ s/-[0-9]+$//;
+  return $s;
+}
+
+sub compute_plan {
+  my (@installed) = @_;
+  my ($targets, $pins) = load_cache();
+  my (%installed, %installed_norm, %desired, %pin);
+  for my $name (@installed) {
+    $installed{$name} = $name;
+    $installed_norm{norm($name)} = $name;
+  }
+  for my $pin (@$pins) {
+    $pin{$pin} = 1;
+    $pin{norm($pin)} = 1;
+  }
+  my (@install, @keep);
+  for my $row (@$targets) {
+    my $display = $row->[0];
+    for my $candidate (@$row) {
+      $desired{$candidate} = 1;
+      $desired{norm($candidate)} = 1;
+    }
+    my $found = "";
+    for my $candidate (@$row) {
+      if (exists $installed{$candidate}) { $found = $installed{$candidate}; last; }
+      my $n = norm($candidate);
+      if (exists $installed_norm{$n}) { $found = $installed_norm{$n}; last; }
+    }
+    if ($found ne "") {
+      push @keep, $display;
+    } else {
+      push @install, $display;
+    }
+  }
+  my @remove;
+  for my $name (@installed) {
+    next if $desired{$name} || $desired{norm($name)};
+    next if $pin{$name} || $pin{norm($name)};
+    push @remove, $name;
+  }
+  return (\@install, \@remove, \@keep);
+}
+
+sub action_json {
+  my ($action, $name) = @_;
+  if ($action eq 'install') {
+    return '{"action":"install","name":' . js($name) . ',"backend":"nix","target":' . js($name)
+      . ',"resolved-target":' . js($name) . ',"installed-name":null,"argv":["profile","install","--profile",'
+      . js($profile) . ',' . js("nixpkgs#$name") . ']}';
+  }
+  return '{"action":"remove","name":' . js($name)
+    . ',"backend":"nix","target":null,"resolved-target":null,"installed-name":' . js($name)
+    . ',"argv":["profile","remove",' . js($name) . ',"--profile",' . js($profile) . ']}';
+}
+
+sub actions_json {
+  my ($action, $items) = @_;
+  return '[' . join(',', map { action_json($action, $_) } @$items) . ']';
+}
+
+sub string_array_json {
+  my ($items) = @_;
+  return '[' . join(',', map { js($_) } @$items) . ']';
+}
+
+sub action_sexp {
+  my ($action, $name) = @_;
+  if ($action eq 'install') {
+    return '(:action install :name ' . sx($name)
+      . ' :backend nix :target ' . sx($name)
+      . ' :resolved-target ' . sx($name)
+      . ' :installed-name nil :argv ("profile" "install" "--profile" '
+      . sx($profile) . ' ' . sx("nixpkgs#$name") . '))';
+  }
+  return '(:action remove :name ' . sx($name)
+    . ' :backend nix :target nil :resolved-target nil :installed-name '
+    . sx($name) . ' :argv ("profile" "remove" ' . sx($name)
+    . ' "--profile" ' . sx($profile) . '))';
+}
+
+sub actions_sexp {
+  my ($install, $remove) = @_;
+  return '(' . join(' ', (map { action_sexp('install', $_) } @$install),
+                         (map { action_sexp('remove', $_) } @$remove)) . ')';
+}
+
+sub ensure_txn_root {
+  return if -d $txn_root;
+  my @parts = split m{/+}, $txn_root;
+  my $path = $txn_root =~ m{\A/} ? "/" : "";
+  for my $part (@parts) {
+    next if $part eq "";
+    $path .= "/" if $path ne "" && $path ne "/";
+    $path .= $part;
+    mkdir $path if !-d $path;
+  }
+}
+
+sub write_record {
+  my (%args) = @_;
+  ensure_txn_root();
+  my $stamp = strftime('%Y%m%dT%H%M%S%z', localtime);
+  my $pid = $$;
+  my $idx = 1;
+  my ($id, $file);
+  do {
+    $id = "apply-$stamp-$pid-$idx";
+    $file = "$txn_root/$id.el";
+    $idx++;
+  } while (-e $file);
+  my $now = strftime('%Y-%m-%dT%H:%M:%S%z', localtime);
+  my $before = $args{before_generation};
+  my $install = $args{install};
+  my $remove = $args{remove};
+  my $executed = $args{executed};
+  my $status = $args{status};
+  my $rollback = $args{rollback};
+  my $error = $args{error};
+  my $commands = actions_sexp($install, $remove);
+  my $executed_s = '(' . join(' ', map { action_sexp($_->[0], $_->[1]) } @$executed) . ')';
+  my $installed_s = '(' . join(' ', map { sx($_) } @$install) . ')';
+  my $removed_s = '(' . join(' ', map { sx($_) } @$remove) . ')';
+  my $rollback_plan = $before ne ""
+    ? '(:available t :operation rollback :generation ' . $before
+      . ' :argv ("profile" "rollback" "--profile" ' . sx($profile)
+      . ' "--to-generation" ' . sx($before) . '))'
+    : '(:available nil :reason "before-generation-missing")';
+  my $rollback_s = defined($rollback) ? $rollback : 'nil';
+  my $error_s = defined($error) ? sx($error) : 'nil';
+  my $locked_s = $locked eq "1" ? "t" : "nil";
+  my $record = '(:schema "nelix-apply-transaction" :schema-version 1'
+    . ' :id ' . sx($id)
+    . ' :status ' . $status
+    . ' :manifest ' . sx($manifest)
+    . ' :profile ' . sx($profile)
+    . ' :started-at ' . sx($now)
+    . ' :updated-at ' . sx($now)
+    . ' :plan (:operation apply :status ' . $status
+    . ' :dry-run nil :manifest ' . sx($manifest)
+    . ' :lock ' . sx("$manifest.nelix-lock")
+    . ' :lock-present ' . ($locked eq "1" ? "t" : "nil")
+    . ' :backend nix :backend-selection (:backend nix :fallback :nelisp-aot-cache)'
+    . ' :profile "default" :nix-profile ' . sx($profile)
+    . ' :install ' . '(' . join(' ', map { action_sexp('install', $_) } @$install) . ')'
+    . ' :remove ' . '(' . join(' ', map { action_sexp('remove', $_) } @$remove) . ')'
+    . ' :keep nil :protected nil :commands ' . $commands
+    . ' :count ' . (scalar(@$install) + scalar(@$remove))
+    . ' :empty ' . ((@$install || @$remove) ? "nil" : "t")
+    . ' :locked ' . $locked_s
+    . ' :lock-enforced ' . $locked_s
+    . ' :executed ' . $executed_s
+    . ' :installed ' . $installed_s
+    . ' :removed ' . $removed_s
+    . ')'
+    . ' :transaction (:enabled t :backend nix :profile nil :system nil'
+    . ' :rollback-on-error t :generation-captured t :rollback-available '
+    . ($before ne "" ? "t" : "nil")
+    . ' :before-generation ' . sym_or_nil($before)
+    . ' :before-generation-error nil'
+    . ' :after-generation ' . sym_or_nil($before)
+    . ' :record-id ' . sx($id)
+    . ' :record-file ' . sx($file)
+    . ' :record-started-at ' . sx($now)
+    . ' :record-status ' . $status
+    . ' :record-updated-at ' . sx($now) . ')'
+    . ' :executed ' . $executed_s
+    . ' :rollback-plan ' . $rollback_plan
+    . ' :rollback ' . $rollback_s
+    . ' :error ' . $error_s
+    . ')';
+  open my $fh, '>', $file or die "write $file: $!";
+  print $fh ";;; generated Nelix apply transaction record -*- lexical-binding: t; -*-\n\n$record\n";
+  close $fh;
+  return ($id, $file);
+}
+
+my @installed_names = profile_names();
+my ($install, $remove, $keep) = compute_plan(@installed_names);
+if ($allow_remove_count eq "" || $allow_remove_count !~ /\A[0-9]+\z/ || scalar(@$remove) != $allow_remove_count) {
+  print STDERR "nelix-apply: refusing to remove " . scalar(@$remove) . " package(s); rerun with --allow-remove-count " . scalar(@$remove) . " or --allow-remove\n";
+  exit 2;
+}
+
+my $before = before_generation();
+my @executed;
+for my $name (@$install) {
+  my $rc = run_status($nix, 'profile', 'install', '--profile', $profile, "nixpkgs#$name");
+  if ($rc != 0) {
+    my $rollback_rc = $before ne "" ? run_status($nix, 'profile', 'rollback', '--profile', $profile, '--to-generation', $before) : 1;
+    my $rollback = '(:attempted t :ok ' . ($rollback_rc == 0 ? 't' : 'nil') . ' :verified ' . ($rollback_rc == 0 ? 't' : 'nil') . ')';
+    write_record(status => 'error', install => $install, remove => $remove,
+                 executed => \@executed, before_generation => $before,
+                 rollback => $rollback, error => "install failed: $name");
+    print '{"status":"error","operation":"apply","failed":' . js($name)
+      . ',"rollback-message":"rollback=' . ($rollback_rc == 0 ? 'ok' : 'failed') . '"}' . "\n";
+    exit 2;
+  }
+  push @executed, ['install', $name];
+}
+for my $name (@$remove) {
+  my $rc = run_status($nix, 'profile', 'remove', $name, '--profile', $profile);
+  if ($rc != 0) {
+    my $rollback_rc = $before ne "" ? run_status($nix, 'profile', 'rollback', '--profile', $profile, '--to-generation', $before) : 1;
+    my $rollback = '(:attempted t :ok ' . ($rollback_rc == 0 ? 't' : 'nil') . ' :verified ' . ($rollback_rc == 0 ? 't' : 'nil') . ')';
+    write_record(status => 'error', install => $install, remove => $remove,
+                 executed => \@executed, before_generation => $before,
+                 rollback => $rollback, error => "remove failed: $name");
+    print '{"status":"error","operation":"apply","failed":' . js($name)
+      . ',"rollback-message":"rollback=' . ($rollback_rc == 0 ? 'ok' : 'failed') . '"}' . "\n";
+    exit 2;
+  }
+  push @executed, ['remove', $name];
+}
+
+write_record(status => 'ok', install => $install, remove => $remove,
+             executed => \@executed, before_generation => $before);
+
+print '{"operation":"apply","status":"ok","locked":' . ($locked eq "1" ? 'true' : 'false')
+  . ',"lock-enforced":' . ($locked eq "1" ? 'true' : 'false')
+  . ',"installed":' . string_array_json($install)
+  . ',"removed":' . string_array_json($remove)
+  . ',"install":' . actions_json('install', $install)
+  . ',"remove":' . actions_json('remove', $remove)
+  . ',"commands":[' . join(',', (map { action_json('install', $_) } @$install),
+                              (map { action_json('remove', $_) } @$remove)) . ']'
+  . ',"count":' . (scalar(@$install) + scalar(@$remove))
+  . ',"backend":"nix","backend-selection":{"backend":"nix","fallback":":nelisp-aot-cache"}}' . "\n";
+PERL
+  return $?
+}
+
 nelix_try_nelisp_aot_cache_fast_lane() {
   nelix_nelisp_aot_cache_enabled || return 1
   if [ "$#" -eq 2 ] && [ "$1" = "--json" ] && [ "$2" = "list" ]; then
@@ -1421,6 +1774,16 @@ nelix_try_nelisp_aot_cache_fast_lane() {
     json=1
     command=apply-dry-run-locked
     manifest=$(nelix_abs_path "$3")
+  elif [ "$#" -eq 6 ] && [ "$1" = "--json" ] && [ "$2" = "apply" ] && [ "$4" = "--locked" ] && [ "$5" = "--allow-remove-count" ]; then
+    json=1
+    command=apply-real-locked
+    manifest=$(nelix_abs_path "$3")
+    allow_remove_count=$6
+  elif [ "$#" -eq 5 ] && [ "$1" = "--json" ] && [ "$2" = "apply" ] && [ "$4" = "--allow-remove-count" ]; then
+    json=1
+    command=apply-real
+    manifest=$(nelix_abs_path "$3")
+    allow_remove_count=$5
   elif [ "$#" -eq 4 ] && [ "$1" = "--json" ] && [ "$2" = "plan" ] && [ "$4" = "--dry-run" ]; then
     json=1
     command=plan
@@ -1468,7 +1831,7 @@ nelix_try_nelisp_aot_cache_fast_lane() {
         aot_fun=nelix-aot-audit-lines
       fi
       ;;
-    plan|apply-dry-run|apply-dry-run-locked|lock-check)
+    plan|apply-dry-run|apply-dry-run-locked|apply-real|apply-real-locked|lock-check)
       aot_fun=
       ;;
     upgrade-plan)
@@ -1518,6 +1881,13 @@ nelix_try_nelisp_aot_cache_fast_lane() {
   nelix_aot_cache_fresh_p "$manifest" "$cache" || {
     nelix_aot_cache_error stale "$command" "$manifest"
   }
+
+  if [ "$command" = "apply-real" ] ||
+     [ "$command" = "apply-real-locked" ]; then
+    nelix_run_aot_apply_shell_lane "$command" "$json" "$cache" "$profile" "$nix_program" "${allow_remove_count:-}" &&
+      return 0
+    return 1
+  fi
 
   if nelix_run_aot_id_cache_shell_lane "$command" "$json" "$cache" "$profile" "$nix_program"; then
     return 0
