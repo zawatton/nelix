@@ -232,10 +232,13 @@ installed CLI gate.  That gate covers the packaged registry root through
 recipes, then installs and activates the packaged =ripgrep= native recipe
 against a fake =rg= command.  The native CLI gate also installs and activates a
 hash-verified local tar archive recipe through the same CLI path.  It also covers
-=validate=, =lock=, =plan=, and =apply --dry-run= with a fake Nix executable,
-and verifies the native store CLI plus the =nelix --runtime nelisp= AOT cache
-shell lane with isolated fake registry/profile/Nix/NeLisp fixtures.  The AOT
-cache shell lane is the default for supported =--runtime nelisp= manifest
+=validate=, =lock=, =plan=, =apply --dry-run=, and
+=apply --locked --allow-remove-count 1= with a fake Nix executable, proving the
+locked installed CLI path reaches the expected profile install/remove command
+sequence.  It also verifies the native store CLI plus the
+=nelix --runtime nelisp= AOT cache shell lane with isolated fake
+registry/profile/Nix/NeLisp fixtures.  The AOT cache shell lane is the default
+for supported =--runtime nelisp= manifest
 commands; use =NELIX_NELISP_AOT=0= only to debug the slower direct standalone
 path.
 With the local =null= backend,

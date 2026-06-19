@@ -196,9 +196,10 @@ packaging/verify-extracted-nelix-debian.sh ../elpa-nelix_0.1.0-4_all.deb 0.1.0-4
   =audit / plan / apply --dry-run / upgrade-plan= path is covered by the AOT
   cache fast lane.  The standalone NeLisp Nix apply path now supports
   transaction rollback and =apply --locked --dry-run= without loading the lock
-  as executable Elisp.  Full real-user =apply --locked= should still be treated
-  as a gated runtime/process maturity track until the installed package gate
-  covers a real profile mutation with a locked manifest.
+  as executable Elisp.  The installed package gate now covers
+  =apply --locked --allow-remove-count 1= against a fake Nix profile mutation.
+  A final real-user profile run with an actual Nix profile is still a release
+  acceptance check rather than a unit/source-tree invariant.
 - =apply= converges the profile and can remove unmanaged entries.  This is
   intentional, but docs and UI must keep the review step prominent.
 - Transitional Debian wrapper packages need a final policy: either keep them in

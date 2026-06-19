@@ -211,6 +211,18 @@ reject_log 'profile install'
 reject_log 'profile remove'
 
 : >"$FAKE_LOG"
+run_nelix locked_apply --json apply "$MANIFEST" --locked --allow-remove-count 1
+expect_out locked_apply '"status":"ok"'
+expect_out locked_apply '"locked":true'
+expect_out locked_apply '"lock-enforced":true'
+expect_out locked_apply '"installed":\["ripgrep","fd"\]'
+expect_out locked_apply '"removed":\["bat"\]'
+expect_log 'profile install --profile .+nixpkgs#ripgrep'
+expect_log 'profile install --profile .+nixpkgs#fd'
+expect_log 'profile remove bat --profile '
+expect_log 'profile history --json --profile '
+
+: >"$FAKE_LOG"
 run_nelix apply --json apply "$MANIFEST" --allow-remove-count 1
 expect_out apply '"status":"ok"'
 expect_out apply '"installed":\["ripgrep","fd"\]'

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verify the installed /usr/bin/nelix CLI can run lock/plan/apply --dry-run.
+# Verify the installed /usr/bin/nelix CLI can run lock/plan/apply.
 set -euo pipefail
 
 if [ ! -x /usr/bin/nelix ]; then
@@ -17,6 +17,7 @@ trap cleanup EXIT HUP INT TERM
 mkdir -p "$tmp/bin" "$tmp/home" "$tmp/state"
 manifest="$tmp/manifest.el"
 fake_nix="$tmp/bin/nix"
+fake_log="$tmp/fake-nix.log"
 
 cat >"$manifest" <<'EOF'
 (require 'nelix-manifest)
@@ -28,6 +29,9 @@ EOF
 
 cat >"$fake_nix" <<'EOF'
 #!/bin/sh
+log=${NELIX_FAKE_NIX_LOG:?}
+printf '%s\n' "$*" >>"$log"
+
 case " $* " in
   *" --version "*)
     printf 'nix (Nix) 2.34.7\n'
@@ -48,6 +52,23 @@ case " $* " in
     printf '%s\n' '{"generations":[{"id":7,"date":"2026-06-19T00:00:00Z","packages":["magit","bat"],"active":true}]}'
     exit 0
     ;;
+  *" profile install "*)
+    if [ -n "${NELIX_FAKE_NIX_FAIL_TARGET:-}" ]; then
+      case " $* " in
+        *"$NELIX_FAKE_NIX_FAIL_TARGET"*)
+          printf 'fake nix: requested install failure for %s\n' "$NELIX_FAKE_NIX_FAIL_TARGET" >&2
+          exit 42
+          ;;
+      esac
+    fi
+    exit 0
+    ;;
+  *" profile remove "*)
+    exit 0
+    ;;
+  *" profile rollback "*)
+    exit 0
+    ;;
 esac
 
 printf 'fake nix: unsupported %s\n' "$*" >&2
@@ -64,6 +85,7 @@ run_json() {
       "PATH=$tmp/bin:$PATH" \
       "HOME=$tmp/home" \
       "XDG_STATE_HOME=$tmp/state" \
+      "NELIX_FAKE_NIX_LOG=$fake_log" \
       /usr/bin/nelix --json "$@" >"$out" 2>"$err"; then
     sed 's/^/nelix_installed_cli_stdout /' "$out" >&2
     sed 's/^/nelix_installed_cli_stderr /' "$err" >&2
@@ -78,6 +100,24 @@ expect_json() {
     echo "nelix installed CLI gate missing pattern: label=$label pattern=$pattern" >&2
     sed 's/^/nelix_installed_cli_stdout /' "$tmp/$label.json" >&2
     sed 's/^/nelix_installed_cli_stderr /' "$tmp/$label.err" >&2
+    exit 1
+  fi
+}
+
+expect_log() {
+  pattern="$1"
+  if ! grep -Eq "$pattern" "$fake_log"; then
+    echo "nelix installed CLI gate missing fake nix log pattern: $pattern" >&2
+    sed 's/^/nelix_installed_cli_log /' "$fake_log" >&2
+    exit 1
+  fi
+}
+
+reject_log() {
+  pattern="$1"
+  if grep -Eq "$pattern" "$fake_log"; then
+    echo "nelix installed CLI gate unexpected fake nix log pattern: $pattern" >&2
+    sed 's/^/nelix_installed_cli_log /' "$fake_log" >&2
     exit 1
   fi
 }
@@ -127,6 +167,30 @@ run_json dry_run apply "$manifest" --dry-run
 expect_json dry_run '"status":"dry-run"'
 expect_json dry_run '"transaction":'
 expect_json dry_run '"rollback-on-error":true'
+reject_log 'profile install'
+reject_log 'profile remove'
+
+: >"$fake_log"
+run_json locked_dry_run apply "$manifest" --locked --dry-run
+expect_json locked_dry_run '"status":"dry-run"'
+expect_json locked_dry_run '"locked":true'
+expect_json locked_dry_run '"lock-enforced":true'
+expect_json locked_dry_run '"lock-check":'
+expect_json locked_dry_run '"locked-installed":'
+reject_log 'profile install'
+reject_log 'profile remove'
+
+: >"$fake_log"
+run_json locked_apply apply "$manifest" --locked --allow-remove-count 1
+expect_json locked_apply '"status":"ok"'
+expect_json locked_apply '"locked":true'
+expect_json locked_apply '"lock-enforced":true'
+expect_json locked_apply '"installed":\["ripgrep","fd"\]'
+expect_json locked_apply '"removed":\["bat"\]'
+expect_log 'profile install --profile .+nixpkgs#ripgrep'
+expect_log 'profile install --profile .+nixpkgs#fd'
+expect_log 'profile remove bat --profile '
+expect_log 'profile history --json --profile '
 
 NELIX_BIN=/usr/bin/nelix bash "$script_dir/verify-nelix-native-cli-gate.sh"
 NELIX_BIN=/usr/bin/nelix bash "$script_dir/verify-nelix-aot-cache-gate.sh"

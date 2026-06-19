@@ -280,6 +280,7 @@ verify-deb-contents:
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'registry list [--system SYSTEM]'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'packaged_registry'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'native rollback [--profile PROFILE] [--generation GENERATION]'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh | grep -Fq 'locked_apply apply "$$manifest" --locked --allow-remove-count 1'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/README.org.gz | gzip -dc | grep -q 'make verify-user-environment'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/README.org.gz | gzip -dc | grep -q 'make verify-user-manifest-dsl'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/README.org.gz | gzip -dc | grep -q ':nelisp-aot-cache'
@@ -460,7 +461,7 @@ help:
 	@echo "make fedora-public-url-smoke — install nelix/emacs-nelix from FEDORA_PUBLIC_URL=$(FEDORA_PUBLIC_URL)"
 	@echo "make verify-user-manifest-dsl — verify ~/.emacs.d/nelix-package.el DSL v1 from the source tree"
 	@echo "make verify-installed-debian — verify the installed elpa-nelix Debian package"
-	@echo "make verify-installed-cli-gate — verify installed /usr/bin/nelix lock/plan/apply --dry-run"
+	@echo "make verify-installed-cli-gate — verify installed /usr/bin/nelix lock/plan/apply"
 	@echo "make verify-user-environment — verify installed Debian package + personal Nelix config"
 	@echo "make autopkgtest-debian — run autopkgtest against $(DEB) using sudo when needed"
 	@echo "make nix-check    — run top-level 'nix flake check'"

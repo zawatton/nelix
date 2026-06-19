@@ -99,6 +99,8 @@ It runs =/usr/bin/nelix= with a fake =nix= executable and verifies:
 - =lock MANIFEST= creates =MANIFEST.nelix-lock=;
 - =plan MANIFEST= reports install/remove rows;
 - =apply MANIFEST --dry-run= reports transaction metadata without mutating.
+- =apply MANIFEST --locked --allow-remove-count 1= enforces the lock and
+  reaches the expected fake Nix profile install/remove commands.
 
 The source-tree NeLisp gate also runs =apply MANIFEST --locked --dry-run= so
 locked mode is checked without loading the lock file as executable Elisp.
