@@ -391,6 +391,17 @@ validate_plan_apply_dry_run_equivalence() {
     -- "$plan_json" "$dry_run_json"
 }
 
+assert_lock_fingerprint_unchanged() {
+  label="$1"
+  before="$2"
+  lock_file="$3"
+  after="$(cksum "$lock_file")"
+  if [ "$before" != "$after" ]; then
+    echo "nelix installed CLI gate: $label rewrote lock file" >&2
+    exit 1
+  fi
+}
+
 expect_log() {
   pattern="$1"
   if ! grep -Eq "$pattern" "$fake_log"; then
@@ -641,17 +652,20 @@ run_json lock_validate lock validate "$manifest"
 expect_json lock_validate '"ok":true'
 expect_json lock_validate '"format":"sexp"'
 expect_json lock_validate '"schema-version":2'
+assert_lock_fingerprint_unchanged lock_validate "$lock_fingerprint_before" "$manifest.nelix-lock"
 
 run_json lock_diff lock diff "$manifest"
 expect_json lock_diff '"ok":true'
 expect_json lock_diff '"status":"clean"'
 expect_json lock_diff '"manifest-digest":'
+assert_lock_fingerprint_unchanged lock_diff "$lock_fingerprint_before" "$manifest.nelix-lock"
 
 run_json lock_migrate_dry_run lock migrate "$manifest" --dry-run
 expect_json lock_migrate_dry_run '"ok":true'
 expect_json lock_migrate_dry_run '"status":"current"'
 expect_json lock_migrate_dry_run '"needed":null'
 expect_json lock_migrate_dry_run '"dry-run":true'
+assert_lock_fingerprint_unchanged lock_migrate_dry_run "$lock_fingerprint_before" "$manifest.nelix-lock"
 
 legacy_manifest="$tmp/legacy-manifest.el"
 legacy_lock="$tmp/legacy-manifest.lock.el"
