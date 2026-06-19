@@ -176,6 +176,9 @@ run_json schema_manifest schema manifest-dsl-v1
 expect_json schema_manifest '"name":"manifest-dsl-v1"'
 expect_json schema_manifest '"forms":\['
 expect_json schema_manifest '"emacs-packages"'
+expect_json schema_manifest '"backends":\['
+expect_json schema_manifest '"dnf"'
+expect_json schema_manifest '"nelix-native"'
 
 run_json packaged_registry registry list --system x86_64-linux
 expect_json packaged_registry '"operation":"registry-list"'

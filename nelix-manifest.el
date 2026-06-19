@@ -54,6 +54,10 @@
     "emacs" "linux" "debian-tools" "bootstrap-apt" "pins")
   "Stable manifest keys produced by `nelix-environment' DSL v1.")
 
+(defconst nelix-environment-dsl-backends
+  '(nelix-native nix apt dnf git elpa homebrew scoop winget)
+  "Stable backend names accepted in `nelix-environment' backend-policy forms.")
+
 (defconst nelix-lock-schema-required-json-keys
   '("schema" "schema-version" "version" "format" "lock"
     "manifest-digest" "manifest-files" "profile" "backend" "system"
@@ -87,6 +91,7 @@ When nil, records are written under the user's state directory at
         :entrypoint "nelix-environment"
         :forms (mapcar #'symbol-name nelix-environment-dsl-forms)
         :manifest-keys nelix-environment-dsl-manifest-keys
+        :backends (mapcar #'symbol-name nelix-environment-dsl-backends)
         :stable t))
 
 (defun nelix-schema--lock-v2 ()

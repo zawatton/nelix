@@ -24,7 +24,7 @@
   :prefix "nelix-backend-")
 
 (defcustom nelix-backend-policy
-  '((gnu/linux . (nelix-native nix apt git elpa))
+  '((gnu/linux . (nelix-native nix apt dnf git elpa))
     (darwin . (nelix-native nix homebrew git elpa))
     (windows-nt . (nelix-native scoop winget git elpa)))
   "Ordered backend policy by `system-type'."
@@ -76,6 +76,10 @@
     (puthash 'apt '(:backend apt :systems (x86_64-linux aarch64-linux)
                     :store nil :generations nil :rollback nil :build nil
                     :requires-program "apt")
+             table)
+    (puthash 'dnf '(:backend dnf :systems (x86_64-linux aarch64-linux)
+                    :store nil :generations nil :rollback nil :build nil
+                    :requires-program "dnf")
              table)
     (puthash 'homebrew '(:backend homebrew
                          :systems (x86_64-darwin aarch64-darwin)

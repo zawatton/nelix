@@ -127,6 +127,8 @@
   (should (= 1 (nelix-dsl-version)))
   (should (fboundp 'nelix-environment))
   (should (memq 'emacs-packages nelix-environment-dsl-forms))
+  (should (memq 'dnf nelix-environment-dsl-backends))
+  (should (memq 'dnf (nelix-backend-policy-for-os 'gnu/linux)))
   (let ((manifest
          (nelix-environment
           (name "entrypoint")

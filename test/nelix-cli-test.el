@@ -402,6 +402,12 @@
     (should (member "bootstrap-apt"
                     (nelix-cli-test--json-array-list
                      (alist-get 'manifest-keys manifest))))
+    (should (member "dnf"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'backends manifest))))
+    (should (member "nelix-native"
+                    (nelix-cli-test--json-array-list
+                     (alist-get 'backends manifest))))
     (should (equal "nelix-lock" (alist-get 'schema lock)))
     (should (= 2 (alist-get 'schema-version lock)))
     (should (member "manifest-files"
