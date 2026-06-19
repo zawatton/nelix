@@ -57,6 +57,8 @@ Create a command-specific native/AOT manifest engine for:
 
 - =nelix --runtime nelisp list=
 - =nelix --runtime nelisp audit MANIFEST=
+- =nelix --runtime nelisp plan MANIFEST=
+- =nelix --runtime nelisp apply MANIFEST --dry-run=
 - =nelix --runtime nelisp upgrade-plan MANIFEST=
 
 The engine must treat those commands as name-set operations over compact
@@ -152,6 +154,22 @@ The native artifact may initially emit compact JSON directly:
 
 The full Emacs path remains available through a later =--full= audit
 mode.
+
+** plan / apply --dry-run
+
+Native plan and =apply --dry-run= are the same read-only convergence
+calculation over the compact name protocol:
+
+1. Build =installed-set= and =pin-set=.
+2. For each =target=, find the first installed candidate.
+3. If no installed candidate exists, add display target to =install=.
+4. If an installed name is not declared by any target candidate, add it to
+   =remove= unless pinned.
+5. If an installed name is pinned but outside the manifest targets, report it
+   as =protected=.
+
+=plan= reports =status planned=.  =apply --dry-run= reports =status dry-run=.
+Both paths must keep =dry-run true= and must not invoke Nix profile mutation.
 
 ** upgrade-plan
 
@@ -363,8 +381,8 @@ Status on 2026-06-18:
   should remain an Emacs/host maintenance operation until a manifest
   compiler/cache format exists.
 - A =bin/nelix= fast lane now detects
-  =NELIX_RUNTIME=nelisp [--json] audit|plan|upgrade-plan MANIFEST= when
-  AOT cache use is enabled.  In that case it builds or refreshes
+  =NELIX_RUNTIME=nelisp [--json] audit|plan|apply --dry-run|upgrade-plan MANIFEST=
+  when AOT cache use is enabled.  In that case it builds or refreshes
   =MANIFEST.nelix-aot-targets= when needed, builds the runtime payload in
   the shell, and runs only
   =scripts/nelix-aot-manifest-engine.el= under =target/nelisp= instead of
@@ -661,7 +679,7 @@ Do not auto-select replay-source runtime-image mode for speed.
   cache auto-refresh followed by =--json audit= or =--json upgrade-plan=
   measures about 0.11 sec on the same profile.
 - 2026-06-19: the same shell/awk numeric-ID bridge now covers
-  =plan MANIFEST= and =--json plan MANIFEST=.  This is deliberately a
+  =plan MANIFEST=, =apply MANIFEST --dry-run=, and their JSON variants.  This is deliberately a
   minimal desired/installed name-set plan: it emits =install=, =remove=,
   =keep=, =protected=, =commands=, =count=, and =empty=, while marking
   lock/transaction checks as skipped by =nelisp-aot=.  On the real

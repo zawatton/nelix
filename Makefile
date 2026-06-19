@@ -223,9 +223,12 @@ verify-deb-contents:
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'nelix user manifest nelisp AOT read-only ok'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq -- '--runtime nelisp --json apply "$$manifest" --dry-run'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq -- '--runtime nelisp --json upgrade-plan'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq '"fallback":":nelisp-aot-cache"'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/doc/elpa-nelix/packaging/verify-nelix-aot-cache-gate.sh'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-aot-cache-gate.sh | grep -Fq 'apply "$$manifest" --dry-run'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-aot-cache-gate.sh | grep -Fq '"status":"dry-run"'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/doc/elpa-nelix/packaging/verify-nelix-native-cli-gate.sh'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/doc/elpa-nelix/packaging/verify-nelix-user-environment.sh'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/doc/elpa-nelix/packaging/verify-extracted-nelix-debian.sh'
@@ -242,6 +245,7 @@ verify-deb-contents:
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/bin/nelix | grep -q 'NELIX_NELISP_AOT:-auto'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/bin/nelix | grep -q 'NELIX_NELISP_AOT=0 to force the slower direct NeLisp path'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/bin/nelix | grep -q 'nelix_nelisp_validate_fast_lane'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/bin/nelix | grep -q 'command=apply-dry-run'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -q './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/nelix-cli.el'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/nelix-cli.el | grep -Fq 'registry index ROOT OUTPUT'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/nelix-cli.el | grep -Fq 'registry list [--system SYSTEM]'
@@ -877,6 +881,12 @@ smoke-nelix-aot-cache-fast-lane:
 	  printf '%s\n' "$$audit_out" | grep -q '^present	ripgrep-1$$' || { echo "error: AOT cache fast-lane audit missing ripgrep-1"; rm -rf "$$tmp"; exit 1; }; \
 	  printf '%s\n' "$$audit_out" | grep -q '^missing	fd$$' || { echo "error: AOT cache fast-lane audit missing fd"; rm -rf "$$tmp"; exit 1; }; \
 	  printf '%s\n' "$$audit_out" | grep -q '^extra	bat$$' || { echo "error: AOT cache fast-lane audit missing bat extra"; rm -rf "$$tmp"; exit 1; }; \
+	  apply_dry_run_out=$$(env $$common_env bin/nelix apply "$$manifest" --dry-run); \
+	  printf '%s\n' "$$apply_dry_run_out"; \
+	  printf '%s\n' "$$apply_dry_run_out" | grep -q '^status	dry-run$$' || { echo "error: AOT cache fast-lane apply dry-run did not report dry-run"; rm -rf "$$tmp"; exit 1; }; \
+	  printf '%s\n' "$$apply_dry_run_out" | grep -q '^install	fd$$' || { echo "error: AOT cache fast-lane apply dry-run missing fd install"; rm -rf "$$tmp"; exit 1; }; \
+	  printf '%s\n' "$$apply_dry_run_out" | grep -q '^remove	bat$$' || { echo "error: AOT cache fast-lane apply dry-run missing bat remove"; rm -rf "$$tmp"; exit 1; }; \
+	  printf '%s\n' "$$apply_dry_run_out" | grep -q '^fallback	:nelisp-aot-cache$$' || { echo "error: AOT cache fast-lane apply dry-run did not use cache"; rm -rf "$$tmp"; exit 1; }; \
 	  plan_out=$$(env $$common_env bin/nelix upgrade-plan "$$manifest"); \
 	  printf '%s\n' "$$plan_out"; \
 	  printf '%s\n' "$$plan_out" | grep -q '^upgrade	magit$$' || { echo "error: AOT cache fast-lane upgrade-plan missing magit"; rm -rf "$$tmp"; exit 1; }; \
@@ -886,6 +896,12 @@ smoke-nelix-aot-cache-fast-lane:
 	  printf '%s\n' "$$audit_json"; \
 	  printf '%s\n' "$$audit_json" | grep -q '"present":\["magit","ripgrep-1"\]' || { echo "error: AOT cache fast-lane JSON audit missing present names"; rm -rf "$$tmp"; exit 1; }; \
 	  printf '%s\n' "$$audit_json" | grep -q '"extra":\["bat"\]' || { echo "error: AOT cache fast-lane JSON audit missing extra bat"; rm -rf "$$tmp"; exit 1; }; \
+	  apply_dry_run_json=$$(env $$common_env bin/nelix --json apply "$$manifest" --dry-run); \
+	  printf '%s\n' "$$apply_dry_run_json"; \
+	  printf '%s\n' "$$apply_dry_run_json" | grep -q '"status":"dry-run"' || { echo "error: AOT cache fast-lane JSON apply dry-run did not report dry-run"; rm -rf "$$tmp"; exit 1; }; \
+	  printf '%s\n' "$$apply_dry_run_json" | grep -q '"action":"install","name":"fd"' || { echo "error: AOT cache fast-lane JSON apply dry-run missing fd install"; rm -rf "$$tmp"; exit 1; }; \
+	  printf '%s\n' "$$apply_dry_run_json" | grep -q '"action":"remove","name":"bat"' || { echo "error: AOT cache fast-lane JSON apply dry-run missing bat remove"; rm -rf "$$tmp"; exit 1; }; \
+	  printf '%s\n' "$$apply_dry_run_json" | grep -q '"fallback":":nelisp-aot-cache"' || { echo "error: AOT cache fast-lane JSON apply dry-run did not use cache"; rm -rf "$$tmp"; exit 1; }; \
 	  plan_json=$$(env $$common_env bin/nelix --json upgrade-plan "$$manifest"); \
 	  printf '%s\n' "$$plan_json"; \
 	  printf '%s\n' "$$plan_json" | grep -q '"upgrade":\["magit"\]' || { echo "error: AOT cache fast-lane JSON upgrade-plan missing magit"; rm -rf "$$tmp"; exit 1; }; \

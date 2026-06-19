@@ -26,6 +26,7 @@ for path in \
   "$prefix/registry/packages/system/fd.el" \
   "$prefix/registry/packages/system/jq.el" \
   "$prefix/registry/packages/system/tree.el" \
+  "$prefix/packaging/verify-nelix-aot-cache-gate.sh" \
   "$prefix/packaging/verify-nelix-native-cli-gate.sh" \
   "$prefix/packaging/fedora/publish-static.sh" \
   "$prefix/packaging/fedora/verify-public-tree.sh" \
@@ -45,6 +46,16 @@ tar -xOzf "$tarball" "$prefix/bin/nelix" | grep -q 'NELIX_NELISP_AOT:-auto' || {
 
 tar -xOzf "$tarball" "$prefix/bin/nelix" | grep -q 'NELIX_NELISP_AOT=0 to force the slower direct NeLisp path' || {
   echo "Fedora source tarball bin/nelix is missing direct NeLisp opt-out diagnostic" >&2
+  exit 1
+}
+
+tar -xOzf "$tarball" "$prefix/bin/nelix" | grep -q 'command=apply-dry-run' || {
+  echo "Fedora source tarball bin/nelix is missing AOT apply dry-run fast lane" >&2
+  exit 1
+}
+
+tar -xOzf "$tarball" "$prefix/packaging/verify-nelix-aot-cache-gate.sh" | grep -q 'apply "$manifest" --dry-run' || {
+  echo "Fedora source tarball AOT cache gate is missing apply dry-run smoke" >&2
   exit 1
 }
 

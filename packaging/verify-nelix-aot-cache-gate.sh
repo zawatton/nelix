@@ -141,6 +141,15 @@ expect_output apply_plan '^keep[[:space:]]+ripgrep-1$'
 expect_output apply_plan '^count[[:space:]]+2$'
 expect_output apply_plan '^fallback[[:space:]]+:nelisp-aot-cache$'
 
+run_capture apply_dry_run apply "$manifest" --dry-run
+expect_output apply_dry_run '^status[[:space:]]+dry-run$'
+expect_output apply_dry_run '^install[[:space:]]+fd$'
+expect_output apply_dry_run '^remove[[:space:]]+bat$'
+expect_output apply_dry_run '^keep[[:space:]]+magit$'
+expect_output apply_dry_run '^keep[[:space:]]+ripgrep-1$'
+expect_output apply_dry_run '^count[[:space:]]+2$'
+expect_output apply_dry_run '^fallback[[:space:]]+:nelisp-aot-cache$'
+
 run_capture plan upgrade-plan "$manifest"
 expect_output plan '^upgrade[[:space:]]+magit$'
 expect_output plan '^pinned[[:space:]]+ripgrep-1$'
@@ -160,6 +169,14 @@ expect_output apply_plan_json '"action":"remove","name":"bat"'
 expect_output apply_plan_json '"action":"keep","name":"magit"'
 expect_output apply_plan_json '"count":2'
 expect_output apply_plan_json '"fallback":":nelisp-aot-cache"'
+
+run_capture apply_dry_run_json --json apply "$manifest" --dry-run
+expect_output apply_dry_run_json '"status":"dry-run"'
+expect_output apply_dry_run_json '"action":"install","name":"fd"'
+expect_output apply_dry_run_json '"action":"remove","name":"bat"'
+expect_output apply_dry_run_json '"action":"keep","name":"magit"'
+expect_output apply_dry_run_json '"count":2'
+expect_output apply_dry_run_json '"fallback":":nelisp-aot-cache"'
 
 run_capture plan_json --json upgrade-plan "$manifest"
 expect_output plan_json '"upgrade":\["magit"\]'

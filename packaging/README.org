@@ -207,8 +207,9 @@ default auto mode it also tries =nelix --runtime nelisp= when NeLisp is
 available, but treats that path as advisory unless
 =NELIX_USER_MANIFEST_NELISP=required= is set.  Required mode now checks both
 the validate fast lane and the read-only AOT cache lane for =audit=, =plan=,
-and =upgrade-plan=, verifying that they report =:nelisp-aot-cache= instead of
-falling back to the slow full standalone manifest path.
+=apply --dry-run=, and =upgrade-plan=, verifying that they report
+=:nelisp-aot-cache= instead of falling back to the slow full standalone
+manifest path.
 
 =verify-user-environment= also loads =~/.emacs.d/init.el= and runs
 =my-nelix-audit=, which checks the dedicated Emacs package file and Linux tool

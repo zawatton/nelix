@@ -113,10 +113,10 @@ batch until the native reader/count scanner is fast enough for the 200-package
 manifest.
 
 =NELIX_USER_MANIFEST_NELISP=required= also requires the read-only AOT cache lane
-for =audit=, =plan=, and =upgrade-plan=.  Those commands must report
-=:nelisp-aot-cache= as the fallback and must not enter the slow full standalone
-manifest path.  =lock / apply --dry-run= may still run through Emacs batch until
-the NeLisp process/runtime path is complete enough for those commands.
+for =audit=, =plan=, =apply --dry-run=, and =upgrade-plan=.  Those commands
+must report =:nelisp-aot-cache= as the fallback and must not enter the slow full
+standalone manifest path.  =lock= may still run through Emacs batch until the
+NeLisp process/runtime path is complete enough for mutating lock writes.
 
 The lock file path is:
 
@@ -191,12 +191,12 @@ packaging/verify-extracted-nelix-debian.sh ../elpa-nelix_0.1.0-4_all.deb 0.1.0-4
 
 * 7. Open Edges
 
-- =lock / apply --dry-run= still run through Emacs batch in the default CLI
+- =lock= and mutating =apply= still run through Emacs batch in the default CLI
   path.  =nelix --runtime nelisp --json validate= works for the standard
   manifest without entering the full standalone NeLisp manifest loader, and the
-  read-only =audit / plan / upgrade-plan= path is covered by the AOT cache fast
-  lane.  Full lock/apply transaction execution on NeLisp remains part of the
-  runtime/process maturity track.
+  read-only =audit / plan / apply --dry-run / upgrade-plan= path is covered by
+  the AOT cache fast lane.  Full lock/apply transaction execution on NeLisp
+  remains part of the runtime/process maturity track.
 - =apply= converges the profile and can remove unmanaged entries.  This is
   intentional, but docs and UI must keep the review step prominent.
 - Transitional Debian wrapper packages need a final policy: either keep them in

@@ -392,7 +392,7 @@ nelix_run_aot_id_cache_shell_lane() {
               missing[++missing_count] = name_by_id[target_display[t]]
             } else if (command == "audit") {
               present[++present_count] = installed_name_by_id[found_id]
-            } else if (command == "plan") {
+            } else if (command == "plan" || command == "apply-dry-run") {
               keep[++keep_count] = installed_name_by_id[found_id]
             } else if (found_id in pin_id) {
               pinned[++pinned_count] = installed_name_by_id[found_id]
@@ -407,26 +407,31 @@ nelix_run_aot_id_cache_shell_lane() {
             pin_name[norm(name_by_id[pin_order[i]])] = 1
           }
 
-          if (command == "audit" || command == "plan") {
+          if (command == "audit" || command == "plan" || command == "apply-dry-run") {
             for (i = 1; i <= installed_count; i++) {
               raw = installed[i]
               id = installed_id_by_row[i]
               if (id != "") {
                 if (!(id in desired_id)) {
-                  if (command == "plan" && (id in pin_id || raw in pin_name || norm(raw) in pin_name)) {
+                  if ((command == "plan" || command == "apply-dry-run") && (id in pin_id || raw in pin_name || norm(raw) in pin_name)) {
                     protected[++protected_count] = raw
                   } else {
                     extra[++extra_count] = raw
                   }
                 }
               } else if (!(raw in desired_name) && !(norm(raw) in desired_name)) {
-                if (command == "plan" && (raw in pin_name || norm(raw) in pin_name)) {
+                if ((command == "plan" || command == "apply-dry-run") && (raw in pin_name || norm(raw) in pin_name)) {
                   protected[++protected_count] = raw
                 } else {
                   extra[++extra_count] = raw
                 }
               }
             }
+          }
+
+          apply_status = "planned"
+          if (command == "apply-dry-run") {
+            apply_status = "dry-run"
           }
 
           if (json == "1") {
@@ -441,8 +446,8 @@ nelix_run_aot_id_cache_shell_lane() {
               printf ",\"skipped\":{\"state-pins\":\"nelisp-aot\",\"lock-drift\":\"nelisp-aot\",\"linux-command-audit\":\"nelisp-aot\"}"
               printf ",\"backend\":\"nix\",\"backend-selection\":{\"backend\":\"nix\",\"system\":%s,\"fallback\":\":nelisp-aot-cache\"}", j(system_value)
               printf ",\"aot-cache\":%s}\n", j(cache_file)
-            } else if (command == "plan") {
-              printf "{\"operation\":\"apply\",\"status\":\"planned\",\"dry-run\":true"
+            } else if (command == "plan" || command == "apply-dry-run") {
+              printf "{\"operation\":\"apply\",\"status\":%s,\"dry-run\":true", j(apply_status)
               printf ",\"manifest\":%s", j(manifest)
               printf ",\"profile\":%s", j(profile_name)
               printf ",\"system\":%s", j(system_value)
@@ -489,8 +494,8 @@ nelix_run_aot_id_cache_shell_lane() {
             line_names("missing", missing, missing_count)
             line_names("extra", extra, extra_count)
             printf "backend\tnix\nfallback\t:nelisp-aot-cache\naot-cache\t%s\n", cache_file
-          } else if (command == "plan") {
-            printf "operation\tapply\nstatus\tplanned\ndry-run\ttrue\n"
+          } else if (command == "plan" || command == "apply-dry-run") {
+            printf "operation\tapply\nstatus\t%s\ndry-run\ttrue\n", apply_status
             printf "manifest\t%s\nprofile\t%s\nsystem\t%s\n", manifest, profile_name, system_value
             line_names("install", missing, missing_count)
             line_names("remove", extra, extra_count)
@@ -521,6 +526,14 @@ nelix_try_nelisp_aot_cache_fast_lane() {
     json=0
     command=list
     manifest=
+  elif [ "$#" -eq 4 ] && [ "$1" = "--json" ] && [ "$2" = "apply" ] && [ "$4" = "--dry-run" ]; then
+    json=1
+    command=apply-dry-run
+    manifest=$(nelix_abs_path "$3")
+  elif [ "$#" -eq 3 ] && [ "$1" = "apply" ] && [ "$3" = "--dry-run" ]; then
+    json=0
+    command=apply-dry-run
+    manifest=$(nelix_abs_path "$2")
   elif [ "$#" -eq 3 ] && [ "$1" = "--json" ]; then
     json=1
     command=$2
@@ -548,7 +561,7 @@ nelix_try_nelisp_aot_cache_fast_lane() {
         aot_fun=nelix-aot-audit-lines
       fi
       ;;
-    plan)
+    plan|apply-dry-run)
       aot_fun=
       ;;
     upgrade-plan)
@@ -609,7 +622,7 @@ nelix_try_nelisp_aot_cache_fast_lane() {
   if nelix_run_aot_id_cache_shell_lane "$command" "$json" "$cache" "$profile" "$nix_program"; then
     return 0
   fi
-  if [ "$command" = "plan" ]; then
+  if [ "$command" = "plan" ] || [ "$command" = "apply-dry-run" ]; then
     return 1
   fi
 

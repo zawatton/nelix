@@ -101,6 +101,17 @@ run_nelisp_aot_readonly() {
   expect_json_fragment plan "$nelisp_tmp/plan.json" '"fallback":":nelisp-aot-cache"' || return 1
   expect_json_fragment plan "$nelisp_tmp/plan.json" '"backend":"nix"' || return 1
 
+  if ! run_nelix_with_timeout --runtime nelisp --json apply "$manifest" --dry-run \
+    >"$nelisp_tmp/apply-dry-run.json" \
+    2>"$nelisp_tmp/apply-dry-run.err"; then
+    sed -n '1,3p' "$nelisp_tmp/apply-dry-run.json" >&2
+    sed -n '1,20p' "$nelisp_tmp/apply-dry-run.err" >&2
+    return 1
+  fi
+  expect_json_fragment apply-dry-run "$nelisp_tmp/apply-dry-run.json" '"status":"dry-run"' || return 1
+  expect_json_fragment apply-dry-run "$nelisp_tmp/apply-dry-run.json" '"fallback":":nelisp-aot-cache"' || return 1
+  expect_json_fragment apply-dry-run "$nelisp_tmp/apply-dry-run.json" '"backend":"nix"' || return 1
+
   if ! run_nelix_with_timeout --runtime nelisp --json upgrade-plan "$manifest" \
     >"$nelisp_tmp/upgrade-plan.json" \
     2>"$nelisp_tmp/upgrade-plan.err"; then

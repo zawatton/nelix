@@ -253,6 +253,14 @@ require_autopkgtest_gate_strength() {
   require_contains Makefile \
     "grep -Fq 'nelix-fast-validate-json'"
   require_contains Makefile \
+    "grep -q 'command=apply-dry-run'"
+  require_contains Makefile \
+    "grep -Fq 'apply \"\$\$manifest\" --dry-run'"
+  require_contains packaging/verify-nelix-aot-cache-gate.sh \
+    'apply "$manifest" --dry-run'
+  require_contains packaging/verify-nelix-aot-cache-gate.sh \
+    '"status":"dry-run"'
+  require_contains Makefile \
     "grep -Fq '(defun nelix-fast-validate-json'"
   require_contains Makefile \
     "grep -Fq '(defun nelix-registry-list'"
@@ -350,7 +358,13 @@ require_user_manifest_dsl_gate() {
   require_contains packaging/verify-nelix-user-manifest-dsl.sh \
     '--runtime nelisp --json plan'
   require_contains packaging/verify-nelix-user-manifest-dsl.sh \
+    '--runtime nelisp --json apply "$manifest" --dry-run'
+  require_contains packaging/verify-nelix-user-manifest-dsl.sh \
     '--runtime nelisp --json upgrade-plan'
+  require_contains Makefile \
+    "grep -Fq -- '--runtime nelisp --json apply"
+  require_contains bin/nelix \
+    'command=apply-dry-run'
   require_contains packaging/verify-nelix-user-manifest-dsl.sh \
     '"fallback":":nelisp-aot-cache"'
   require_contains packaging/verify-nelix-user-manifest-dsl.sh \
@@ -416,6 +430,8 @@ require_user_manifest_usage_doc_if_present() {
       require_contains "$doc" 'make apt-public-url-smoke'
       require_contains "$doc" 'make fedora-source-gate'
       require_contains "$doc" '=:nelisp-aot-cache='
+      require_contains "$doc" 'nelix --runtime nelisp --json apply "$manifest" --dry-run'
+      require_contains "$doc" 'list / audit / plan / apply --dry-run / upgrade-plan'
       require_contains "$doc" 'Native registry 操作'
       require_contains "$doc" 'Native store 操作'
     fi
@@ -768,13 +784,17 @@ require_aot_plan_gate_docs() {
   require_contains packaging/README.org \
     'cache shell lane is the default for supported =--runtime nelisp= manifest'
   require_contains docs/design/25-nelix-native-aot-manifest-engine.org \
-    '=plan MANIFEST= and =--json plan MANIFEST='
+    '=plan MANIFEST=, =apply MANIFEST --dry-run=, and their JSON variants'
+  require_contains docs/design/25-nelix-native-aot-manifest-engine.org \
+    '=nelix --runtime nelisp apply MANIFEST --dry-run='
+  require_contains docs/design/25-nelix-native-aot-manifest-engine.org \
+    '=apply --dry-run= reports =status dry-run='
   require_contains docs/design/25-nelix-native-aot-manifest-engine.org \
     '=NELIX_NELISP_AOT=0='
   require_contains docs/design/29-nelix-release-worktree-scope.org \
-    '=plan=, =upgrade-plan=, and their JSON variants'
+    '=plan=, =apply --dry-run=, =upgrade-plan=, and their JSON variants'
   require_contains docs/design/29-nelix-release-worktree-scope.org \
-    'read-only AOT cache fast lane for =audit=, =plan=, and'
+    'read-only AOT cache fast lane for =audit=, =plan=,'
   require_contains docs/design/29-nelix-release-worktree-scope.org \
     'Debian payload gate: =make deb-local-gate= verifies'
   require_contains docs/design/29-nelix-release-worktree-scope.org \
@@ -799,6 +819,12 @@ require_aot_plan_gate_docs() {
     'registry/packages/system/tree.el'
   require_contains packaging/fedora/verify-source.sh \
     'packaging/verify-nelix-native-cli-gate.sh'
+  require_contains packaging/fedora/verify-source.sh \
+    'packaging/verify-nelix-aot-cache-gate.sh'
+  require_contains packaging/fedora/verify-source.sh \
+    'command=apply-dry-run'
+  require_contains packaging/fedora/verify-source.sh \
+    'apply "$manifest" --dry-run'
   require_contains packaging/fedora/verify-source.sh \
     'native install fixture-archive --profile archive'
   require_contains packaging/fedora/verify-source.sh \
