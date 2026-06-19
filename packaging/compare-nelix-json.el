@@ -59,6 +59,28 @@
                  (nelix-json-compare--field object path)))
         #'string<))
 
+(defun nelix-json-compare--command-key (row)
+  "Return order-sensitive command identity for ROW."
+  (cond
+   ((listp row)
+    (let ((action (or (alist-get 'action row nil nil #'equal)
+                      (alist-get "action" row nil nil #'equal)))
+          (name (or (alist-get 'name row nil nil #'equal)
+                    (alist-get "name" row nil nil #'equal)))
+          (target (or (alist-get 'target row nil nil #'equal)
+                      (alist-get "target" row nil nil #'equal))))
+      (format "%s:%s:%s"
+              (or action "")
+              (or name "")
+              (or target ""))))
+   (t (format "%s" row))))
+
+(defun nelix-json-compare--commands (object path)
+  "Return order-sensitive command identities from OBJECT at PATH."
+  (mapcar #'nelix-json-compare--command-key
+          (nelix-json-compare--as-list
+           (nelix-json-compare--field object path))))
+
 (defun nelix-json-compare--fail (label path left right)
   "Signal comparison failure for LABEL PATH LEFT RIGHT."
   (error "%s mismatch at %s: emacs=%S nelisp=%S"
@@ -69,8 +91,12 @@
 
 (defun nelix-json-compare--field= (label emacs nelisp path)
   "Assert comparable PATH is equal between EMACS and NELISP."
-  (let ((left (nelix-json-compare--names emacs path))
-        (right (nelix-json-compare--names nelisp path)))
+  (let ((left (if (equal path '(commands))
+                  (nelix-json-compare--commands emacs path)
+                (nelix-json-compare--names emacs path)))
+        (right (if (equal path '(commands))
+                   (nelix-json-compare--commands nelisp path)
+                 (nelix-json-compare--names nelisp path))))
     (unless (equal left right)
       (nelix-json-compare--fail label path left right))))
 

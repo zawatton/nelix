@@ -237,8 +237,10 @@ verify-deb-contents:
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-debian.sh | grep -Fq -- '--runtime nelisp --json lock-check "$$NELIX_USER_MANIFEST"'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh'
-	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/doc/elpa-nelix/packaging/compare-nelix-json.el'
-	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/compare-nelix-json.el | grep -Fq 'nelix-json-compare-files'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/doc/elpa-nelix/packaging/compare-nelix-json.el.gz'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/compare-nelix-json.el.gz | gzip -dc | grep -Fq 'nelix-json-compare-files'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/compare-nelix-json.el.gz | gzip -dc | grep -Fq 'nelix-json-compare--command-key'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/compare-nelix-json.el.gz | gzip -dc | grep -Fq "(equal path '(commands))"
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'nelix user manifest nelisp AOT read-only ok'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'NELIX_USER_MANIFEST_NELISP_MAX_SECONDS'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq 'NELIX_USER_MANIFEST_MIN_TARGETS'
