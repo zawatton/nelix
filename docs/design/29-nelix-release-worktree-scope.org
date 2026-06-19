@@ -505,8 +505,11 @@ to dry-run.  It stages files only when =--stage= is passed explicitly.
   against the real URL before upload.  It refuses the default
   =example.invalid= URL, checks =sources.list.https=, rejects GPG test or
   secret material, compares =Packages.gz= with =Packages=, confirms the
-  referenced =elpa-nelix= payload exists, and verifies that both repository
-  metadata and the payload match =DEB_VERSION=.
+  referenced =elpa-nelix= payload exists, verifies that both repository
+  metadata and the payload match =DEB_VERSION=, and inspects the payload for
+  =/usr/bin/nelix=, packaged native registry recipes, and the packaged
+  =ripgrep= native install smoke.  The public APT URL smoke repeats the same
+  payload checks against the downloaded =.deb=.
 - Fedora source/RPM gate: =make fedora-source-gate= verifies that the
   generated source tarball contains the same =bin/nelix= default AOT cache
   switch and direct-path opt-out diagnostic.  The RPM spec =%check= also
@@ -515,8 +518,9 @@ to dry-run.  It stages files only when =--stage= is passed explicitly.
   FEDORA_PUBLIC_URL=https://...= verifies the static dnf repository tree
   against the real URL before upload.  It refuses the default
   =example.invalid= URL, checks =nelix-fedora.repo=, rejects GPG test or
-  secret material, and confirms the =nelix= and =emacs-nelix= RPM payloads
-  are present at =FEDORA_VERSION=.
+  secret material, confirms the =nelix= and =emacs-nelix= RPM payloads are
+  present at =FEDORA_VERSION=, and when =rpm= is available verifies that the
+  =emacs-nelix= RPM contains the packaged native registry recipes.
 - Fedora local/container gate verifies that installed =nelix= and
   =emacs-nelix= RPM versions match =FEDORA_VERSION= before accepting the
   dnf smoke result.

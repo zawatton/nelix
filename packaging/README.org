@@ -135,7 +135,12 @@ This is the pre-upload umbrella for =make publication-url-check=,
 It intentionally refuses the default =example.invalid= URLs before doing
 repository build/sign/publish work.  The APT tree check also compares the
 published =elpa-nelix= metadata and payload against =DEB_VERSION=, and the
-Fedora tree check compares the RPM payloads against =FEDORA_VERSION=.
+Fedora tree check compares the RPM payloads against =FEDORA_VERSION=.  The
+APT public tree and public URL smoke also inspect the downloaded =.deb= payload
+for =/usr/bin/nelix=, packaged native registry recipes, and the packaged
+=ripgrep= native install smoke.  When =rpm= is available, the Fedora public
+tree check verifies that =emacs-nelix= contains the packaged native registry
+recipes.
 
 After upload, run the combined public URL smoke:
 

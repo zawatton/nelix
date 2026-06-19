@@ -8,6 +8,28 @@ component=${NELIX_APT_COMPONENT:-main}
 architecture=${NELIX_APT_ARCHITECTURE:-all}
 keyring_source=${NELIX_APT_PUBLIC_KEYRING:-}
 
+verify_deb_payload() {
+  deb=$1
+  dpkg-deb --fsys-tarfile "$deb" | tar -tf - |
+    grep -Fxq './usr/bin/nelix' || {
+      echo "public APT smoke payload is missing /usr/bin/nelix: $deb" >&2
+      exit 1
+    }
+  for recipe in curl git ripgrep; do
+    dpkg-deb --fsys-tarfile "$deb" | tar -tf - |
+      grep -Fxq "./usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/registry/packages/system/$recipe.el" || {
+        echo "public APT smoke payload is missing packaged registry recipe: $recipe" >&2
+        exit 1
+      }
+  done
+  dpkg-deb --fsys-tarfile "$deb" |
+    tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-native-cli-gate.sh |
+    grep -Fq 'packaged_install native install ripgrep' || {
+      echo "public APT smoke payload native CLI gate is missing packaged ripgrep install smoke" >&2
+      exit 1
+    }
+}
+
 url=${url%/}
 case "$url" in
   *example.invalid*|"")
@@ -105,5 +127,7 @@ if [ -n "$expected_version" ]; then
     exit 1
   fi
 fi
+
+verify_deb_payload "$downloaded"
 
 printf 'nelix public apt smoke ok: %s %s %s\n' "$url" "$suite" "$component"

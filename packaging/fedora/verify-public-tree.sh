@@ -5,6 +5,22 @@ tree=${1:?usage: verify-public-tree.sh TREE BASE_URL [EXPECTED_VERSION]}
 base_url=${2:?usage: verify-public-tree.sh TREE BASE_URL [EXPECTED_VERSION]}
 expected_version=${3:-}
 
+find_rpm() {
+  pattern=$1
+  find "$tree" -maxdepth 1 -type f -name "$pattern" -print -quit
+}
+
+verify_emacs_rpm_payload() {
+  rpm_file=$1
+  for recipe in curl git ripgrep; do
+    rpm -qpl "$rpm_file" |
+      grep -Fxq "/usr/share/emacs/site-lisp/nelix/registry/packages/system/$recipe.el" || {
+        echo "public Fedora emacs-nelix RPM is missing packaged registry recipe: $recipe" >&2
+        exit 1
+      }
+  done
+}
+
 base_url=${base_url%/}
 case "$base_url" in
   *example.invalid*|"")
@@ -77,6 +93,10 @@ if command -v rpm >/dev/null 2>&1; then
       grep -Fxq "nelix $expected_version"
     rpm -qp --qf '%{NAME} %{VERSION}\n' "$tree"/*.rpm |
       grep -Fxq "emacs-nelix $expected_version"
+  fi
+  emacs_rpm=$(find_rpm 'emacs-nelix-*.rpm')
+  if [ -n "$emacs_rpm" ]; then
+    verify_emacs_rpm_payload "$emacs_rpm"
   fi
 fi
 

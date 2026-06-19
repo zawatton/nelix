@@ -231,8 +231,11 @@ verify-deb-contents:
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/doc/elpa-nelix/packaging/verify-extracted-nelix-debian.sh'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/doc/elpa-nelix/packaging/verify-publication-urls.sh'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/apt/verify-public-tree.sh | grep -Fq 'public APT Packages has stale elpa-nelix version'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/apt/verify-public-tree.sh | grep -Fq 'public APT payload native CLI gate is missing packaged ripgrep install smoke'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/apt/public-url-smoke.sh | grep -Fq 'public APT smoke downloaded stale elpa-nelix version'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/apt/public-url-smoke.sh | grep -Fq 'public APT smoke payload native CLI gate is missing packaged ripgrep install smoke'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/fedora/verify-public-tree.sh | grep -Fq 'public Fedora tree is missing expected-version RPM payload'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/fedora/verify-public-tree.sh | grep -Fq 'public Fedora emacs-nelix RPM is missing packaged registry recipe'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/fedora/public-url-smoke.sh | grep -Fq 'rpm -q --qf'
 	test -x packaging/run-autopkgtest-debian.sh
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -q './usr/bin/nelix'

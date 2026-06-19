@@ -441,6 +441,9 @@ require_publication_gate_docs() {
   require_contains Makefile 'apt-http-gate: apt-publish-static apt-http-smoke'
   require_contains Makefile 'verify-apt-public-tree:'
   require_contains Makefile 'packaging/apt/verify-public-tree.sh "$(APT_PUBLISH_DIR)" "$(APT_PUBLIC_URL)" "$(APT_SUITE)" "$(DEB_VERSION)"'
+  require_contains Makefile 'public APT payload native CLI gate is missing packaged ripgrep install smoke'
+  require_contains Makefile 'public APT smoke payload native CLI gate is missing packaged ripgrep install smoke'
+  require_contains Makefile 'public Fedora emacs-nelix RPM is missing packaged registry recipe'
   require_contains Makefile 'apt-publication-preflight: apt-publish-static verify-apt-public-tree'
   require_contains Makefile 'apt-public-url-smoke:'
   require_contains Makefile 'packaging/apt/public-url-smoke.sh "$(APT_PUBLIC_URL)" "$(APT_SUITE)" "$(DEB_VERSION)"'
@@ -467,6 +470,13 @@ require_publication_gate_docs() {
   require_contains packaging/README.org 'make fedora-publication-preflight'
   require_contains packaging/fedora/README.org 'make fedora-publication-preflight'
   require_contains packaging/README.org 'make fedora-container-gate'
+  require_contains packaging/README.org 'public tree and public URL smoke also inspect the downloaded =.deb= payload'
+  require_contains packaging/apt/verify-public-tree.sh 'verify_deb_payload "$tree/$deb_path"'
+  require_contains packaging/apt/verify-public-tree.sh 'packaged_install native install ripgrep'
+  require_contains packaging/apt/public-url-smoke.sh 'verify_deb_payload "$downloaded"'
+  require_contains packaging/apt/public-url-smoke.sh 'packaged_install native install ripgrep'
+  require_contains packaging/fedora/verify-public-tree.sh 'verify_emacs_rpm_payload'
+  require_contains packaging/fedora/verify-public-tree.sh 'registry/packages/system/$recipe.el'
 
   fedora_build_count="$(
     awk '
@@ -490,6 +500,10 @@ require_publication_gate_docs() {
     'make publication-preflight'
   require_contains docs/design/23-nelix-distro-publication.org \
     'make publication-public-smoke'
+  require_contains docs/design/29-nelix-release-worktree-scope.org \
+    'public APT URL smoke repeats the same'
+  require_contains docs/design/29-nelix-release-worktree-scope.org \
+    '=emacs-nelix= RPM contains the packaged native registry recipes'
   require_contains docs/design/23-nelix-distro-publication.org \
     'make apt-http-gate'
   require_contains docs/design/22-nelix-native-store.org \
