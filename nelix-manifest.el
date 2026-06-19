@@ -3458,6 +3458,20 @@ This is the constructor used inside generated lock files."
                        index
                        missing)))
                ((and (eq 'nix (plist-get row :backend))
+                     (not (eq 'nixpkgs (plist-get row :source))))
+                (setq error
+                      (format
+                       "lock package row %d has invalid source %S for nix backend"
+                       index
+                       (plist-get row :source))))
+               ((and (eq 'nelix-native (plist-get row :backend))
+                     (not (eq 'registry (plist-get row :source))))
+                (setq error
+                      (format
+                       "lock package row %d has invalid source %S for native backend"
+                       index
+                       (plist-get row :source))))
+               ((and (eq 'nix (plist-get row :backend))
                      (setq missing
                            (nelix-lock--shape-missing-key
                             row

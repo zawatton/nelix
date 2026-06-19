@@ -172,7 +172,12 @@
           "then": {
             "required": [
               "attr-path"
-            ]
+            ],
+            "properties": {
+              "source": {
+                "const": "nixpkgs"
+              }
+            }
           }
         },
         {
@@ -193,7 +198,12 @@
               "recipe-install",
               "recipe-dependencies",
               "recipe-class"
-            ]
+            ],
+            "properties": {
+              "source": {
+                "const": "registry"
+              }
+            }
           }
         }
       ],

@@ -1557,6 +1557,44 @@
                          (plist-get schema :shape-error)))))))
       (delete-directory dir t))))
 
+(ert-deftest nelix-manifest-test-lock-validate-rejects-v2-nix-source-mismatch ()
+  "Current schema v2 Nix package rows must use the nixpkgs source."
+  (let ((dir (make-temp-file "nelix-manifest-lock-v2-bad-nix-source-" t)))
+    (unwind-protect
+        (progn
+          (nelix-manifest-test--write
+           dir "manifest.el"
+           "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep))\n")
+          (cl-letf (((symbol-function 'nelix-list)
+                     (lambda ()
+                       (list (list :name "ripgrep"
+                                   :attr-path "legacyPackages.x86_64-linux.ripgrep"))))
+                    ((symbol-function 'anvil-pkg-compat-executable-find)
+                     (lambda (program)
+                       (and (equal program "nix") "/usr/bin/nix")))
+                    ((symbol-function 'anvil-pkg--detect-nix-version)
+                     (lambda () "2.34.7")))
+            (let* ((manifest-file (expand-file-name "manifest.el" dir))
+                   (lock (nelix-lock-write manifest-file))
+                   (bad-row (copy-sequence
+                             (car (plist-get lock :packages)))))
+              (setq bad-row (plist-put bad-row :source 'registry))
+              (setq lock (plist-put lock :packages (list bad-row)))
+              (nelix-manifest-test--write-lock
+               (nelix-manifest-lock-file-name manifest-file)
+               lock)
+              (let* ((validate (nelix-lock-validate manifest-file))
+                     (schema (plist-get validate :schema-check))
+                     (check (nelix-lock-check manifest-file)))
+                (should-not (plist-get validate :ok))
+                (should-not (plist-get check :ok))
+                (should-not (plist-get schema :ok))
+                (should-not (plist-get schema :shape-ok))
+                (should (string-match-p
+                         "lock package row 1 has invalid source registry for nix backend"
+                         (plist-get schema :shape-error)))))))
+      (delete-directory dir t))))
+
 (ert-deftest nelix-manifest-test-lock-schema-check-accepts-native-deps-fixture ()
   "Current schema v2 fixtures can include native dependency closure rows."
   (let ((dir (make-temp-file "nelix-manifest-lock-v2-native-deps-" t)))
@@ -1632,6 +1670,38 @@
               (should-not (plist-get schema :shape-ok))
               (should (string-match-p
                        "lock package row 1 is missing native schema-required key :recipe-install"
+                       (plist-get schema :shape-error))))))
+      (delete-directory dir t))))
+
+(ert-deftest nelix-manifest-test-lock-validate-rejects-v2-native-source-mismatch ()
+  "Current schema v2 native package rows must use the registry source."
+  (let ((dir (make-temp-file "nelix-manifest-lock-v2-bad-native-source-" t)))
+    (unwind-protect
+        (let* ((manifest-file
+                (nelix-manifest-test--write
+                 dir "manifest.el"
+                 "(require 'nelix-manifest)\n(nelix-manifest :name \"default\")\n"))
+               (lock-file (expand-file-name "manifest.el.nelix-lock" dir)))
+          (copy-file (nelix-manifest-test--fixture
+                      "nelix-lock-v2-native-deps.el")
+                     lock-file t)
+          (let* ((lock (nelix-lock-read manifest-file))
+                 (bad-row (copy-sequence
+                           (car (plist-get lock :packages)))))
+            (setq bad-row (plist-put bad-row :source 'nixpkgs))
+            (setq lock (plist-put lock :packages (list bad-row)))
+            (nelix-manifest-test--write-lock
+             (nelix-manifest-lock-file-name manifest-file)
+             lock)
+            (let* ((validate (nelix-lock-validate manifest-file))
+                   (schema (plist-get validate :schema-check))
+                   (check (nelix-lock-check manifest-file)))
+              (should-not (plist-get validate :ok))
+              (should-not (plist-get check :ok))
+              (should-not (plist-get schema :ok))
+              (should-not (plist-get schema :shape-ok))
+              (should (string-match-p
+                       "lock package row 1 has invalid source nixpkgs for native backend"
                        (plist-get schema :shape-error))))))
       (delete-directory dir t))))
 

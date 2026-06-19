@@ -844,6 +844,26 @@ reject_log 'profile remove'
 reject_log 'profile rollback'
 assert_transaction_record_count bad-lock-apply-locked "$bad_lock_record_count_before"
 
+bad_source_lock_manifest="$tmp/bad-source-lock-manifest.el"
+cat >"$bad_source_lock_manifest" <<'EOF'
+(require 'nelix-manifest)
+(nelix-manifest
+ :name "installed-cli-bad-source-lock"
+ :linux '("magit"))
+EOF
+run_json bad_source_lock lock "$bad_source_lock_manifest"
+perl -0pi -e 's/:source nixpkgs/:source registry/' \
+  "$bad_source_lock_manifest.nelix-lock"
+run_json bad_source_lock_validate lock validate "$bad_source_lock_manifest"
+expect_json bad_source_lock_validate '"ok":null'
+expect_json bad_source_lock_validate '"shape-ok":null'
+expect_json bad_source_lock_validate \
+  'lock package row 1 has invalid source registry for nix backend'
+run_json bad_source_lock_check lock-check "$bad_source_lock_manifest"
+expect_json bad_source_lock_check '"ok":null'
+expect_json bad_source_lock_check \
+  'lock package row 1 has invalid source registry for nix backend'
+
 bad_attr_lock_manifest="$tmp/bad-attr-lock-manifest.el"
 cat >"$bad_attr_lock_manifest" <<'EOF'
 (require 'nelix-manifest)
