@@ -489,6 +489,18 @@ run_nelisp_aot_readonly() {
   fi
   expect_json_fragment list "$nelisp_tmp/list.json" '[' || return 1
   report_top_level_count list "$nelisp_tmp/list.json" || return 1
+  if ! run_nelix_timed list-json-runtime-order \
+    "$nelisp_tmp/list-json-runtime-order.json" \
+    "$nelisp_tmp/list-json-runtime-order.err" \
+    --json --runtime nelisp list; then
+    sed -n '1,3p' "$nelisp_tmp/list-json-runtime-order.json" >&2
+    sed -n '1,20p' "$nelisp_tmp/list-json-runtime-order.err" >&2
+    return 1
+  fi
+  compare_runtime_json list-json-runtime-order \
+    "$nelisp_tmp/list.json" \
+    "$nelisp_tmp/list-json-runtime-order.json" \
+    "." || return 1
   if ! run_nelix_with_timeout --json list \
     >"$nelisp_tmp/list-emacs.json" \
     2>"$nelisp_tmp/list-emacs.err"; then

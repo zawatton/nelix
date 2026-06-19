@@ -271,6 +271,7 @@ verify-deb-contents:
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq -- '--runtime nelisp --json apply "$$manifest" --dry-run'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq -- '--runtime nelisp --json plan "$$manifest" --dry-run'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq -- '--runtime nelisp --json list'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq -- '--json --runtime nelisp list'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq -- '--runtime nelisp --json lock-check "$$manifest"'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq -- '--runtime nelisp --json upgrade-plan'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-user-manifest-dsl.sh | grep -Fq '"fallback":":nelisp-aot-cache"'

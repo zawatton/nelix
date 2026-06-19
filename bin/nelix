@@ -43,6 +43,14 @@ if [ "${1:-}" = "--runtime" ]; then
   fi
   runtime=$2
   shift 2
+elif [ "${1:-}" = "--json" ] && [ "${2:-}" = "--runtime" ]; then
+  if [ -z "${3:-}" ]; then
+    echo "nelix: --runtime requires emacs or nelisp" >&2
+    exit 2
+  fi
+  runtime=$3
+  shift 3
+  set -- --json "$@"
 fi
 
 nelix_quote_elisp_string() {
