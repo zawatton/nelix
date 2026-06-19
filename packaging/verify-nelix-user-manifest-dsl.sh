@@ -349,6 +349,10 @@ run_nelisp_aot_readonly() {
     "$nelisp_tmp/apply-dry-run-emacs.json" \
     "$nelisp_tmp/apply-dry-run.json" \
     install remove keep protected commands || return 1
+  compare_runtime_json plan-apply-dry-run \
+    "$nelisp_tmp/plan.json" \
+    "$nelisp_tmp/apply-dry-run.json" \
+    install remove keep protected commands || return 1
   check_remove_candidates "$nelisp_tmp/apply-dry-run.json" || return 1
 
   if ! run_nelix_timed upgrade-plan "$nelisp_tmp/upgrade-plan.json" "$nelisp_tmp/upgrade-plan.err" \

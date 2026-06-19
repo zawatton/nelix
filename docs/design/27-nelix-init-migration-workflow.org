@@ -120,6 +120,10 @@ NeLisp process/runtime path is complete enough for mutating lock writes.
 The verifier prints the =apply --dry-run= remove candidate count and names, and
 =NELIX_USER_MANIFEST_MAX_REMOVE=N= can make the gate fail when the real profile
 would remove more entries than the operator has explicitly allowed.
+It also compares =nelix --runtime nelisp --json plan MANIFEST --dry-run= with
+=nelix --runtime nelisp --json apply MANIFEST --dry-run= across =install=,
+=remove=, =keep=, =protected=, and =commands= so the review command and dry-run
+apply cannot drift silently.
 
 =NELIX_USER_MANIFEST_LOCKED=required= strengthens the same source-tree verifier
 with a real manifest lock cycle: it backs up any existing
