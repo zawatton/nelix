@@ -77,6 +77,7 @@ path_in_release_scope() {
     registry/packages/system/jq.el|\
     registry/packages/system/ripgrep.el|\
     registry/packages/system/tree.el|\
+    docs/schema/nelix-manifest-dsl-v1.schema.json|\
     docs/schema/nelix-lock-v2.schema.json|\
     scripts/nelix-aot-manifest-engine.el|\
     scripts/nelix-aot-native-cli-proof.el|\
@@ -425,6 +426,14 @@ require_user_manifest_dsl_gate() {
     '"fallback":":nelisp-aot-cache"'
   require_contains packaging/verify-nelix-user-manifest-dsl.sh \
     'nelix user manifest nelisp AOT read-only ok'
+  require_contains docs/schema/nelix-manifest-dsl-v1.schema.json \
+    '"const": ['
+  require_contains docs/schema/nelix-manifest-dsl-v1.schema.json \
+    '"form": "emacs-packages"'
+  require_contains packaging/verify-installed-nelix-cli-gate.sh \
+    'manifest DSL schema summary const differs'
+  require_contains test/nelix-cli-test.el \
+    'form-map backends package-forms'
   require_contains packaging/verify-nelix-user-environment.sh \
     'nelix user manifest DSL v1 ok'
   require_contains packaging/verify-nelix-user-environment.sh \
@@ -985,6 +994,7 @@ audit_group "Commit B - Nelix manifest, native store, and CLI" \
   nelix-store.el \
   nelix-substitute.el \
   registry/packages/system \
+  docs/schema/nelix-manifest-dsl-v1.schema.json \
   scripts/nelix-aot-manifest-engine.el \
   scripts/nelix-aot-native-cli-proof.el \
   scripts/nelix-aot-native-subset.el \

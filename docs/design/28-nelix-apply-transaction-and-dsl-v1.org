@@ -516,11 +516,14 @@ Rules:
   row keys, the deferred v2 candidate forms, the forbidden private-data forms,
   and the v1 policies for removal review and private data.
 - =docs/schema/nelix-manifest-dsl-v1.schema.json= records the machine-readable
-  summary contract for =nelix --json schema manifest-dsl-v1=.  Source-tree ERT
-  and the installed CLI gate compare this file with the CLI output so changes
-  to forms, manifest keys, backends, package row options, package option value
-  contracts, required package row keys, remove policy values, deferred forms,
-  or forbidden private-data forms must be intentional.
+  summary contract for =nelix --json schema manifest-dsl-v1=.  Array
+  properties keep =items.enum= as the accepted value set and =const= as the
+  exact v1 contract, including ordering, =form-map= rows, and
+  =package-option-types= rows.  Source-tree ERT and the installed CLI gate
+  compare these =const= values with the CLI output so changes to forms,
+  manifest keys, backends, package row options, package option value contracts,
+  required package row keys, remove policy values, deferred forms, or forbidden
+  private-data forms must be intentional.
 - =nelix --json schema transaction-v1= must report schema
   =nelix-apply-transaction=, schema version =1=, and the required top-level,
   plan, transaction metadata, rollback-plan, rollback argv, and executed-step

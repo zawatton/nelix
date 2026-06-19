@@ -300,6 +300,22 @@ validate_manifest_dsl_schema_summary_contract() {
                   (dolist (key required)
                     (unless (assoc key summary)
                       (error "manifest DSL schema summary is missing required key: %s" key)))
+                  (dolist (key (quote ("backend-policy" "package-row-semantics"
+                                       "version-pin" "remove-policy"
+                                       "classification" "platform-conditions"
+                                       "private-data" "stable")))
+                    (unless (equal (jget "const" (jget key schema-properties))
+                                   (jget key summary))
+                      (error "manifest DSL schema summary scalar differs for %s" key)))
+                  (dolist (key (quote ("forms" "manifest-keys" "form-map"
+                                       "backends" "package-forms"
+                                       "package-options" "package-option-types"
+                                       "package-row-required"
+                                       "remove-policy-values" "deferred-forms"
+                                       "forbidden-forms")))
+                    (unless (equal (jget "const" (jget key schema-properties))
+                                   (jget key summary))
+                      (error "manifest DSL schema summary const differs for %s" key)))
                   (dolist (key (quote ("forms" "manifest-keys" "backends"
                                        "package-forms" "package-options"
                                        "package-row-required"

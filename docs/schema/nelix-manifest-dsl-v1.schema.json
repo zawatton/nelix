@@ -47,6 +47,22 @@
     },
     "forms": {
       "type": "array",
+      "const": [
+        "name",
+        "profile",
+        "nix-channel",
+        "imports",
+        "backend-policy",
+        "emacs-packages",
+        "linux-packages",
+        "debian-tools",
+        "bootstrap-apt-packages",
+        "pins",
+        "package",
+        "linux-package",
+        "version-pin",
+        "remove-policy"
+      ],
       "items": {
         "enum": [
           "name",
@@ -68,6 +84,22 @@
     },
     "manifest-keys": {
       "type": "array",
+      "const": [
+        "name",
+        "profile",
+        "nix-channel",
+        "imports",
+        "backend-policy",
+        "emacs",
+        "linux",
+        "debian-tools",
+        "bootstrap-apt",
+        "pins",
+        "package-rows",
+        "linux-package-rows",
+        "version-pins",
+        "remove-policy"
+      ],
       "items": {
         "enum": [
           "name",
@@ -89,12 +121,81 @@
     },
     "form-map": {
       "type": "array",
+      "const": [
+        {
+          "form": "name",
+          "manifest-key": "name"
+        },
+        {
+          "form": "profile",
+          "manifest-key": "profile"
+        },
+        {
+          "form": "nix-channel",
+          "manifest-key": "nix-channel"
+        },
+        {
+          "form": "imports",
+          "manifest-key": "imports"
+        },
+        {
+          "form": "backend-policy",
+          "manifest-key": "backend-policy"
+        },
+        {
+          "form": "emacs-packages",
+          "manifest-key": "emacs"
+        },
+        {
+          "form": "linux-packages",
+          "manifest-key": "linux"
+        },
+        {
+          "form": "debian-tools",
+          "manifest-key": "debian-tools"
+        },
+        {
+          "form": "bootstrap-apt-packages",
+          "manifest-key": "bootstrap-apt"
+        },
+        {
+          "form": "pins",
+          "manifest-key": "pins"
+        },
+        {
+          "form": "package",
+          "manifest-key": "package-rows"
+        },
+        {
+          "form": "linux-package",
+          "manifest-key": "linux-package-rows"
+        },
+        {
+          "form": "version-pin",
+          "manifest-key": "version-pins"
+        },
+        {
+          "form": "remove-policy",
+          "manifest-key": "remove-policy"
+        }
+      ],
       "items": {
         "$ref": "#/$defs/form-map-row"
       }
     },
     "backends": {
       "type": "array",
+      "const": [
+        "nelix-native",
+        "nix",
+        "apt",
+        "dnf",
+        "git",
+        "elpa",
+        "homebrew",
+        "scoop",
+        "winget"
+      ],
       "items": {
         "enum": [
           "nelix-native",
@@ -114,6 +215,10 @@
     },
     "package-forms": {
       "type": "array",
+      "const": [
+        "package",
+        "linux-package"
+      ],
       "items": {
         "enum": [
           "package",
@@ -123,6 +228,16 @@
     },
     "package-options": {
       "type": "array",
+      "const": [
+        ":backend",
+        ":pin",
+        ":version",
+        ":profile",
+        ":group",
+        ":feature",
+        ":platform",
+        ":when"
+      ],
       "items": {
         "enum": [
           ":backend",
@@ -138,12 +253,50 @@
     },
     "package-option-types": {
       "type": "array",
+      "const": [
+        {
+          "option": ":backend",
+          "type": "backend-symbol"
+        },
+        {
+          "option": ":pin",
+          "type": "boolean"
+        },
+        {
+          "option": ":version",
+          "type": "string-or-symbol"
+        },
+        {
+          "option": ":profile",
+          "type": "string-or-symbol"
+        },
+        {
+          "option": ":group",
+          "type": "string-or-symbol"
+        },
+        {
+          "option": ":feature",
+          "type": "string-or-symbol"
+        },
+        {
+          "option": ":platform",
+          "type": "string-or-symbol-or-list"
+        },
+        {
+          "option": ":when",
+          "type": "symbol-or-list"
+        }
+      ],
       "items": {
         "$ref": "#/$defs/package-option-type-row"
       }
     },
     "package-row-required": {
       "type": "array",
+      "const": [
+        "kind",
+        "name"
+      ],
       "items": {
         "enum": [
           "kind",
@@ -159,6 +312,11 @@
     },
     "remove-policy-values": {
       "type": "array",
+      "const": [
+        "confirm",
+        "keep",
+        "prune"
+      ],
       "items": {
         "enum": [
           "confirm",
@@ -169,6 +327,12 @@
     },
     "deferred-forms": {
       "type": "array",
+      "const": [
+        "group",
+        "feature",
+        "platform",
+        "platform-when"
+      ],
       "items": {
         "enum": [
           "group",
@@ -180,6 +344,17 @@
     },
     "forbidden-forms": {
       "type": "array",
+      "const": [
+        "secret",
+        "secrets",
+        "private-repo",
+        "private-repos",
+        "credential",
+        "credentials",
+        "token",
+        "access-token",
+        "auth-header"
+      ],
       "items": {
         "enum": [
           "secret",

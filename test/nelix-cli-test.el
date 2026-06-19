@@ -818,6 +818,17 @@
                    (alist-get 'json-schema parsed)))
     (dolist (key required)
       (should (nelix-cli-test--alist-has-json-key-p parsed key)))
+    (dolist (key '(backend-policy package-row-semantics version-pin
+                   remove-policy classification platform-conditions
+                   private-data stable))
+      (should (equal (alist-get 'const (alist-get key properties))
+                     (alist-get key parsed))))
+    (dolist (key '(forms manifest-keys form-map backends package-forms
+                   package-options package-option-types package-row-required
+                   remove-policy-values deferred-forms forbidden-forms))
+      (should (equal (alist-get 'const (alist-get key properties))
+                     (nelix-cli-test--json-array-list
+                      (alist-get key parsed)))))
     (dolist (key '("forms" "manifest-keys" "backends" "package-forms"
                    "package-options" "package-row-required"
                    "remove-policy-values"
