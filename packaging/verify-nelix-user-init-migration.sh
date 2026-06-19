@@ -113,6 +113,18 @@ preflight_required_init_audit() {
     *) return 0 ;;
   esac
 
+  case "${NELIX_INIT_MIGRATION_REQUIRE_DEB:-auto}" in
+    0|false|no|skip)
+      return 0
+      ;;
+    auto)
+      if [ "$resolved_nelix_bin" != /usr/bin/nelix ] &&
+         [ "$nelix_lispdir" != /usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0 ]; then
+        return 0
+      fi
+      ;;
+  esac
+
   if ! command -v dpkg-query >/dev/null 2>&1 ||
      ! command -v dpkg >/dev/null 2>&1; then
     return 0
