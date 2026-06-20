@@ -988,7 +988,7 @@
         (progn
           (nelix-manifest-test--write
            dir "manifest.el"
-           "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep) :pins '(fd))\n")
+           "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep) :pins '(fd) :backend-policy '(nix))\n")
           (cl-letf (((symbol-function 'anvil-pkg-compat--standalone-nelisp-p)
                      (lambda () t))
                     ((symbol-function 'nelix-list)
@@ -1650,13 +1650,16 @@
             (should (plist-get schema :ok))
             (should (eq 'nelix-native (plist-get lock :backend)))
             (should (equal "1.0.0" (plist-get app :recipe-version)))
-            (should (plist-get app :recipe-source))
-            (should (plist-get app :recipe-install))
+            ;; The text reader now replays the real recipe plists, so the
+            ;; script-shim install type round-trips (and recipe-source is the
+            ;; real nil for a system script-shim, not a presence placeholder).
+            (should (eq 'script-shim
+                        (plist-get (plist-get app :recipe-install) :type)))
             (should (equal '("fixture-dep")
                            (plist-get app :recipe-dependencies)))
             (should (eq 'system-tool (plist-get app :recipe-class)))
-            (should (plist-get dep :recipe-source))
-            (should (plist-get dep :recipe-install))
+            (should (eq 'script-shim
+                        (plist-get (plist-get dep :recipe-install) :type)))
             (should (plist-get dep :recipe-class))))
       (delete-directory dir t))))
 

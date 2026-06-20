@@ -2572,7 +2572,9 @@ remove count."
   (setq nelix-manifest--audit-backend
         (or (plist-get nelix-manifest--audit-selection :backend) 'nix))
   (setq nelix-manifest--audit-installed
-        (nelix-list)))
+        (nelix-manifest--installed-entries
+         nelix-manifest--audit-manifest
+         nelix-manifest--audit-backend)))
 
 (defun nelix-audit--nelisp-report-stage ()
   "Build report, extra and missing rows for NeLisp audit."
@@ -2756,7 +2758,7 @@ remove count."
         (if (plist-get row :installed)
             (push (list :action 'keep
                         :name name
-                        :backend 'nix
+                        :backend nelix-manifest--audit-backend
                         :target target
                         :resolved-target target
                         :installed-name (plist-get (plist-get row :entry)
@@ -2769,7 +2771,7 @@ remove count."
                              target)))
             (push (list :action 'install
                         :name name
-                        :backend 'nix
+                        :backend nelix-manifest--audit-backend
                         :target target*
                         :resolved-target target*
                         :installed-name nil
@@ -2779,19 +2781,21 @@ remove count."
                                               :pins))
                                      t)
                         :lock locked-package
-                        :argv (nelix-manifest--nix-install-argv
-                               nelix-manifest--audit-manifest target*))
+                        :argv (and (eq nelix-manifest--audit-backend 'nix)
+                                   (nelix-manifest--nix-install-argv
+                                    nelix-manifest--audit-manifest target*)))
                   install)))))
     (dolist (entry nelix-manifest--audit-extra)
       (push (list :action 'remove
                   :name (plist-get entry :name)
-                  :backend 'nix
+                  :backend nelix-manifest--audit-backend
                   :target nil
                   :resolved-target nil
                   :installed-name (plist-get entry :name)
                   :pinned nil
                   :entry entry
-                  :argv (nelix-manifest--nix-remove-argv entry))
+                  :argv (and (eq nelix-manifest--audit-backend 'nix)
+                             (nelix-manifest--nix-remove-argv entry)))
             remove))
     (setq install (nreverse install)
           keep (nreverse keep)
@@ -2809,7 +2813,7 @@ remove count."
                 (and (anvil-pkg-compat-file-exists-p
                       (nelix-manifest-lock-file-name manifest-file))
                      t)
-                :backend 'nix
+                :backend nelix-manifest--audit-backend
                 :backend-selection nelix-manifest--audit-selection
                 :profile (plist-get nelix-manifest--audit-manifest :profile)
                 :nix-profile anvil-pkg-profile-dir
@@ -2844,16 +2848,55 @@ remove count."
              manifest-file plan transaction))
       (condition-case err
           (progn
-            (dolist (action commands)
-              (push (append (list :action (plist-get action :action)
-                                  :name (plist-get action :name))
-                            (nelix-manifest--run-nix-command-nelisp
-                             (plist-get action :argv)))
-                    executed)
-              (setq transaction
-                    (nelix-manifest--transaction-record-update
-                     manifest-file plan transaction 'running
-                     (nreverse (copy-sequence executed)))))
+            (if (eq nelix-manifest--audit-backend 'nelix-native)
+                ;; Native backend executes through the native store/profile
+                ;; (shim creation + new generation), not `nix profile' commands.
+                (let ((profile* (plist-get nelix-manifest--audit-manifest
+                                           :profile))
+                      (system* (plist-get nelix-manifest--audit-selection
+                                          :system)))
+                  (require 'nelix-builder nil t)
+                  (dolist (action install)
+                    (let ((result
+                           (nelix-native-install-lock-package
+                            (plist-get action :lock)
+                            profile* system*
+                            (plist-get locked-plan :all-packages))))
+                      (push (list :action 'install
+                                  :name (plist-get action :name)
+                                  :backend 'nelix-native
+                                  :ok t
+                                  :result result)
+                            executed)
+                      (setq transaction
+                            (nelix-manifest--transaction-record-update
+                             manifest-file plan transaction 'running
+                             (nreverse (copy-sequence executed))))))
+                  (when remove
+                    (nelix-profile-prune
+                     profile*
+                     (mapcar (lambda (a) (plist-get a :name)) remove)
+                     system*)
+                    (dolist (action remove)
+                      (push (list :action 'remove
+                                  :name (plist-get action :name)
+                                  :backend 'nelix-native
+                                  :ok t)
+                            executed)
+                      (setq transaction
+                            (nelix-manifest--transaction-record-update
+                             manifest-file plan transaction 'running
+                             (nreverse (copy-sequence executed)))))))
+              (dolist (action commands)
+                (push (append (list :action (plist-get action :action)
+                                    :name (plist-get action :name))
+                              (nelix-manifest--run-nix-command-nelisp
+                               (plist-get action :argv)))
+                      executed)
+                (setq transaction
+                      (nelix-manifest--transaction-record-update
+                       manifest-file plan transaction 'running
+                       (nreverse (copy-sequence executed))))))
             (dolist (pin (plist-get nelix-manifest--audit-manifest :pins))
               (nelix-pin pin))
             (setq executed (nreverse executed))
@@ -3346,12 +3389,24 @@ supported.  Nil, absent, and empty lists all return nil."
             (setq chunk "")))))
     (nreverse strings)))
 
-(defun nelix-lock--text-package-native-fields (row)
-  "Return native replay key placeholders read from generated lock ROW.
+(defun nelix-lock--row-sexp-after (row key)
+  "Read the Lisp value following \":KEY \" in lock ROW, or nil on failure.
+Reads one s-expression with `read-from-string', so a nested recipe plist
+(e.g. =:recipe-install (:type script-shim ...)=) replays faithfully on
+standalone NeLisp without parsing the whole lock as one sexp."
+  (let* ((marker (concat ":" key " "))
+         (idx (nelix-lock--substring-index marker row)))
+    (when idx
+      (condition-case nil
+          (car (read-from-string (substring row (+ idx (length marker)))))
+        (error nil)))))
 
-The standalone text reader preserves key presence so schema validation
-does not reject valid native locks.  Full recipe source/install replay
-still belongs to the normal Elisp reader."
+(defun nelix-lock--text-package-native-fields (row)
+  "Return native replay fields read from generated lock ROW.
+
+The standalone text reader preserves key presence so schema validation does
+not reject valid native locks, and replays the recipe source/install plists
+faithfully so the NeLisp native apply path can rebuild recipes."
   (let (fields)
     (when (nelix-lock--row-has-key-p row "recipe-version")
       (setq fields
@@ -3359,9 +3414,13 @@ still belongs to the normal Elisp reader."
                     (list :recipe-version
                           (nelix-lock--row-string row "recipe-version")))))
     (when (nelix-lock--row-has-key-p row "recipe-source")
-      (setq fields (append fields (list :recipe-source :nelisp-lock-present))))
+      (setq fields (append fields
+                           (list :recipe-source
+                                 (nelix-lock--row-sexp-after row "recipe-source")))))
     (when (nelix-lock--row-has-key-p row "recipe-install")
-      (setq fields (append fields (list :recipe-install :nelisp-lock-present))))
+      (setq fields (append fields
+                           (list :recipe-install
+                                 (nelix-lock--row-sexp-after row "recipe-install")))))
     (when (nelix-lock--row-has-key-p row "recipe-dependencies")
       (setq fields
             (append fields

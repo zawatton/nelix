@@ -2060,6 +2060,19 @@ nelix_run_nelisp_image() {
   trap 'rm -f "$runner" "$result"' EXIT HUP INT TERM
   {
     printf '(setq nelix-cli--direct-home %s)\n' "$(nelix_quote_elisp_string "${HOME:-}")"
+    # NeLisp `getenv' does not read the process environment, so pass the env
+    # vars the native store/profile resolver needs as an alist the compat
+    # getenv hook can consult.
+    printf '(setq nelix-cli--direct-env (list\n'
+    for nelix_env_var in HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CONFIG_HOME PATH; do
+      eval "nelix_env_val=\${$nelix_env_var:-}"
+      if [ -n "$nelix_env_val" ]; then
+        printf ' (cons %s %s)\n' \
+          "$(nelix_quote_elisp_string "$nelix_env_var")" \
+          "$(nelix_quote_elisp_string "$nelix_env_val")"
+      fi
+    done
+    printf '))\n'
     if [ -n "${XDG_STATE_HOME:-}" ]; then
       printf '(setq nelix-transaction-log-root %s)\n' "$(nelix_quote_elisp_string "$XDG_STATE_HOME/nelix/transactions")"
     elif [ -n "${HOME:-}" ]; then
@@ -2237,6 +2250,19 @@ nelix_run_nelisp_direct() {
     printf '(setq anvil-pkg-nelisp-smoke-actor-source %s)\n' "$(nelix_quote_elisp_string "$actor_src")"
     printf '(setq anvil-pkg-nelisp-smoke-process-source %s)\n' "$(nelix_quote_elisp_string "$process_src")"
     printf '(setq nelix-cli--direct-home %s)\n' "$(nelix_quote_elisp_string "${HOME:-}")"
+    # NeLisp `getenv' does not read the process environment, so pass the env
+    # vars the native store/profile resolver needs as an alist the compat
+    # getenv hook can consult.
+    printf '(setq nelix-cli--direct-env (list\n'
+    for nelix_env_var in HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CONFIG_HOME PATH; do
+      eval "nelix_env_val=\${$nelix_env_var:-}"
+      if [ -n "$nelix_env_val" ]; then
+        printf ' (cons %s %s)\n' \
+          "$(nelix_quote_elisp_string "$nelix_env_var")" \
+          "$(nelix_quote_elisp_string "$nelix_env_val")"
+      fi
+    done
+    printf '))\n'
     if [ -n "${XDG_STATE_HOME:-}" ]; then
       printf '(setq nelix-transaction-log-root %s)\n' "$(nelix_quote_elisp_string "$XDG_STATE_HOME/nelix/transactions")"
     elif [ -n "${HOME:-}" ]; then
@@ -2283,6 +2309,13 @@ EOF
 (when (fboundp 'nelisp-process-call-process)
   (setq anvil-pkg-compat-nelisp-call-process-function
         #'nelix-cli--direct-call-process))
+
+;; NeLisp `getenv' cannot read the process environment, so resolve env vars
+;; the native store/profile path needs from the alist bin/nelix injected.
+(when (and (boundp 'nelix-cli--direct-env) nelix-cli--direct-env)
+  (setq anvil-pkg-compat-nelisp-getenv-function
+        (lambda (nelix--getenv-var)
+          (cdr (assoc nelix--getenv-var nelix-cli--direct-env)))))
 
 (when (and (boundp 'nelix-cli--direct-home)
            (stringp nelix-cli--direct-home)
