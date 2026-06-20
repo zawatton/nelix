@@ -211,9 +211,6 @@ assert the unsupported branch."
         (condition-case nil
             (or (and (fboundp 'executable-find)
                      (executable-find "curl"))
-                (and (fboundp 'nelisp-sys-executable-find)
-                     (funcall (symbol-function 'nelisp-sys-executable-find)
-                              "curl"))
                 (and (fboundp 'anvil-pkg-compat-executable-find)
                      (anvil-pkg-compat-executable-find "curl")))
           (error nil))

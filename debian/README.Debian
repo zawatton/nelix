@@ -38,8 +38,9 @@ Minimal -Q smoke test:
     --eval "(require 'nelix-dsl)" \
     --eval "(message \"nelix ok\")"
 
-Nelix shells out to Nix when installing packages.  Debian's nix-bin
-package is only recommended, not a hard dependency, because many users
-install Nix through the official Nix installer instead.  Run
-"M-x nelix-doctor" or evaluate "(nelix-doctor)" to check whether Emacs
-can see the runtime prerequisites.
+Nelix can use Nix as one backend, but it also ships the nelix-native
+backend for native profile work.  Debian's nix-bin package is suggested,
+not recommended or required, so a normal apt install does not pull Nix into
+Nix-free hosts.  Run "M-x nelix-doctor" or evaluate "(nelix-doctor)" to
+check whether Emacs can see the runtime prerequisites for the backend you
+intend to use.

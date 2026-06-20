@@ -50,6 +50,15 @@
 (unless (fboundp 'declare-function)
   (defmacro declare-function (&rest _ignored) nil))
 
+(unless (fboundp 'ignore)
+  (defun ignore (&rest _ignored)
+    "Ignore all arguments and return nil."
+    nil))
+
+(unless (get 'void-function 'error-conditions)
+  (put 'void-function 'error-conditions '(error void-function))
+  (put 'void-function 'error-message "Symbol's function definition is void"))
+
 ;; --- declare-function shims for NeLisp Layer-2 dispatch targets --
 ;; These functions only exist when nelisp-process / nelisp-json /
 ;; nelisp-emacs-compat are loaded (= NeLisp standalone runtime).
@@ -294,6 +303,13 @@ signalling `anvil-pkg-http-not-supported'."
     (error "%s returned invalid binary HTTP result: %S" backend resp))
   resp)
 
+(defun anvil-pkg-compat--call-optional-backend (symbol &rest args)
+  "Call optional backend SYMBOL with ARGS, or return nil when unavailable."
+  (when (fboundp symbol)
+    (condition-case nil
+        (apply symbol args)
+      (error nil))))
+
 ;;;; --- process object helpers ----------------------------------------------
 
 (defun anvil-pkg-compat-process-get (proc key)
@@ -457,15 +473,17 @@ Tries Emacs `getenv', then NeLisp Layer-2 alternatives."
     (unless v
       (anvil-pkg-compat--try-require-nelisp-backends)
       (setq v
-            (cond
-             ((fboundp 'nelisp-sys-getenv) (nelisp-sys-getenv var))
-             ((fboundp 'nelisp-syscall-getenv) (nelisp-syscall-getenv var)))))
+            (or (anvil-pkg-compat--call-optional-backend
+                 'nelisp-sys-getenv var)
+                (anvil-pkg-compat--call-optional-backend
+                 'nelisp-syscall-getenv var))))
     (unless v
       (anvil-pkg-compat--try-require-nelisp-emacs-compat)
       (setq v
-            (cond
-             ((fboundp 'nelisp-syscall-getenv) (nelisp-syscall-getenv var))
-             ((fboundp 'nelisp-ec-getenv) (nelisp-ec-getenv var)))))
+            (or (anvil-pkg-compat--call-optional-backend
+                 'nelisp-syscall-getenv var)
+                (anvil-pkg-compat--call-optional-backend
+                 'nelisp-ec-getenv var))))
     (or v default)))
 
 (defun anvil-pkg-compat-executable-find (cmd)
@@ -475,13 +493,9 @@ Tries Emacs `getenv', then NeLisp Layer-2 alternatives."
            (funcall anvil-pkg-compat-nelisp-executable-find-function cmd))
       (and (fboundp 'executable-find) (executable-find cmd))
       (progn
-        (anvil-pkg-compat--try-require-nelisp-backends)
-        (and (fboundp 'nelisp-sys-executable-find)
-             (nelisp-sys-executable-find cmd)))
-      (progn
         (anvil-pkg-compat--try-require-nelisp-emacs-compat)
-        (and (fboundp 'nelisp-ec-executable-find)
-             (nelisp-ec-executable-find cmd)))))
+        (anvil-pkg-compat--call-optional-backend
+         'nelisp-ec-executable-find cmd))))
 
 ;;;; --- filesystem ----------------------------------------------------------
 

@@ -230,6 +230,71 @@ Installed package operational check:
 make verify-installed-operational-gate
 #+end_src
 
+Release-candidate confidence check:
+
+#+begin_src sh
+make nelix-rc-gate
+#+end_src
+
+This aggregate is the normal answer to "how far should development pass before
+it is safe to rely on the branch?"  It assumes the freshly built Debian package
+has already been installed, then runs the source, release-scope, local Debian,
+installed operational, real init-migration, and native user profile gates in a
+fixed order without requiring shell startup files or implicit =sudo=.
+The normal source gate uses the Emacs transaction path plus standalone NeLisp
+basic CLI smoke; set =NELIX_SOURCE_NELISP_TRANSACTION_STRICT=1= when the
+standalone runtime can also pass the full transaction gate.
+
+The native user profile gate is:
+
+#+begin_src sh
+make nelix-native-user-gate
+#+end_src
+
+It verifies =~/.emacs.d/nelix-package-native.el= with =nix= masked out of
+=PATH=, isolated XDG store/profile roots, explicit fallback package output,
+locked native replay, activation, and rollback for the =native-test= profile.
+
+Fresh Debian no-Nix install proof:
+
+#+begin_src sh
+make nelix-no-nix-container-gate
+#+end_src
+
+This disposable Debian 12 container gate builds the local =elpa-nelix= package,
+installs it with =apt-get --no-install-recommends=, asserts that neither the
+=nix= command nor the =nix-bin= package is present, then runs the installed
+Debian smoke plus the native-only =native-test= profile gate.
+
+Fresh Debian no-Nix RC proof:
+
+#+begin_src sh
+make nelix-no-nix-rc-container-gate
+#+end_src
+
+This disposable Debian gate builds NeLisp with Emacs, installs the local Nelix
+Debian package without Recommends, creates a small native fixture manifest/init
+tree, and runs =make nelix-rc-gate= while =nix= and =nix-bin= remain absent.
+
+Fresh Debian NeLisp bootstrap proof:
+
+#+begin_src sh
+make nelix-nelisp-container-gate
+#+end_src
+
+This disposable Debian development gate uses =NELIX_NELISP_IMAGE=, which
+defaults to =debian:13-slim= so NeLisp is built with a current Emacs.  It
+installs Emacs and build tools, clones NeLisp from =NELISP_REPO_URL=, checks out
+=NELISP_REF=, builds =target/nelisp=, and then uses that runtime to run Nelix
+source-tree smoke checks, build/install the Debian package, and verify the
+installed =/usr/bin/nelix --runtime nelisp --json version= path.
+
+By default the gate uses the mounted local Nelix checkout.  Set
+=NELIX_SOURCE=clone= to fetch =NELIX_REPO_URL=, which defaults to
+=https://github.com/zawatton/nelix.git=.  Set
+=NELIX_NELISP_CONTAINER_STRICT=1= when the standalone NeLisp runtime can pass
+the deeper transaction and installed CLI gates.
+
 Cleanup after verification:
 
 #+begin_src sh

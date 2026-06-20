@@ -131,6 +131,9 @@ path_in_release_scope() {
     packaging/apt/verify-public-tree.sh|\
     packaging/apt/verify-repo.sh|\
     packaging/apt/verify-signed-repo.sh|\
+    packaging/debian/no-nix-container-gate.sh|\
+    packaging/debian/no-nix-rc-container-gate.sh|\
+    packaging/debian/nelisp-bootstrap-container-gate.sh|\
     packaging/verify-publication-urls.sh|\
     packaging/fedora/README.org|\
     packaging/fedora/build-rpm.sh|\
@@ -150,6 +153,7 @@ path_in_release_scope() {
     packaging/verify-nelix-user-manifest-dsl.sh|\
     packaging/verify-nelix-user-init-migration.sh|\
     packaging/verify-nelix-aot-cache-gate.sh|\
+    packaging/verify-nelix-native-user-gate.sh|\
     packaging/verify-nelix-native-cli-gate.sh|\
     packaging/verify-installed-nelix-debian.sh|\
     packaging/verify-nelix-user-environment.sh)
@@ -448,6 +452,90 @@ require_user_manifest_dsl_gate() {
     'nelix-environment'
   require_contains packaging/verify-nelix-user-environment.sh \
     'not top-level nelix-manifest'
+  require_contains Makefile \
+    'nelix-rc-gate:'
+  require_contains Makefile \
+    '$(MAKE) check-whitespace'
+  require_contains Makefile \
+    '$(MAKE) release-scope-audit'
+  require_contains Makefile \
+    '$(MAKE) deb-local-gate'
+  require_contains Makefile \
+    '$(MAKE) verify-source-operational-gate'
+  require_contains Makefile \
+    '$(MAKE) verify-installed-operational-gate'
+  require_contains Makefile \
+    '$(MAKE) verify-user-init-migration'
+  require_contains Makefile \
+    '$(MAKE) nelix-native-user-gate'
+  require_contains Makefile \
+    'nelix-native-user-gate:'
+  require_contains packaging/verify-nelix-native-user-gate.sh \
+    'nix is intentionally unavailable in nelix-native-user-gate'
+  require_contains packaging/verify-nelix-native-user-gate.sh \
+    'nelix native fallback packages:'
+  require_contains packaging/verify-nelix-native-user-gate.sh \
+    'native rollback --profile native-test --generation 1'
+  require_contains Makefile \
+    'nelix-no-nix-container-gate:'
+  require_contains Makefile \
+    'packaging/debian/no-nix-container-gate.sh "$(DEBIAN_IMAGE)"'
+  require_contains Makefile \
+    'nelix-no-nix-rc-container-gate:'
+  require_contains Makefile \
+    'packaging/debian/no-nix-rc-container-gate.sh "$(NELIX_NO_NIX_RC_IMAGE)"'
+  require_contains Makefile \
+    'nelix-nelisp-container-gate:'
+  require_contains Makefile \
+    'packaging/debian/nelisp-bootstrap-container-gate.sh "$(NELIX_NELISP_IMAGE)"'
+  require_contains packaging/debian/no-nix-container-gate.sh \
+    'apt-get install -y --no-install-recommends /work/elpa-nelix_0.1.0-5_all.deb'
+  require_contains packaging/debian/no-nix-container-gate.sh \
+    'assert_no_nix package-install'
+  require_contains packaging/debian/no-nix-container-gate.sh \
+    '-w "/work/$repo_name"'
+  require_contains packaging/debian/no-nix-rc-container-gate.sh \
+    'env $common_env make nelix-rc-gate'
+  require_contains packaging/debian/no-nix-rc-container-gate.sh \
+    'assert_no_nix rc-gate'
+  require_contains packaging/debian/no-nix-rc-container-gate.sh \
+    'NELIX_RC_CHECK_HOME=$check_home'
+  require_contains packaging/debian/no-nix-rc-container-gate.sh \
+    'NELIX_RC_AUDIT_HOME=$audit_home'
+  require_contains packaging/debian/no-nix-rc-container-gate.sh \
+    'NELIX_INIT_MIGRATION_MIN_TARGETS=6'
+  require_contains packaging/debian/no-nix-rc-container-gate.sh \
+    'NELIX_SOURCE_NELISP_TRANSACTION_STRICT=0'
+  require_contains packaging/debian/nelisp-bootstrap-container-gate.sh \
+    'git clone "$NELISP_REPO_URL" /opt/nelisp'
+  require_contains packaging/debian/nelisp-bootstrap-container-gate.sh \
+    'NELIX_REPO_URL:=https://github.com/zawatton/nelix.git'
+  require_contains packaging/debian/nelisp-bootstrap-container-gate.sh \
+    'NELIX_SOURCE:=local'
+  require_contains packaging/debian/nelisp-bootstrap-container-gate.sh \
+    'git clone "$NELIX_REPO_URL" /opt/nelix'
+  require_contains packaging/debian/nelisp-bootstrap-container-gate.sh \
+    'make standalone-reader'
+  require_contains packaging/debian/nelisp-bootstrap-container-gate.sh \
+    'make smoke-nelisp smoke-nelix-nelisp smoke-nelix-cli-nelisp'
+  require_contains packaging/debian/nelisp-bootstrap-container-gate.sh \
+    'NELIX_NELISP_CONTAINER_STRICT'
+  require_contains debian/control \
+    'Suggests:'
+  require_contains debian/control \
+    'nix-bin,'
+  require_contains debian/README.Debian \
+    'nix-bin package is suggested'
+  require_contains tools/nelix-release-scope-stage.sh \
+    'packaging/verify-nelix-native-user-gate.sh'
+  require_contains tools/nelix-release-scope-stage.sh \
+    'packaging/debian/no-nix-rc-container-gate.sh'
+  require_contains docs/design/29-nelix-release-worktree-scope.org \
+    'packaging/verify-nelix-native-user-gate.sh'
+  require_contains packaging/README.org \
+    'make nelix-rc-gate'
+  require_contains docs/design/30-nelix-development-roadmap.org \
+    'make nelix-rc-gate'
   require_contains Makefile \
     'verify-installed-operational-gate:'
   require_contains Makefile \
@@ -1087,6 +1175,7 @@ audit_group "Commit D - Debian and repository publication" \
   packaging/apt/verify-public-tree.sh \
   packaging/apt/verify-repo.sh \
   packaging/apt/verify-signed-repo.sh \
+  packaging/debian/no-nix-rc-container-gate.sh \
   packaging/verify-publication-urls.sh \
   packaging/fedora/README.org \
   packaging/fedora/build-rpm.sh \

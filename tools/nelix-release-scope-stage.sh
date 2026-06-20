@@ -116,6 +116,9 @@ commit_d=(
   packaging/fedora/rpmlint.sh
   packaging/fedora/verify-public-tree.sh
   packaging/fedora/verify-source.sh
+  packaging/debian/no-nix-container-gate.sh
+  packaging/debian/no-nix-rc-container-gate.sh
+  packaging/debian/nelisp-bootstrap-container-gate.sh
   packaging/run-autopkgtest-debian.sh
   packaging/verify-extracted-nelix-debian.sh
   packaging/verify-installed-nelix-cli-gate.sh
@@ -123,6 +126,7 @@ commit_d=(
   packaging/verify-nelix-user-manifest-dsl.sh
   packaging/verify-nelix-aot-cache-gate.sh
   packaging/verify-nelix-native-cli-gate.sh
+  packaging/verify-nelix-native-user-gate.sh
   packaging/verify-nelix-user-environment.sh
 )
 

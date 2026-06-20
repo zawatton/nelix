@@ -279,8 +279,10 @@ make verify-user-source-gate
 When changing the source tree before a Debian reinstall,
 =verify-source-operational-gate= is the broader operational gate.  It runs the
 real user manifest and init-load checks above, then also verifies the lockfile
-schema/migration contract, NeLisp lock/plan/apply transaction and recovery
-path, and the native store MVP from the source tree:
+schema/migration contract, the Emacs lock/plan/apply transaction and recovery
+path, the standalone NeLisp CLI smoke, and the native store MVP from the source
+tree.  Set =NELIX_SOURCE_NELISP_TRANSACTION_STRICT=1= to additionally require
+the deeper standalone NeLisp lock/plan/apply transaction gate:
 
 #+begin_src shell
 make verify-source-operational-gate
@@ -322,6 +324,79 @@ a stale installed package fails before the CLI fixture gate:
 #+begin_src shell
 make verify-installed-operational-gate
 #+end_src
+
+For the normal release-candidate confidence line, use the aggregate gate:
+
+#+begin_src shell
+make nelix-rc-gate
+#+end_src
+
+This target does not install packages or prompt for =sudo=.  It assumes the
+freshly built =.deb= has already been installed, then runs =check=,
+=check-whitespace=, =release-scope-audit=, =deb-local-gate=,
+=verify-source-operational-gate=, =verify-installed-operational-gate=, and
+=verify-user-init-migration=, then =nelix-native-user-gate= in that order.
+Keep =NELISP= / =NELISP_ROOT= explicit or let the Makefile discover the
+adjacent NeLisp checkout; do not make the RC gate depend on shell startup
+files.
+
+=nelix-native-user-gate= verifies =~/.emacs.d/nelix-package-native.el= through
+the native-only =native-test= profile.  It masks =nix= with an intentionally
+failing command, uses isolated XDG store/profile roots, prints the explicit
+native fallback package list, then checks manifest parse, backend policy, recipe
+coverage, dry-run plan, locked apply replay, profile activation, and rollback.
+
+For a disposable fresh Debian proof without =nix-bin=:
+
+#+begin_src shell
+make nelix-no-nix-container-gate
+#+end_src
+
+The container gate installs the built Debian package with
+=apt-get --no-install-recommends=, asserts that neither the =nix= command nor
+the =nix-bin= package is present, runs the installed Debian smoke, and then runs
+the native-only profile gate against the installed =/usr/bin/nelix=.
+
+To prove the full RC command itself in a disposable no-Nix Debian environment:
+
+#+begin_src shell
+make nelix-no-nix-rc-container-gate
+#+end_src
+
+This gate builds NeLisp with Emacs in a fresh Debian container, installs the
+locally built Nelix Debian package without Recommends, creates a small native
+fixture manifest/init tree, then runs =make nelix-rc-gate= with =nix= absent.
+It leaves the deeper standalone NeLisp transaction check in opt-in mode because
+current NeLisp =main= still lacks the process substrate needed for that full
+transaction surface.
+
+For a disposable Debian development proof that bootstraps NeLisp first:
+
+#+begin_src shell
+make nelix-nelisp-container-gate
+#+end_src
+
+This installs Emacs and build tools in the container, clones =nelisp= from
+=NELISP_REPO_URL=, checks out =NELISP_REF=, builds =target/nelisp= with
+=make standalone-reader=, then uses that binary while building, installing, and
+running Nelix.  By default it uses the mounted local checkout so uncommitted
+development changes are tested even if the repository directory has been renamed
+from =anvil-pkg= to =nelix=.
+
+To prove a fresh clone path instead, use:
+
+#+begin_src shell
+make nelix-nelisp-container-gate NELIX_SOURCE=clone
+#+end_src
+
+The clone mode fetches =NELIX_REPO_URL=, which defaults to
+=https://github.com/zawatton/nelix.git=, and checks out =NELIX_REF=.  The normal
+gate runs the source-tree NeLisp smoke gates that the current standalone NeLisp
+main supports, builds and installs =elpa-nelix=, verifies the installed Debian
+package, and runs installed =/usr/bin/nelix --runtime nelisp --json version=.
+Set =NELIX_NELISP_CONTAINER_STRICT=1= to also require the deeper NeLisp
+transaction and installed CLI gates once the standalone runtime supports that
+surface.
 
 =verify-user-environment= deliberately does not load =~/.emacs.d/init.el= or
 =~/.emacs.d/early-init.el=, so it stays safe inside =deb-release-gate= and

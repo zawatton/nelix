@@ -173,6 +173,7 @@
   (let (manifest
         profile
         system
+        backend
         targets
         target-ids
         pins
@@ -200,6 +201,8 @@
            (setq profile (nelix-aot--after-prefix "profile\t" line)))
           ((nelix-aot--line-prefix-p "system\t" line)
            (setq system (nelix-aot--after-prefix "system\t" line)))
+          ((nelix-aot--line-prefix-p "backend\t" line)
+           (setq backend (nelix-aot--after-prefix "backend\t" line)))
           ((nelix-aot--line-prefix-p "target-id\t" line)
            (let* ((start (length "target-id\t"))
                   (tab (nelix-aot--tab-index line start))
@@ -261,6 +264,7 @@
     (list :manifest manifest
           :profile profile
           :system system
+          :backend backend
           :targets (nreverse targets)
           :target-ids (nreverse target-ids)
           :pins (nreverse pins)
@@ -620,19 +624,20 @@ fallback matches in NORMALIZED-MAP."
 
 (defun nelix-aot--json-backend-fields (input fallback cache-file)
   "Return backend JSON fields for INPUT, FALLBACK, and CACHE-FILE."
-  (concat
-   ",\"backend\":\"nix\""
-   ",\"backend-selection\":{"
-   "\"backend\":\"nix\","
-   "\"system\":" (nelix-aot--json-nullable-string
-                  (plist-get input :system))
-   (if fallback
-       (concat ",\"fallback\":" (nelix-aot--json-string fallback))
-     "")
-   "}"
-   (if cache-file
-       (concat ",\"aot-cache\":" (nelix-aot--json-string cache-file))
-     "")))
+  (let ((backend (or (plist-get input :backend) "nix")))
+    (concat
+     ",\"backend\":" (nelix-aot--json-string backend)
+     ",\"backend-selection\":{"
+     "\"backend\":" (nelix-aot--json-string backend) ","
+     "\"system\":" (nelix-aot--json-nullable-string
+                    (plist-get input :system))
+     (if fallback
+         (concat ",\"fallback\":" (nelix-aot--json-string fallback))
+       "")
+     "}"
+     (if cache-file
+         (concat ",\"aot-cache\":" (nelix-aot--json-string cache-file))
+       ""))))
 
 (defun nelix-aot--line-bool (value)
   "Return VALUE as a compact line-protocol boolean string."
@@ -717,7 +722,7 @@ generic CLI plist report or JSON object."
      (nelix-aot--name-lines "present" present)
      (nelix-aot--name-lines "missing" missing)
      (nelix-aot--name-lines "extra" extra)
-     (nelix-aot--line-field "backend" "nix")
+     (nelix-aot--line-field "backend" (or (plist-get input :backend) "nix"))
      (if fallback
          (nelix-aot--line-field "fallback" fallback)
        "")
@@ -809,7 +814,7 @@ generic CLI plist report or JSON object."
      (nelix-aot--name-lines "pinned" pinned)
      (nelix-aot--name-lines "pinned-name" pinned-names)
      (nelix-aot--name-lines "missing" missing)
-     (nelix-aot--line-field "backend" "nix")
+     (nelix-aot--line-field "backend" (or (plist-get input :backend) "nix"))
      (if fallback
          (nelix-aot--line-field "fallback" fallback)
        "")

@@ -10,6 +10,12 @@ nelix (0.1.0-5) unstable; urgency=medium
   * Add a combined source-tree real-user gate.
   * Add a broader source-tree operational gate.
   * Add an installed-package operational gate shortcut.
+  * Add a release-candidate confidence gate for Nelix development.
+  * Add a native-only real user profile gate for Nix-free migration.
+  * Add a Debian container gate that bootstraps NeLisp before building Nelix.
+  * Add a no-Nix Debian container gate that runs the full nelix-rc-gate.
+  * Keep the deep standalone NeLisp transaction gate as explicit strict mode.
+  * Demote nix-bin from Recommends to Suggests for Nix-free installs.
   * Align native-store design evidence with operational gate output.
   * Enforce the Nelix AOT numeric-ID runtime cache contract.
   * Pass the local NeLisp checkout through the installed CLI gate.

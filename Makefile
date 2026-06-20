@@ -41,6 +41,18 @@ FEDORA_TOPDIR ?= ../nelix-rpmbuild
 FEDORA_REPO_DIR ?= ../nelix-rpm-repo
 FEDORA_PUBLISH_DIR ?= ../nelix-fedora-public
 FEDORA_IMAGE ?= fedora:latest
+DEBIAN_IMAGE ?= debian:12
+NELIX_NO_NIX_RC_IMAGE ?= debian:13-slim
+NELIX_NELISP_IMAGE ?= debian:13-slim
+NELISP_REPO_URL ?= https://github.com/zawatton/nelisp.git
+NELISP_REF ?= main
+NELIX_REPO_URL ?= https://github.com/zawatton/nelix.git
+NELIX_REF ?= main
+NELIX_SOURCE ?= local
+NELIX_NELISP_CONTAINER_STRICT ?= 0
+NELIX_SOURCE_NELISP_TRANSACTION_STRICT ?= 0
+NELIX_RC_CHECK_ENV = $(if $(NELIX_RC_CHECK_HOME),HOME="$(NELIX_RC_CHECK_HOME)" XDG_DATA_HOME="$(NELIX_RC_CHECK_HOME)/.local/share" XDG_STATE_HOME="$(NELIX_RC_CHECK_HOME)/.local/state")
+NELIX_RC_AUDIT_ENV = $(if $(NELIX_RC_AUDIT_HOME),HOME="$(NELIX_RC_AUDIT_HOME)" XDG_DATA_HOME="$(NELIX_RC_AUDIT_HOME)/.local/share" XDG_STATE_HOME="$(NELIX_RC_AUDIT_HOME)/.local/state")
 FEDORA_PUBLIC_URL ?= https://example.invalid/nelix/fedora
 LINTIAN ?= lintian
 AUTOPKGTEST ?= autopkgtest
@@ -141,13 +153,41 @@ SMOKE_BUILD_PAIRS = \
   examples/stdenv-hello.el:gnu-hello \
   examples/python-black.el:black
 
-.PHONY: all check verify-local release-scope-audit release-scope-status release-scope-stage release-scope-stage-a release-scope-stage-b release-scope-stage-c release-scope-stage-d publication-local-gate publication-url-check publication-preflight publication-public-smoke deb-orig deb-source deb-source-lint deb-source-gate deb-build verify-deb-contents deb-lint deb-local-gate install-built-deb deb-release-gate deb-full-gate fix-debian-ownership apt-repo verify-apt-repo apt-repo-gate apt-sign-repo verify-signed-apt-repo apt-signed-repo-gate apt-publish-static verify-apt-public-tree apt-publication-preflight apt-http-smoke apt-http-gate apt-public-url-smoke fedora-source fedora-source-verify fedora-source-gate fedora-rpm-build fedora-rpm-lint fedora-repo fedora-publish-static verify-fedora-public-tree fedora-publication-preflight fedora-dnf-smoke fedora-local-gate fedora-container-gate fedora-public-url-smoke verify-user-manifest-dsl verify-user-runtime-gate verify-user-source-gate verify-source-operational-gate verify-installed-user-manifest-runtime verify-installed-operational-gate verify-installed-debian verify-installed-cli-gate verify-user-environment verify-user-init-migration verify-user-init-migration-load autopkgtest-debian check-whitespace nix-check test compile compile-tests check-declare install install-elisp install-doc install-bin uninstall clean deb-clean distclean lint help smoke-render smoke-pairs-check smoke-eval-pairs-check smoke-build-pairs-check smoke-eval smoke-nelisp smoke-nelix-nelisp smoke-nelix-cli-nelisp smoke-nelix-manifest-dsl-schema smoke-nelix-lock-schema smoke-nelix-lock-plan-apply smoke-nelix-lock-plan-apply-nelisp smoke-nelix-lock-plan-apply-nelisp-direct smoke-nelix-native-cli smoke-nelix-aot-cache-cli smoke-nelix-aot-engine-nelisp smoke-nelix-aot-cache-fast-lane smoke-nelix-aot-artifact-nelisp smoke-nelix-aot-native-cli-proof smoke-nelix-aot-native-artifact-host smoke-nelix-cli-image-build smoke-nelix-cli-image smoke-nelisp-capabilities smoke-nelisp-suite-readiness smoke-nelisp-suite-loadability smoke-nelisp-suite smoke-nelisp-suite-image-build smoke-nelisp-suite-image smoke-nelisp-local smoke-clean
+.PHONY: all check verify-local nelix-rc-gate nelix-no-nix-container-gate nelix-no-nix-rc-container-gate nelix-nelisp-container-gate release-scope-audit release-scope-status release-scope-stage release-scope-stage-a release-scope-stage-b release-scope-stage-c release-scope-stage-d publication-local-gate publication-url-check publication-preflight publication-public-smoke deb-orig deb-source deb-source-lint deb-source-gate deb-build verify-deb-contents deb-lint deb-local-gate install-built-deb deb-release-gate deb-full-gate fix-debian-ownership apt-repo verify-apt-repo apt-repo-gate apt-sign-repo verify-signed-apt-repo apt-signed-repo-gate apt-publish-static verify-apt-public-tree apt-publication-preflight apt-http-smoke apt-http-gate apt-public-url-smoke fedora-source fedora-source-verify fedora-source-gate fedora-rpm-build fedora-rpm-lint fedora-repo fedora-publish-static verify-fedora-public-tree fedora-publication-preflight fedora-dnf-smoke fedora-local-gate fedora-container-gate fedora-public-url-smoke verify-user-manifest-dsl verify-user-runtime-gate nelix-native-user-gate verify-user-source-gate verify-source-nelisp-transaction-gate verify-source-operational-gate verify-installed-user-manifest-runtime verify-installed-operational-gate verify-installed-debian verify-installed-cli-gate verify-user-environment verify-user-init-migration verify-user-init-migration-load autopkgtest-debian check-whitespace nix-check test compile compile-tests check-declare install install-elisp install-doc install-bin uninstall clean deb-clean distclean lint help smoke-render smoke-pairs-check smoke-eval-pairs-check smoke-build-pairs-check smoke-eval smoke-nelisp smoke-nelix-nelisp smoke-nelix-cli-nelisp smoke-nelix-manifest-dsl-schema smoke-nelix-lock-schema smoke-nelix-lock-plan-apply smoke-nelix-lock-plan-apply-nelisp smoke-nelix-lock-plan-apply-nelisp-direct smoke-nelix-native-cli smoke-nelix-aot-cache-cli smoke-nelix-aot-engine-nelisp smoke-nelix-aot-cache-fast-lane smoke-nelix-aot-artifact-nelisp smoke-nelix-aot-native-cli-proof smoke-nelix-aot-native-artifact-host smoke-nelix-cli-image-build smoke-nelix-cli-image smoke-nelisp-capabilities smoke-nelisp-suite-readiness smoke-nelisp-suite-loadability smoke-nelisp-suite smoke-nelisp-suite-image-build smoke-nelisp-suite-image smoke-nelisp-local smoke-clean
 
 all: check
 
 check: lint test smoke-pairs-check smoke-render smoke-nelix-manifest-dsl-schema smoke-nelix-lock-schema smoke-nelix-native-cli smoke-nelix-aot-cache-cli
 
 verify-local: check nix-check smoke-eval smoke-build smoke-nelisp-local check-whitespace
+
+nelix-rc-gate:
+	$(NELIX_RC_CHECK_ENV) $(MAKE) check
+	$(MAKE) check-whitespace
+	$(NELIX_RC_AUDIT_ENV) $(MAKE) release-scope-audit
+	$(MAKE) deb-local-gate
+	$(MAKE) verify-source-operational-gate
+	$(MAKE) verify-installed-operational-gate
+	$(MAKE) verify-user-init-migration
+	$(MAKE) nelix-native-user-gate
+	@echo "nelix RC gate ok"
+
+nelix-no-nix-container-gate:
+	packaging/debian/no-nix-container-gate.sh "$(DEBIAN_IMAGE)"
+
+nelix-no-nix-rc-container-gate:
+	NELISP_REPO_URL="$(NELISP_REPO_URL)" \
+	NELISP_REF="$(NELISP_REF)" \
+	packaging/debian/no-nix-rc-container-gate.sh "$(NELIX_NO_NIX_RC_IMAGE)"
+
+nelix-nelisp-container-gate:
+	NELISP_REPO_URL="$(NELISP_REPO_URL)" \
+	NELISP_REF="$(NELISP_REF)" \
+	NELIX_REPO_URL="$(NELIX_REPO_URL)" \
+	NELIX_REF="$(NELIX_REF)" \
+	NELIX_SOURCE="$(NELIX_SOURCE)" \
+	NELIX_NELISP_CONTAINER_STRICT="$(NELIX_NELISP_CONTAINER_STRICT)" \
+	packaging/debian/nelisp-bootstrap-container-gate.sh "$(NELIX_NELISP_IMAGE)"
 
 release-scope-audit:
 	tools/nelix-release-scope-audit.sh
@@ -636,9 +676,21 @@ verify-user-runtime-gate:
 	NELISP_ROOT="$${NELISP_ROOT:-$(NELISP_REPO)}" \
 	packaging/verify-nelix-user-manifest-dsl.sh
 
+nelix-native-user-gate:
+	NELIX_BIN="$${NELIX_BIN:-$(CURDIR)/bin/nelix}" \
+	NELIX_LISPDIR="$${NELIX_LISPDIR:-$(CURDIR)}" \
+	packaging/verify-nelix-native-user-gate.sh
+
 verify-user-source-gate: verify-user-runtime-gate verify-user-init-migration-load
 
-verify-source-operational-gate: verify-user-source-gate smoke-nelix-lock-schema smoke-nelix-lock-plan-apply-nelisp smoke-nelix-native-cli
+verify-source-nelisp-transaction-gate:
+	@if [ "$(NELIX_SOURCE_NELISP_TRANSACTION_STRICT)" = "1" ]; then \
+	  $(MAKE) smoke-nelix-lock-plan-apply-nelisp; \
+	else \
+	  echo "verify-source-nelisp-transaction-gate: skipped (set NELIX_SOURCE_NELISP_TRANSACTION_STRICT=1 to require it)"; \
+	fi
+
+verify-source-operational-gate: verify-user-source-gate smoke-nelix-lock-schema smoke-nelix-lock-plan-apply smoke-nelix-cli-nelisp verify-source-nelisp-transaction-gate smoke-nelix-native-cli
 
 verify-installed-user-manifest-runtime:
 	packaging/verify-installed-nelix-debian.sh "$(DEB_VERSION)"
@@ -690,6 +742,9 @@ autopkgtest-debian:
 help:
 	@echo "make check        — run local no-Nix gate: lint + test + smoke metadata + render"
 	@echo "make verify-local — run full local gate: check + repository flake + real Nix + NeLisp + whitespace"
+	@echo "make nelix-rc-gate — run the full Nelix release-candidate confidence gate"
+	@echo "make nelix-no-nix-container-gate — install and verify Nelix native profile in $(DEBIAN_IMAGE) without nix-bin"
+	@echo "make nelix-nelisp-container-gate — clone/build NeLisp in $(NELIX_NELISP_IMAGE), build/install Nelix, and run Nelix through NeLisp"
 	@echo "make release-scope-audit — dry-run git staging groups and verify ignored build outputs"
 	@echo "make release-scope-status — show changed paths grouped by planned Nelix release commit"
 	@echo "make release-scope-stage — preview git add groups for the Nelix release scope"

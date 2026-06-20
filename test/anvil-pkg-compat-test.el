@@ -354,29 +354,54 @@
                      (anvil-pkg-compat-executable-find "git")))
       (should (memq 'nelisp-emacs-compat requires)))))
 
-(ert-deftest anvil-pkg-compat-test-executable-find-auto-detects-nelisp-sys ()
-  "PATH lookup tries Doc 44 `nelisp-sys-executable-find'."
-  (let ((loaded nil)
+(ert-deftest anvil-pkg-compat-test-executable-find-ignores-stale-nelisp-sys ()
+  "PATH lookup avoids stale `nelisp-sys-executable-find' declarations."
+  (let ((loaded-ec nil)
         (requires nil)
-        (anvil-pkg-compat--nelisp-backend-require-attempted nil))
+        (anvil-pkg-compat--nelisp-emacs-compat-require-attempted nil))
     (cl-letf (((symbol-function 'fboundp)
                (lambda (sym)
-                 (or (memq sym '(executable-find require))
-                     (and loaded (eq sym 'nelisp-sys-executable-find)))))
+                 (or (memq sym '(executable-find require nelisp-sys-executable-find))
+                     (and loaded-ec (eq sym 'nelisp-ec-executable-find)))))
               ((symbol-function 'executable-find)
                (lambda (_cmd) nil))
               ((symbol-function 'require)
                (lambda (feature &optional _filename _noerror)
                  (push feature requires)
-                 (when (eq feature 'nelisp-sys)
-                   (setq loaded t))
+                 (when (eq feature 'nelisp-emacs-compat)
+                   (setq loaded-ec t))
                  feature))
-              ((symbol-function 'nelisp-sys-executable-find)
+              ((symbol-function 'nelisp-ec-executable-find)
                (lambda (cmd)
-                 (format "/doc44/bin/%s" cmd))))
-      (should (equal "/doc44/bin/curl"
+                 (format "/nelisp/bin/%s" cmd))))
+      (should (equal "/nelisp/bin/curl"
                      (anvil-pkg-compat-executable-find "curl")))
-      (should (memq 'nelisp-sys requires)))))
+      (should (memq 'nelisp-emacs-compat requires))
+      (should-not (memq 'nelisp-sys requires)))))
+
+(ert-deftest anvil-pkg-compat-test-executable-find-falls-back-after-stale-fboundp ()
+  "PATH lookup tolerates declared but absent NeLisp sys helpers."
+  (let ((loaded-ec nil)
+        (requires nil)
+        (anvil-pkg-compat--nelisp-backend-require-attempted nil)
+        (anvil-pkg-compat--nelisp-emacs-compat-require-attempted nil))
+    (cl-letf (((symbol-function 'fboundp)
+               (lambda (sym)
+                 (or (memq sym '(require nelisp-sys-executable-find))
+                     (and loaded-ec (eq sym 'nelisp-ec-executable-find)))))
+              ((symbol-function 'require)
+               (lambda (feature &optional _filename _noerror)
+                 (push feature requires)
+                 (when (eq feature 'nelisp-emacs-compat)
+                   (setq loaded-ec t))
+                 feature))
+              ((symbol-function 'nelisp-ec-executable-find)
+               (lambda (cmd)
+                 (format "/nelisp/bin/%s" cmd))))
+      (should (equal "/nelisp/bin/curl"
+                     (anvil-pkg-compat-executable-find "curl")))
+      (should (memq 'nelisp-sys requires))
+      (should (memq 'nelisp-emacs-compat requires)))))
 
 (ert-deftest anvil-pkg-compat-test-executable-find-on-nelisp-uses-hook ()
   "PATH lookup delegates to the explicit NeLisp backend hook."
@@ -725,17 +750,17 @@ the test exits (no resource leak)."
       (should (plist-get resp :native-async-lower-primitive))
       (should-not (plist-get resp :native-text-http-lower-primitive)))))
 
-(ert-deftest anvil-pkg-nelisp-smoke-test-doc44-curl-lower-primitive ()
-  "Smoke accepts curl over Doc 44 NeLisp process/sys primitives."
+(ert-deftest anvil-pkg-nelisp-smoke-test-compat-curl-lower-primitive ()
+  "Smoke accepts curl over the compat PATH lookup."
   (anvil-pkg-compat-test--load-nelisp-smoke)
   (cl-letf (((symbol-function 'fboundp)
              (lambda (sym)
                (memq sym '(nelisp-call-process
                            nelisp-http-get
-                           nelisp-sys-executable-find))))
-            ((symbol-function 'nelisp-sys-executable-find)
+                           anvil-pkg-compat-executable-find))))
+            ((symbol-function 'anvil-pkg-compat-executable-find)
              (lambda (cmd)
-               (and (equal cmd "curl") "/doc44/bin/curl"))))
+               (and (equal cmd "curl") "/compat/bin/curl"))))
     (should (eq t
                 (anvil-pkg-nelisp-smoke--curl-process-lower-primitive-p)))
     (should (eq t

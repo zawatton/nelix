@@ -1009,9 +1009,17 @@ nelix_aot_locked_dry_run_check() {
   grep -Fq ':schema "nelix-lock"' "$lock" || return 1
   grep -Fq ':schema-version 2' "$lock" || return 1
   grep -Fq ":profile \"$cache_profile\"" "$lock" || return 1
-  grep -Fq ":backend 'nix" "$lock" ||
-    grep -Fq ":backend nix" "$lock" ||
-    return 1
+  # Backend is pinned transitively: the manifest digest (which covers the
+  # backend-policy form) and the system check below together determine the
+  # selected backend.  Accept whatever backend the lock records (nix,
+  # nelix-native, apt, ...) instead of hard-coding nix, so AOT lock-check
+  # works for the no-Nix native backend too.
+  lock_backend=$(
+    sed -n "s/.*:backend '\([A-Za-z][A-Za-z0-9-]*\).*/\1/p" "$lock" | head -n 1
+  )
+  case "$lock_backend" in
+    '' | nil) return 1 ;;
+  esac
   grep -Fq ":system '$cache_system" "$lock" ||
     grep -Fq ":system $cache_system" "$lock" ||
     return 1
@@ -1042,6 +1050,8 @@ nelix_run_aot_id_cache_shell_lane() {
       nelix_aot_lock_check_error "$manifest"
     cache_profile=$(awk -F '	' '$1 == "profile" { print $2; exit }' "$cache")
     cache_system=$(awk -F '	' '$1 == "system" { print $2; exit }' "$cache")
+    cache_backend=$(awk -F '	' '$1 == "backend" { print $2; exit }' "$cache")
+    [ -n "$cache_backend" ] || cache_backend=nix
     lock=${manifest}.nelix-lock
     if [ "$json" -eq 1 ]; then
       printf '{"ok":true'
@@ -1051,7 +1061,7 @@ nelix_run_aot_id_cache_shell_lane() {
       printf ',"checked-by":":nelisp-aot-cache"'
       printf ',"profile":%s' "$(nelix_quote_elisp_string "$cache_profile")"
       printf ',"system":%s' "$(nelix_quote_elisp_string "$cache_system")"
-      printf ',"backend":"nix","backend-selection":{"backend":"nix","system":%s,"fallback":":nelisp-aot-cache"}' "$(nelix_quote_elisp_string "$cache_system")"
+      printf ',"backend":%s,"backend-selection":{"backend":%s,"system":%s,"fallback":":nelisp-aot-cache"}' "$(nelix_quote_elisp_string "$cache_backend")" "$(nelix_quote_elisp_string "$cache_backend")" "$(nelix_quote_elisp_string "$cache_system")"
       printf ',"aot-cache":%s}\n' "$(nelix_quote_elisp_string "$cache")"
     else
       printf 'ok\ttrue\n'
@@ -1059,7 +1069,7 @@ nelix_run_aot_id_cache_shell_lane() {
       printf 'schema\tnelix-lock\nschema-version\t2\nversion\t2\n'
       printf 'checked-by\t:nelisp-aot-cache\n'
       printf 'profile\t%s\nsystem\t%s\n' "$cache_profile" "$cache_system"
-      printf 'backend\tnix\nfallback\t:nelisp-aot-cache\naot-cache\t%s\n' "$cache"
+      printf 'backend\t%s\nfallback\t:nelisp-aot-cache\naot-cache\t%s\n' "$cache_backend" "$cache"
     fi
     return 0
   fi
@@ -1095,7 +1105,7 @@ nelix_run_aot_id_cache_shell_lane() {
           printf "]"
         }
         function json_action_object(action, name) {
-          printf "{\"action\":%s,\"name\":%s,\"backend\":\"nix\"", j(action), j(name)
+          printf "{\"action\":%s,\"name\":%s,\"backend\":%s", j(action), j(name), j(backend_value)
           if (action == "install") {
             printf ",\"target\":%s,\"resolved-target\":%s", j(name), j(name)
             printf ",\"installed-name\":null,\"argv\":[\"profile\",\"install\",\"--profile\",%s,%s]", j(profile_path), j("nixpkgs#" name)
@@ -1170,6 +1180,8 @@ nelix_run_aot_id_cache_shell_lane() {
             profile_name = $2
           } else if ($1 == "system") {
             system_value = $2
+          } else if ($1 == "backend") {
+            backend_value = $2
           } else if ($1 == "target" && $2 != "") {
             string_target_count++
             string_target_display[string_target_count] = $2
@@ -1310,6 +1322,7 @@ nelix_run_aot_id_cache_shell_lane() {
           if (command == "apply-dry-run") {
             apply_status = "dry-run"
           }
+          if (backend_value == "") backend_value = "nix"
 
           if (json == "1") {
             if (command == "audit") {
@@ -1321,7 +1334,7 @@ nelix_run_aot_id_cache_shell_lane() {
               printf ",\"missing\":"; json_names(missing, missing_count)
               printf ",\"extra\":"; json_names(extra, extra_count)
               printf ",\"skipped\":{\"state-pins\":\"nelisp-aot\",\"lock-drift\":\"nelisp-aot\",\"linux-command-audit\":\"nelisp-aot\"}"
-              printf ",\"backend\":\"nix\",\"backend-selection\":{\"backend\":\"nix\",\"system\":%s,\"fallback\":\":nelisp-aot-cache\"}", j(system_value)
+              printf ",\"backend\":%s,\"backend-selection\":{\"backend\":%s,\"system\":%s,\"fallback\":\":nelisp-aot-cache\"}", j(backend_value), j(backend_value), j(system_value)
               printf ",\"aot-cache\":%s}\n", j(cache_file)
             } else if (command == "plan" || command == "apply-dry-run") {
               printf "{\"operation\":\"apply\",\"status\":%s,\"dry-run\":true", j(apply_status)
@@ -1355,7 +1368,7 @@ nelix_run_aot_id_cache_shell_lane() {
                 printf ",\"lock-check\":{\"ok\":true,\"checked-by\":\":nelisp-aot-cache\"}"
                 printf ",\"locked-installed\":"; json_actions("install", missing, missing_count)
               }
-              printf ",\"backend\":\"nix\",\"backend-selection\":{\"backend\":\"nix\",\"system\":%s,\"fallback\":\":nelisp-aot-cache\"}", j(system_value)
+              printf ",\"backend\":%s,\"backend-selection\":{\"backend\":%s,\"system\":%s,\"fallback\":\":nelisp-aot-cache\"}", j(backend_value), j(backend_value), j(system_value)
               printf ",\"aot-cache\":%s}\n", j(cache_file)
             } else {
               printf "{\"operation\":\"upgrade\",\"name\":\":manifest\""
@@ -1370,7 +1383,7 @@ nelix_run_aot_id_cache_shell_lane() {
               printf ",\"missing\":"; json_names(missing, missing_count)
               printf ",\"extra\":null,\"lock-drift\":null"
               printf ",\"skipped\":{\"extra-scan\":\"nelisp-aot\",\"lock-drift\":\"nelisp-aot\",\"state-pins\":\"nelisp-aot\"}"
-              printf ",\"backend\":\"nix\",\"backend-selection\":{\"backend\":\"nix\",\"system\":%s,\"fallback\":\":nelisp-aot-cache\"}", j(system_value)
+              printf ",\"backend\":%s,\"backend-selection\":{\"backend\":%s,\"system\":%s,\"fallback\":\":nelisp-aot-cache\"}", j(backend_value), j(backend_value), j(system_value)
               printf ",\"aot-cache\":%s}\n", j(cache_file)
             }
           } else if (command == "audit") {
@@ -1379,7 +1392,7 @@ nelix_run_aot_id_cache_shell_lane() {
             line_names("present", present, present_count)
             line_names("missing", missing, missing_count)
             line_names("extra", extra, extra_count)
-            printf "backend\tnix\nfallback\t:nelisp-aot-cache\naot-cache\t%s\n", cache_file
+            printf "backend\t%s\nfallback\t:nelisp-aot-cache\naot-cache\t%s\n", backend_value, cache_file
           } else if (command == "plan" || command == "apply-dry-run") {
             printf "operation\tapply\nstatus\t%s\ndry-run\ttrue\n", apply_status
             printf "manifest\t%s\nlock\t%s.nelix-lock\nlock-present\t%s\n", manifest, manifest, lock_present
@@ -1393,7 +1406,7 @@ nelix_run_aot_id_cache_shell_lane() {
             if (locked == "1") {
               printf "locked\ttrue\nlock-enforced\ttrue\nlock-check\tok\n"
             }
-            printf "backend\tnix\nfallback\t:nelisp-aot-cache\naot-cache\t%s\n", cache_file
+            printf "backend\t%s\nfallback\t:nelisp-aot-cache\naot-cache\t%s\n", backend_value, cache_file
           } else {
             printf "operation\tupgrade\nname\t:manifest\ncount\t%d\nempty\t%s\n", upgrade_count, bool(upgrade_count == 0)
             printf "manifest\t%s\nprofile\t%s\nsystem\t%s\n", manifest, profile_name, system_value
@@ -1401,7 +1414,7 @@ nelix_run_aot_id_cache_shell_lane() {
             line_names("pinned", pinned, pinned_count)
             line_names("pinned-name", pinned_names, pinned_names_count)
             line_names("missing", missing, missing_count)
-            printf "backend\tnix\nfallback\t:nelisp-aot-cache\naot-cache\t%s\n", cache_file
+            printf "backend\t%s\nfallback\t:nelisp-aot-cache\naot-cache\t%s\n", backend_value, cache_file
           }
         }
       ' "$cache" -
@@ -2217,6 +2230,21 @@ EOF
     printf '(load %s)\n' "$(nelix_quote_elisp_string "$clifile")"
     printf '(nelix-cli--direct-stats "after-cli-load")\n'
     cat <<'EOF'
+(defun nelix-cli--direct-call-process (program args)
+  (let ((stdout-file (make-temp-file "nelix-direct-stdout-"))
+        (resolved (or (anvil-pkg-compat-executable-find program) program)))
+    (unwind-protect
+        (let ((exit (apply #'nelisp-process-call-process
+                           resolved nil stdout-file nil args)))
+          (list :exit (if (numberp exit) exit -1)
+                :stdout (anvil-pkg-compat-read-file stdout-file)
+                :stderr ""))
+      (anvil-pkg-compat-delete-file-quietly stdout-file))))
+
+(when (fboundp 'nelisp-process-call-process)
+  (setq anvil-pkg-compat-nelisp-call-process-function
+        #'nelix-cli--direct-call-process))
+
 (when (and (boundp 'nelix-cli--direct-home)
            (stringp nelix-cli--direct-home)
            (> (length nelix-cli--direct-home) 0))

@@ -1177,7 +1177,10 @@
           (nelix-manifest-test--write
            dir "manifest.el"
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep fd) :pins '(ripgrep))\n")
-          (cl-letf (((symbol-function 'nelix-list)
+          (cl-letf (((symbol-function 'anvil-pkg-compat-executable-find)
+                     (lambda (program)
+                       (and (equal program "nix") "nix")))
+                    ((symbol-function 'nelix-list)
                      (lambda ()
                        (list (list :name "ripgrep"
                                    :attr-path "legacyPackages.x86_64-linux.ripgrep")
@@ -1324,7 +1327,10 @@
           (nelix-manifest-test--write
            dir "manifest.el"
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep) :pins '(jq))\n")
-          (cl-letf (((symbol-function 'nelix-list)
+          (cl-letf (((symbol-function 'anvil-pkg-compat-executable-find)
+                     (lambda (program)
+                       (and (equal program "nix") "nix")))
+                    ((symbol-function 'nelix-list)
                      (lambda ()
                        (list (list :name "ripgrep"
                                    :attr-path "legacyPackages.x86_64-linux.ripgrep")
@@ -2340,7 +2346,10 @@
           (let ((anvil-pkg--call-nix-fn
                  (lambda (_args)
                    (ert-fail "nelix-upgrade-plan must not invoke nix in this test"))))
-            (cl-letf (((symbol-function 'pkg-list)
+            (cl-letf (((symbol-function 'anvil-pkg-compat-executable-find)
+                       (lambda (program)
+                         (and (equal program "nix") "nix")))
+                      ((symbol-function 'pkg-list)
                        (lambda ()
                          (list (list :name "ripgrep"
                                      :attr-path "legacyPackages.x86_64-linux.ripgrep")

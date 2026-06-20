@@ -19,9 +19,9 @@ Depends:
 Recommends:
  ca-certificates,
  curl,
- git,
- nix-bin
+ git
 Suggests:
+ nix-bin,
  nelisp
 Description: Emacs Lisp package manager backed by the Nix store
  Nelix is a package manager configured in Emacs Lisp and backed by the

@@ -348,8 +348,20 @@ prescient-1 from collapsing to the same target."
     (dolist (target targets (nreverse rows))
       (push (nelix-fast--target-row target) rows))))
 
+(defun nelix-fast--resolve-backend (backend-policy)
+  "Return the backend symbol selected by BACKEND-POLICY for this OS.
+Deterministic: pick the first backend in the policy resolved for the
+current `system-type' so the AOT/fast lane agrees with the manifest's
+declared backend-policy (e.g. a no-Nix `nelix-native' policy) instead
+of always reporting nix.  Falls back to nix only when no policy is
+declared, preserving the historical default."
+  (or (and backend-policy
+           (car (nelix-manifest-backend-policy
+                 (list :backend-policy backend-policy))))
+      'nix))
+
 (defun nelix-fast--manifest-shape
-    (file name profile imports bootstrap-apt rows pins)
+    (file name profile imports bootstrap-apt rows pins &optional backend-policy)
   "Assemble the canonical fast manifest plist from already-compiled parts.
 
 Single source of truth for the fast manifest shape so the field-based
@@ -359,7 +371,9 @@ entry point (`nelix-fast--compile-manifest-fields', used by the DSL v1
 cannot drift apart -- e.g. a key added to one branch but not the other."
   (let ((desired-set (make-hash-table :test 'equal))
         (desired-names nil)
-        (pins-set (nelix-fast--name-set pins)))
+        (pins-set (nelix-fast--name-set pins))
+        (selected-backend (nelix-fast--resolve-backend backend-policy))
+        (current-system (nelix-current-system)))
     (dolist (row rows)
       (push (nelix-fast--row-name row) desired-names)
       (dolist (candidate (nelix-fast--row-candidates row))
@@ -371,9 +385,11 @@ cannot drift apart -- e.g. a key added to one branch but not the other."
           :name name
           :profile profile
           :imports imports
-          :backend 'nix
-          :backend-selection '(:backend nix :system x86_64-linux :fallback :nelisp-fast)
-          :system 'x86_64-linux
+          :backend selected-backend
+          :backend-selection (list :backend selected-backend
+                                   :system current-system
+                                   :fallback :nelisp-fast)
+          :system current-system
           :targets rows
           :desired-order (nreverse desired-names)
           :desired-set desired-set
@@ -382,12 +398,13 @@ cannot drift apart -- e.g. a key added to one branch but not the other."
           :bootstrap-apt bootstrap-apt)))
 
 (defun nelix-fast--compile-manifest-fields
-    (file name profile imports emacs linux debian-tools bootstrap-apt pins)
+    (file name profile imports emacs linux debian-tools bootstrap-apt pins
+          &optional backend-policy)
   "Compile manifest field values into the fast manifest shape."
   (nelix-fast--manifest-shape
    file name profile imports bootstrap-apt
    (nelix-fast--target-rows-from-fields emacs linux debian-tools)
-   pins))
+   pins backend-policy))
 
 (defun nelix-fast--compile-manifest (manifest)
   "Compile normalized MANIFEST into the fast manifest shape."
@@ -398,7 +415,8 @@ cannot drift apart -- e.g. a key added to one branch but not the other."
    (plist-get manifest :imports)
    (plist-get manifest :bootstrap-apt)
    (nelix-fast--target-rows manifest)
-   (plist-get manifest :pins)))
+   (plist-get manifest :pins)
+   (plist-get manifest :backend-policy)))
 
 (defun nelix-fast-load-manifest (manifest-file)
   "Load MANIFEST-FILE and compile it into the fast manifest shape."
@@ -1106,7 +1124,8 @@ when the manifest is a literal `nelix-environment' form."
          (plist-get compiled :linux)
          (plist-get compiled :debian-tools)
          (plist-get compiled :bootstrap-apt)
-         (plist-get compiled :pins)))
+         (plist-get compiled :pins)
+         (plist-get compiled :backend-policy)))
     (error nil)))
 
 (defun nelix-fast--json-symbol-list (values)
@@ -1285,6 +1304,8 @@ without importing the manifest in standalone NeLisp."
           chunks)
     (push (nelix-fast--aot-line "system" (plist-get fast :system))
           chunks)
+    (push (nelix-fast--aot-line "backend" (plist-get fast :backend))
+          chunks)
     (dolist (row (plist-get fast :targets))
       (push (apply #'nelix-fast--aot-line
                    "target"
@@ -1363,6 +1384,7 @@ standalone NeLisp parses less data on the hot cache path."
                     (member tag '("manifest"
                                   "profile"
                                   "system"
+                                  "backend"
                                   "name-id"
                                   "target-id"
                                   "pin-id")))
@@ -1401,7 +1423,7 @@ record-by-record in Elisp."
              "if awk -F '\\t' '$1 == \"target-id\" { found = 1 } "
              "END { exit(found ? 0 : 1) }' \"$1\"; then "
              "awk -F '\\t' 'NR == 1 || $1 == \"manifest\" || "
-             "$1 == \"profile\" || $1 == \"system\" || "
+             "$1 == \"profile\" || $1 == \"system\" || $1 == \"backend\" || "
              "$1 == \"name-id\" || $1 == \"target-id\" || "
              "$1 == \"pin-id\" { print }' \"$1\"; "
              "else cat \"$1\"; fi; "
@@ -1460,6 +1482,8 @@ When INSTALLED-NAMES is nil, read the current profile via
           chunks)
     (push (nelix-fast--aot-line "system" (plist-get fast :system))
           chunks)
+    (push (nelix-fast--aot-line "backend" (plist-get fast :backend))
+          chunks)
     (dolist (row (plist-get fast :targets))
       (push (apply #'nelix-fast--aot-line
                    "target"
@@ -1492,6 +1516,8 @@ artifact replaces this Elisp bridge.")
     (push (nelix-fast--aot-line "profile" (plist-get fast :profile))
           chunks)
     (push (nelix-fast--aot-line "system" (plist-get fast :system))
+          chunks)
+    (push (nelix-fast--aot-line "backend" (plist-get fast :backend))
           chunks)
     (dolist (row (plist-get fast :targets))
       (push (apply #'nelix-fast--aot-line
@@ -1630,38 +1656,61 @@ commands continue to use the full plist/report encoder."
 
 (defun nelix-fast--json-backend-fields (fast fallback)
   "Return compact backend JSON fields for FAST and FALLBACK."
-  (concat
-   ",\"backend\":\"nix\""
-   ",\"backend-selection\":{"
-   "\"backend\":\"nix\","
-   "\"system\":" (nelix-fast--json-nullable-string
-                  (nelix-fast--target-name (plist-get fast :system)))
-   ",\"fallback\":" (nelix-fast--json-string fallback)
-   "}"))
+  (let ((backend (nelix-fast--target-name
+                  (or (plist-get fast :backend) 'nix))))
+    (concat
+     ",\"backend\":" (nelix-fast--json-string backend)
+     ",\"backend-selection\":{"
+     "\"backend\":" (nelix-fast--json-string backend) ","
+     "\"system\":" (nelix-fast--json-nullable-string
+                    (nelix-fast--target-name (plist-get fast :system)))
+     ",\"fallback\":" (nelix-fast--json-string fallback)
+     "}")))
+
+(defun nelix-fast-aot--cache-meta-field (cache-file key)
+  "Return metadata value string for KEY in CACHE-FILE, or nil when absent."
+  (let ((prefix (concat key "\t"))
+        value)
+    (dolist (line (split-string
+                   (nelix-fast--read-file-as-string cache-file) "\n" t)
+                  value)
+      (when (and (null value) (string-prefix-p prefix line))
+        (setq value (substring line (length prefix)))))))
+
+(defun nelix-fast-aot--cache-backend (cache-file)
+  "Return the backend symbol recorded in CACHE-FILE (nix when absent)."
+  (intern (or (nelix-fast-aot--cache-meta-field cache-file "backend") "nix")))
+
+(defun nelix-fast-aot--cache-system (cache-file)
+  "Return the system symbol recorded in CACHE-FILE (x86_64-linux default)."
+  (intern (or (nelix-fast-aot--cache-meta-field cache-file "system")
+              "x86_64-linux")))
 
 (defun nelix-fast-aot-audit-from-fast (fast &optional installed-names)
   "Return a compact AOT audit report for compiled FAST manifest data."
   (nelix-fast--ensure-aot-engine)
   (let ((report (nelix-aot-audit
-                 (nelix-fast-aot-input-from-fast fast installed-names))))
+                 (nelix-fast-aot-input-from-fast fast installed-names)))
+        (backend (or (plist-get fast :backend) 'nix)))
     (append report
-            (list :backend 'nix
+            (list :backend backend
                   :backend-selection
-                  '(:backend nix
-                    :system x86_64-linux
-                    :fallback :nelisp-aot)))))
+                  (list :backend backend
+                        :system (plist-get fast :system)
+                        :fallback :nelisp-aot)))))
 
 (defun nelix-fast-aot-audit-from-cache (cache-file)
   "Return a compact AOT audit report using CACHE-FILE."
   (nelix-fast--ensure-aot-engine)
   (let ((report (nelix-aot-audit
-                 (nelix-fast-aot-input-from-target-cache cache-file))))
+                 (nelix-fast-aot-input-from-target-cache cache-file)))
+        (backend (nelix-fast-aot--cache-backend cache-file)))
     (append report
-            (list :backend 'nix
+            (list :backend backend
                   :backend-selection
-                  '(:backend nix
-                    :system x86_64-linux
-                    :fallback :nelisp-aot-cache)
+                  (list :backend backend
+                        :system (nelix-fast-aot--cache-system cache-file)
+                        :fallback :nelisp-aot-cache)
                   :aot-cache cache-file))))
 
 (defun nelix-fast-aot-audit-json-from-cache (cache-file)
@@ -1756,25 +1805,27 @@ commands continue to use the full plist/report encoder."
   "Return a compact AOT upgrade plan for compiled FAST manifest data."
   (nelix-fast--ensure-aot-engine)
   (let ((plan (nelix-aot-upgrade-plan
-               (nelix-fast-aot-input-from-fast fast installed-names))))
+               (nelix-fast-aot-input-from-fast fast installed-names)))
+        (backend (or (plist-get fast :backend) 'nix)))
     (append plan
-            (list :backend 'nix
+            (list :backend backend
                   :backend-selection
-                  '(:backend nix
-                    :system x86_64-linux
-                    :fallback :nelisp-aot)))))
+                  (list :backend backend
+                        :system (plist-get fast :system)
+                        :fallback :nelisp-aot)))))
 
 (defun nelix-fast-aot-upgrade-plan-from-cache (cache-file)
   "Return a compact AOT upgrade plan using CACHE-FILE."
   (nelix-fast--ensure-aot-engine)
   (let ((plan (nelix-aot-upgrade-plan
-               (nelix-fast-aot-input-from-target-cache cache-file))))
+               (nelix-fast-aot-input-from-target-cache cache-file)))
+        (backend (nelix-fast-aot--cache-backend cache-file)))
     (append plan
-            (list :backend 'nix
+            (list :backend backend
                   :backend-selection
-                  '(:backend nix
-                    :system x86_64-linux
-                  :fallback :nelisp-aot-cache)
+                  (list :backend backend
+                        :system (nelix-fast-aot--cache-system cache-file)
+                        :fallback :nelisp-aot-cache)
                   :aot-cache cache-file))))
 
 (defun nelix-fast-aot-upgrade-plan-json-from-cache (cache-file)
@@ -1905,7 +1956,7 @@ commands continue to use the full plist/report encoder."
           extra (nreverse extra))
     (list :ok (and (null missing) (null extra))
           :manifest (plist-get fast :file)
-          :backend 'nix
+          :backend (or (plist-get fast :backend) 'nix)
           :backend-selection (plist-get fast :backend-selection)
           :present present
           :missing missing
@@ -1979,7 +2030,7 @@ commands continue to use the full plist/report encoder."
           :pinned-names (plist-get fast :pins-order)
           :blocked nil
           :empty (null upgrade)
-          :backend 'nix
+          :backend (or (plist-get fast :backend) 'nix)
           :backend-selection (plist-get fast :backend-selection)
           :manifest (plist-get fast :file)
           :profile (plist-get fast :profile)
