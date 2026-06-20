@@ -1028,6 +1028,35 @@ nelix_aot_locked_dry_run_check() {
   nelix_aot_lock_targets_match_cache_p "$lock" "$cache" || return 1
 }
 
+nelix_aot_native_installed_names() {
+  # Emit installed package names (one per line) for native profile NAME by
+  # reading the active generation's elisp profile metadata with a narrow
+  # regexp, so the no-Nix AOT hot path needs no NeLisp runtime and no nix.
+  profile_name=$1
+  [ -n "$profile_name" ] || return 0
+  state_root=${XDG_STATE_HOME:-${HOME:-}/.local/state}
+  current="$state_root/nelix/profiles/$profile_name/current.el"
+  [ -f "$current" ] || return 0
+  gen_file=$(sed -n 's/.*:file "\([^"]*\)".*/\1/p' "$current" | head -n 1)
+  [ -n "$gen_file" ] && [ -f "$gen_file" ] || return 0
+  # Each entry is (:name "pkg" ...).  The profile's own :name appears first, so
+  # drop that line and keep the per-entry package names.
+  grep -o ':name "[^"]*"' "$gen_file" \
+    | sed 's/^:name "//; s/"$//' \
+    | tail -n +2
+}
+
+nelix_aot_emit_installed() {
+  # Emit the installed-name stream consumed by the AOT awk lanes.
+  # $1=backend $2=nix_program $3=nix_profile_dir $4=native_profile_name
+  if [ -z "$1" ] || [ "$1" = nix ]; then
+    "$2" profile list --profile "$3" \
+      | sed -n 's/\x1b\[[0-9;]*m//g; s/^Name:[[:space:]]*//p'
+  else
+    nelix_aot_native_installed_names "$4"
+  fi
+}
+
 nelix_run_aot_id_cache_shell_lane() {
   command=$1
   json=$2
@@ -1074,8 +1103,9 @@ nelix_run_aot_id_cache_shell_lane() {
     return 0
   fi
 
-  "$nix_program" profile list --profile "$profile" \
-    | sed -n 's/\x1b\[[0-9;]*m//g; s/^Name:[[:space:]]*//p' \
+  id_cache_backend=$(awk -F '\t' '$1 == "backend" { print $2; exit }' "$cache")
+  id_cache_profile=$(awk -F '\t' '$1 == "profile" { print $2; exit }' "$cache")
+  nelix_aot_emit_installed "$id_cache_backend" "$nix_program" "$profile" "$id_cache_profile" \
     | awk -F '\t' -v command="$command" -v json="$json" \
         -v locked="$locked" -v cache_file="$cache" \
         -v lock_present="$([ -f "${manifest}.nelix-lock" ] && printf true || printf false)" \
@@ -1431,6 +1461,15 @@ nelix_run_aot_apply_shell_lane() {
 
   [ "$json" -eq 1 ] || return 1
   command -v perl >/dev/null 2>&1 || return 1
+
+  # The perl apply lane executes `nix profile install nixpkgs#...`, so it only
+  # applies to the nix backend.  For a native (or any non-nix) backend recorded
+  # in the AOT cache, decline here so the caller falls through to the full
+  # NeLisp CLI, which runs the backend-correct native store apply path.
+  aot_backend=$(awk -F '\t' '$1 == "backend" { print $2; exit }' "$cache")
+  if [ -n "$aot_backend" ] && [ "$aot_backend" != nix ]; then
+    return 1
+  fi
 
   case "$command" in
     apply-real)

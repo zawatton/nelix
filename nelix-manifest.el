@@ -2563,9 +2563,14 @@ remove count."
   "Load MANIFEST-FILE and profile rows for NeLisp audit."
   (setq nelix-manifest--audit-manifest
         (nelix-manifest-load manifest-file))
-  (setq nelix-manifest--audit-backend 'nix)
+  ;; Resolve the backend/system from the manifest's backend-policy (the same
+  ;; selection `nelix lock' records) instead of hard-coding nix, so the NeLisp
+  ;; audit/apply path agrees with a no-Nix `nelix-native' manifest and does not
+  ;; raise a spurious "backend drift" against a native lock.
   (setq nelix-manifest--audit-selection
-        '(:backend nix :system x86_64-linux :fallback :nelisp))
+        (nelix-manifest-select-backend nelix-manifest--audit-manifest))
+  (setq nelix-manifest--audit-backend
+        (or (plist-get nelix-manifest--audit-selection :backend) 'nix))
   (setq nelix-manifest--audit-installed
         (nelix-list)))
 
