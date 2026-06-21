@@ -1084,7 +1084,14 @@ results never contain)."
   (if (nelix-cli--raw-json-p result)
       (cadr result)
     (if json
-      (nelix-cli--json-encode (nelix-cli--json-normalize result))
+      ;; Prefer the standalone runtime's native JSON encoder (`nelisp--json-encode',
+      ;; a builtin that mirrors `nelix-cli--json-normalize' + `--json-encode' in one
+      ;; native pass).  The interpreted path is an O(n) loop (~0.13ms/op) that
+      ;; dominates `--json' output formatting on large apply results.  Falls back to
+      ;; the interpreted encoder under Emacs.
+      (if (fboundp 'nelisp--json-encode)
+          (nelisp--json-encode result)
+        (nelix-cli--json-encode (nelix-cli--json-normalize result)))
       (cond
        ((and (listp result)
              (eq (plist-get result :status) 'ok)
