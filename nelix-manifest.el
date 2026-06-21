@@ -3459,16 +3459,28 @@ supported.  Nil, absent, and empty lists all return nil."
             (setq chunk "")))))
     (nreverse strings)))
 
+(defun nelix--read-first-form (string)
+  "Return the first Lisp form parsed from STRING.
+
+Uses the standalone runtime's native reader builtin
+`nelisp--read-all-from-string-native' (the same parser that drives load/eval)
+when available; the prelude `read-from-string' is an interpreted
+recursive-descent parser that dominates lock-file recipe replay.  Falls back
+to `read-from-string' under Emacs."
+  (if (fboundp 'nelisp--read-all-from-string-native)
+      (car (nelisp--read-all-from-string-native string))
+    (car (read-from-string string))))
+
 (defun nelix-lock--row-sexp-after (row key)
   "Read the Lisp value following \":KEY \" in lock ROW, or nil on failure.
-Reads one s-expression with `read-from-string', so a nested recipe plist
-(e.g. =:recipe-install (:type script-shim ...)=) replays faithfully on
-standalone NeLisp without parsing the whole lock as one sexp."
+Reads one s-expression so a nested recipe plist (e.g.
+=:recipe-install (:type script-shim ...)=) replays faithfully on standalone
+NeLisp without parsing the whole lock as one sexp."
   (let* ((marker (concat ":" key " "))
          (idx (nelix-lock--substring-index marker row)))
     (when idx
       (condition-case nil
-          (car (read-from-string (substring row (+ idx (length marker)))))
+          (nelix--read-first-form (substring row (+ idx (length marker))))
         (error nil)))))
 
 (defun nelix-lock--text-package-native-fields (row)
