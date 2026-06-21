@@ -3160,6 +3160,8 @@ uses the same `:allow-remove' and `:allow-remove-count' options as
 (defun nelix-manifest--digest-file (file)
   "Return sha256 digest string for FILE."
   (cond
+   ((fboundp 'nelisp--sha256)
+    (concat "sha256-" (nelisp--sha256 (anvil-pkg-compat-read-file file))))
    ((fboundp 'secure-hash)
     (concat "sha256-" (secure-hash 'sha256
                                     (anvil-pkg-compat-read-file file))))
@@ -3178,6 +3180,8 @@ uses the same `:allow-remove' and `:allow-remove-count' options as
 (defun nelix-manifest--digest-string (string)
   "Return sha256 digest string for STRING."
   (cond
+   ((fboundp 'nelisp--sha256)
+    (concat "sha256-" (nelisp--sha256 string)))
    ((fboundp 'secure-hash)
     (concat "sha256-" (secure-hash 'sha256 string)))
    ((anvil-pkg-compat-executable-find "sha256sum")
