@@ -3338,16 +3338,23 @@ runtime formatter."
    (t (format "%S" value))))
 
 (defun nelix-lock--substring-index (needle haystack &optional start)
-  "Return the first index of NEEDLE in HAYSTACK at or after START."
-  (let* ((needle-len (length needle))
-         (limit (- (length haystack) needle-len))
-         (i (or start 0))
-         found)
-    (while (and (null found) (<= i limit))
-      (if (equal needle (substring haystack i (+ i needle-len)))
-          (setq found i)
-        (setq i (1+ i))))
-    found))
+  "Return the first index of NEEDLE in HAYSTACK at or after START.
+
+Uses the standalone runtime's native `nelisp--string-search' when available;
+the fallback allocates a fresh `substring' at every position (O(n*m)), which
+dominates the interpreted lock-file text parse.  The prelude `string-search'
+is itself interpreted, so call the native builtin directly."
+  (if (fboundp 'nelisp--string-search)
+      (nelisp--string-search needle haystack (or start 0))
+    (let* ((needle-len (length needle))
+           (limit (- (length haystack) needle-len))
+           (i (or start 0))
+           found)
+      (while (and (null found) (<= i limit))
+        (if (equal needle (substring haystack i (+ i needle-len)))
+            (setq found i)
+          (setq i (1+ i))))
+      found)))
 
 (defun nelix-lock--substring-until (text start delimiters)
   "Return substring of TEXT from START until one of DELIMITERS."
