@@ -1066,6 +1066,19 @@ ALLOWED may contain `profile', `system', `generation', and `dry-run'."
         (setq ok nil)))
     ok))
 
+(defun nelix-cli--print-to-string (object)
+  "Return OBJECT serialised as an Elisp literal for non-JSON CLI output.
+
+Prefers the standalone NeLisp runtime's native printer `nelisp--repr' when
+bound: there `prin1-to-string' is an interpreted O(n) loop (~0.13ms/op) and
+dominates `apply' output formatting for large result plists.  Falls back to
+`prin1-to-string' under Emacs.  The two are identical for result data and
+differ only on `quote'/`function' reader-macro abbreviations (which apply
+results never contain)."
+  (if (fboundp 'nelisp--repr)
+      (nelisp--repr object)
+    (prin1-to-string object)))
+
 (defun nelix-cli-format-result (result json)
   "Return RESULT formatted for stdout.  Use JSON when JSON is non-nil."
   (if (nelix-cli--raw-json-p result)
@@ -1083,7 +1096,7 @@ ALLOWED may contain `profile', `system', `generation', and `dry-run'."
         (plist-get result :version))
        ((nelix-cli--string-list-p result)
         (mapconcat #'identity result "\n"))
-       (t (prin1-to-string result))))))
+       (t (nelix-cli--print-to-string result))))))
 
 (defun nelix-cli-main (&optional args)
   "Run Nelix CLI with ARGS and exit the process."
