@@ -344,11 +344,28 @@
                               (plist-get install :bin))))
     entry*))
 
+(defvar nelix-builder--profile-entries-cache nil
+  "Profile-entries cache active during a batch apply install loop.
+
+When bound to a cons cell `(PROFILE-NAME . ENTRIES)' by
+`nelix-builder-with-profile-entries-cache', each install reuses the
+in-memory ENTRIES instead of re-reading and re-parsing the growing profile
+from disk.  Under the standalone NeLisp runtime `nelix-profile-read' parses
+the profile with an interpreted `read-from-string', so re-reading it once
+per install makes an N-package apply O(N^2); the cache makes it O(N).  nil =
+disabled (always read from disk).  Updated by
+`nelix-builder--create-profile-generation' after each generation is written.
+The apply install loop enables it by dynamically binding this to a fresh
+cons cell.")
+
 (defun nelix-builder--profile-current-entries (profile-name)
   "Return current entries for PROFILE-NAME, or nil when no profile exists."
-  (condition-case nil
-      (plist-get (nelix-profile-read profile-name) :entries)
-    (error nil)))
+  (if (and (consp nelix-builder--profile-entries-cache)
+           (equal (car nelix-builder--profile-entries-cache) profile-name))
+      (cdr nelix-builder--profile-entries-cache)
+    (condition-case nil
+        (plist-get (nelix-profile-read profile-name) :entries)
+      (error nil))))
 
 (defun nelix-builder--profile-entry-key (entry)
   "Return stable replacement key for profile ENTRY."
@@ -367,10 +384,13 @@
 (defun nelix-builder--create-profile-generation
     (profile-name system entry)
   "Create PROFILE-NAME generation for SYSTEM including ENTRY."
-  (nelix-profile-create-generation
-   profile-name
-   system
-   (nelix-builder--profile-entries-with profile-name entry)))
+  (let ((entries (nelix-builder--profile-entries-with profile-name entry)))
+    ;; Keep the cache (when enabled) in sync with what we just wrote so the
+    ;; next install in the batch reads ENTRIES from memory, not from disk.
+    (when (consp nelix-builder--profile-entries-cache)
+      (setcar nelix-builder--profile-entries-cache profile-name)
+      (setcdr nelix-builder--profile-entries-cache entries))
+    (nelix-profile-create-generation profile-name system entries)))
 
 (defun nelix-builder--store-entry (recipe system source install fetch-report)
   "Return store entry plist for RECIPE."

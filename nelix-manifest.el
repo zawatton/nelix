@@ -18,6 +18,21 @@
 (require 'nelix-backend)
 (require 'nelix-registry)
 
+;; Forward declaration (the real defvar lives in nelix-builder, which the apply
+;; path requires at runtime).  Declaring it special here lets the apply install
+;; loop dynamically bind it to enable the profile-entries cache.
+(defvar nelix-builder--profile-entries-cache)
+
+(defvar nelix-manifest--lock-read-cache nil
+  "Dynamic-extent memo cell `(MANIFEST-FILE . LOCK)' for `nelix-lock-read'.
+
+`nelix-apply--nelisp' binds this to a fresh cons so the lock-check and
+locked-plan stages share one parse of the lock file; otherwise each
+re-parses it, and under the standalone NeLisp runtime that text parse is an
+interpreted O(file) pass that then runs twice per apply.  nil = disabled
+(always parse).  Safe because the lock file is immutable for the duration of
+an apply.")
+
 (defvar nelix-manifest-last nil
   "Most recently normalized manifest during `nelix-manifest-load'.")
 
@@ -2759,7 +2774,10 @@ remove count."
         locked-plan
         locked-packages
         locked-cursor
-        plan)
+        plan
+        ;; Memoise the lock parse across lock-check + locked-plan (the lock
+        ;; is immutable during an apply); avoids a second interpreted parse.
+        (nelix-manifest--lock-read-cache (cons :nelix-none nil)))
     (nelix-audit--nelisp-load-stage manifest-file)
     (nelix-audit--nelisp-report-stage)
     (nelix-manifest--nelisp-progress :apply-lock-check-begin)
@@ -2895,22 +2913,28 @@ remove count."
                       (system* (plist-get nelix-manifest--audit-selection
                                           :system)))
                   (require 'nelix-builder nil t)
-                  (dolist (action install)
-                    (let ((result
-                           (nelix-native-install-lock-package
-                            (plist-get action :lock)
-                            profile* system*
-                            (plist-get locked-plan :all-packages))))
-                      (push (list :action 'install
-                                  :name (plist-get action :name)
-                                  :backend 'nelix-native
-                                  :ok t
-                                  :result result)
-                            executed)
-                      (setq transaction
-                            (nelix-manifest--transaction-record-update
-                             manifest-file plan transaction 'running
-                             (nreverse (copy-sequence executed))))))
+                  ;; Cache profile entries across the install loop so each
+                  ;; package does not re-read/re-parse the growing profile from
+                  ;; disk (interpreted `read-from-string' under NeLisp is
+                  ;; O(N^2) across N installs; the cache makes it O(N)).
+                  (let ((nelix-builder--profile-entries-cache
+                         (cons :nelix-no-profile nil)))
+                    (dolist (action install)
+                      (let ((result
+                             (nelix-native-install-lock-package
+                              (plist-get action :lock)
+                              profile* system*
+                              (plist-get locked-plan :all-packages))))
+                        (push (list :action 'install
+                                    :name (plist-get action :name)
+                                    :backend 'nelix-native
+                                    :ok t
+                                    :result result)
+                              executed)
+                        (setq transaction
+                              (nelix-manifest--transaction-record-update
+                               manifest-file plan transaction 'running
+                               (nreverse (copy-sequence executed)))))))
                   (when remove
                     (nelix-profile-prune
                      profile*
@@ -3713,7 +3737,21 @@ This is the constructor used inside generated lock files."
 
 ;;;###autoload
 (defun nelix-lock-read (manifest-file)
-  "Read the lock file associated with MANIFEST-FILE."
+  "Read the lock file associated with MANIFEST-FILE.
+
+Memoised within an apply via `nelix-manifest--lock-read-cache' so the
+lock-check and locked-plan stages do not each re-parse the lock file."
+  (if (and (consp nelix-manifest--lock-read-cache)
+           (equal (car nelix-manifest--lock-read-cache) manifest-file))
+      (cdr nelix-manifest--lock-read-cache)
+    (let ((lock (nelix-lock-read--uncached manifest-file)))
+      (when (consp nelix-manifest--lock-read-cache)
+        (setcar nelix-manifest--lock-read-cache manifest-file)
+        (setcdr nelix-manifest--lock-read-cache lock))
+      lock)))
+
+(defun nelix-lock-read--uncached (manifest-file)
+  "Read and parse the lock file associated with MANIFEST-FILE (no memoisation)."
   (let* ((lock-file (nelix-manifest--selected-lock-file-name manifest-file))
          (nelix-lock-last nil))
     (unless (anvil-pkg-compat-file-exists-p lock-file)
