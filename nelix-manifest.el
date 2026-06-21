@@ -1768,19 +1768,43 @@ move transaction records outside the configured log root."
         'started manifest-file plan transaction nil))
       transaction)))
 
+(defvar nelix-manifest-transaction-record-running-snapshots nil
+  "When non-nil, persist a fresh record file on every intermediate update.
+
+By default only the initial `started' snapshot (from
+`nelix-manifest--transaction-record-begin') and terminal snapshots
+(`ok'/`failed'/...) are written.  The per-action `running' snapshots are
+skipped: each one re-serialises the whole — and growing — record with
+`prin1-to-string', so writing one per executed action makes a multi-package
+apply O(N^2) in `prin1' work and dominates apply latency under the
+interpreted NeLisp runtime.  The `started' record already marks an
+interrupted transaction for crash detection; set this to non-nil to restore
+per-action progress snapshots when that granularity is required.")
+
+(defun nelix-manifest--transaction-record-terminal-status-p (status)
+  "Return non-nil when STATUS is a terminal transaction status (not `running')."
+  (not (or (eq status 'running)
+           (equal status "running"))))
+
 (defun nelix-manifest--transaction-record-update
     (manifest-file plan transaction status executed &optional rollback error)
-  "Update TRANSACTION record with STATUS, EXECUTED, ROLLBACK, and ERROR."
+  "Update TRANSACTION record with STATUS, EXECUTED, ROLLBACK, and ERROR.
+
+Intermediate `running' snapshots are not persisted unless
+`nelix-manifest-transaction-record-running-snapshots' is non-nil; see that
+variable for the rationale (avoids O(N^2) `prin1' work across actions)."
   (let ((file (plist-get transaction :record-file)))
     (if (not file)
         transaction
       (setq transaction (plist-put transaction :record-status status))
       (setq transaction (plist-put transaction :record-updated-at
                                   (nelix-manifest--timestamp)))
-      (nelix-manifest--transaction-record-write
-       file
-       (nelix-manifest--transaction-record
-        status manifest-file plan transaction executed rollback error))
+      (when (or nelix-manifest-transaction-record-running-snapshots
+                (nelix-manifest--transaction-record-terminal-status-p status))
+        (nelix-manifest--transaction-record-write
+         file
+         (nelix-manifest--transaction-record
+          status manifest-file plan transaction executed rollback error)))
       transaction)))
 
 (defun nelix-transaction--nil-like-p (value)
