@@ -91,6 +91,8 @@
 (defun nelix-fetch--hash-string (string)
   "Return STRING's SHA-256 as a `sha256-<hex>' string."
   (cond
+   ((fboundp 'nelisp--sha256)
+    (concat "sha256-" (nelisp--sha256 string)))
    ((fboundp 'secure-hash)
     (concat "sha256-" (secure-hash 'sha256 string)))
    ((anvil-pkg-compat-executable-find "sha256sum")
