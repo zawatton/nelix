@@ -1700,13 +1700,28 @@ move transaction records outside the configured log root."
         (substring name 0 (- (length name) 3))
       name)))
 
+(defun nelix-manifest--print-to-string (object)
+  "Return OBJECT serialised as an Elisp literal string.
+
+Prefers the standalone NeLisp runtime's native printer `nelisp--repr' when
+available: there `prin1-to-string' is an interpreted O(n) loop (~0.13ms/op)
+that dominates apply latency when serialising multi-KB records.  Falls back
+to `prin1-to-string' under Emacs.  The two printers produce identical output
+for transaction-record data (plists of symbols/strings/numbers/nested
+plists); they differ only for `quote'/`function' reader-macro abbreviations,
+which transaction records never contain and which read back identically
+anyway."
+  (if (fboundp 'nelisp--repr)
+      (nelisp--repr object)
+    (prin1-to-string object)))
+
 (defun nelix-manifest--transaction-record-write (file record)
   "Write transaction RECORD to FILE."
   (anvil-pkg-compat-make-directory (file-name-directory file) t)
   (anvil-pkg-compat-write-file
    file
    (concat ";;; generated Nelix apply transaction record -*- lexical-binding: t; -*-\n\n"
-           (prin1-to-string record)
+           (nelix-manifest--print-to-string record)
            "\n")))
 
 (defun nelix-manifest--transaction-rollback-plan (transaction)
