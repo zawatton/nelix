@@ -3586,15 +3586,82 @@ faithfully so the NeLisp native apply path can rebuild recipes."
         (setq starts (cdr starts))))
     (nreverse rows)))
 
+(defun nelix-lock--unquote-value (value)
+  "Strip a leading `quote' wrapper from a natively read lock VALUE.
+
+Lock files emit symbol and list fields with a leading quote (see
+`nelix-manifest--format-lock-value'), so the native reader returns them as
+=(quote X)=.  Strings, integers, nil and t are returned unchanged."
+  (if (and (consp value)
+           (eq (car value) 'quote)
+           (consp (cdr value))
+           (null (cddr value)))
+      (cadr value)
+    value))
+
+(defun nelix-lock--native-plist (form)
+  "Return the lock plist carried by native-read FORM with values unquoted.
+
+FORM is the `(nelix-lock KEY VALUE ...)' s-expression; only the top-level
+field values carry quotes (nested package/file plists are emitted inside an
+already-quoted list), so unquoting the top level is sufficient."
+  (let ((rest (cdr form)) out)
+    (while (and rest (cdr rest))
+      (setq out (cons (nelix-lock--unquote-value (cadr rest))
+                      (cons (car rest) out)))
+      (setq rest (cddr rest)))
+    (nreverse out)))
+
+(defun nelix-lock-read--nelisp-native (text)
+  "Parse generated lock TEXT with the native reader.
+
+Reads the whole `(nelix-lock ...)' form in one pass via
+`nelisp--read-all-from-string-native' (the same parser that drives
+load/eval) instead of scanning the text field by field, then strips the
+per-field quote wrappers.  Returns the lock plist, or nil when no
+`nelix-lock' form is present so the caller can fall back to a text scan."
+  (when (fboundp 'nelisp--read-all-from-string-native)
+    (let ((form (catch 'nelix-lock--found
+                  (dolist (f (nelisp--read-all-from-string-native text))
+                    (when (and (consp f) (eq (car f) 'nelix-lock))
+                      (throw 'nelix-lock--found f)))
+                  nil)))
+      (and form (nelix-lock--native-plist form)))))
+
+(defun nelix-lock-read--nelisp-text-scan (text)
+  "Read generated lock TEXT by scanning fields without a full parse.
+
+Fallback used when the native reader builtin is unavailable."
+  (list :schema (nelix-lock--text-string text "schema")
+        :schema-version (nelix-lock--text-integer text "schema-version")
+        :version (nelix-lock--text-integer text "version")
+        :format (nelix-lock--text-symbol text "format")
+        :lock (nelix-lock--text-string text "lock")
+        :manifest-digest (nelix-lock--text-string text "manifest-digest")
+        :manifest-files (nelix-lock--text-manifest-files text)
+        :profile (nelix-lock--text-string text "profile")
+        :backend (nelix-lock--text-symbol text "backend")
+        :system (nelix-lock--text-symbol text "system")
+        :nix-channel (nelix-lock--text-string text "nix-channel")
+        :nix-version (nelix-lock--text-string text "nix-version")
+        :generated-at (nelix-lock--text-string text "generated-at")
+        :packages (nelix-lock--text-packages text)))
+
 (defun nelix-lock-read--nelisp-text (lock-file)
   "Read generated LOCK-FILE without evaluating it.
 
-This avoids loading the full lock S-expression in standalone NeLisp,
-where large quoted package rows are still a runtime risk."
+In standalone NeLisp the whole `(nelix-lock ...)' form is parsed once with
+the native reader (`nelix-lock-read--nelisp-native'); the field-by-field
+text scan (`nelix-lock-read--nelisp-text-scan') remains as a fallback for
+runtimes without the native reader builtin.  The package-row text scan
+formerly dominated lock-read."
   (let* ((text (anvil-pkg-compat-read-file lock-file))
-         (schema (nelix-lock--text-string text "schema"))
-         (schema-version (nelix-lock--text-integer text "schema-version"))
-         (version (nelix-lock--text-integer text "version")))
+         (lock (or (and (fboundp 'nelisp--read-all-from-string-native)
+                        (nelix-lock-read--nelisp-native text))
+                   (nelix-lock-read--nelisp-text-scan text)))
+         (schema (plist-get lock :schema))
+         (schema-version (plist-get lock :schema-version))
+         (version (plist-get lock :version)))
     (unless (and (equal schema nelix-lock-schema-name)
                  (integerp schema-version)
                  (= schema-version nelix-lock-schema-version)
@@ -3603,20 +3670,7 @@ where large quoted package rows are still a runtime risk."
       (signal 'anvil-pkg-error
               (list (format "nelix-lock-read: unsupported generated lock schema in %s"
                             lock-file))))
-    (list :schema schema
-          :schema-version schema-version
-          :version version
-          :format (nelix-lock--text-symbol text "format")
-          :lock (nelix-lock--text-string text "lock")
-          :manifest-digest (nelix-lock--text-string text "manifest-digest")
-          :manifest-files (nelix-lock--text-manifest-files text)
-          :profile (nelix-lock--text-string text "profile")
-          :backend (nelix-lock--text-symbol text "backend")
-          :system (nelix-lock--text-symbol text "system")
-          :nix-channel (nelix-lock--text-string text "nix-channel")
-          :nix-version (nelix-lock--text-string text "nix-version")
-          :generated-at (nelix-lock--text-string text "generated-at")
-          :packages (nelix-lock--text-packages text))))
+    lock))
 
 ;;;###autoload
 (defun nelix-lock (&rest plist)
