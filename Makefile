@@ -74,18 +74,24 @@ NELISP_JSON_SRC ?= $(shell \
     printf '%s\n' ../nelisp.wt-mod-expt/packages/nelisp-json/src/nelisp-json.el; } || \
   printf '')
 NELISP_TEXT_BUFFER_SRC ?= $(shell \
+  { test -f ../nelisp-emacs/packages/nelisp-emacs-buffer-core/lisp/nelisp-text-buffer.el && \
+    printf '%s\n' ../nelisp-emacs/packages/nelisp-emacs-buffer-core/lisp/nelisp-text-buffer.el; } || \
   { test -f ../nelisp/src/nelisp-text-buffer.el && \
     printf '%s\n' ../nelisp/src/nelisp-text-buffer.el; } || \
   { test -f ../nelisp.wt-mod-expt/src/nelisp-text-buffer.el && \
     printf '%s\n' ../nelisp.wt-mod-expt/src/nelisp-text-buffer.el; } || \
   printf '')
 NELISP_REGEX_SRC ?= $(shell \
+  { test -f ../nelisp-emacs/packages/nelisp-emacs-text-core/lisp/nelisp-regex.el && \
+    printf '%s\n' ../nelisp-emacs/packages/nelisp-emacs-text-core/lisp/nelisp-regex.el; } || \
   { test -f ../nelisp/packages/nelisp-regex/src/nelisp-regex.el && \
     printf '%s\n' ../nelisp/packages/nelisp-regex/src/nelisp-regex.el; } || \
   { test -f ../nelisp.wt-mod-expt/packages/nelisp-regex/src/nelisp-regex.el && \
     printf '%s\n' ../nelisp.wt-mod-expt/packages/nelisp-regex/src/nelisp-regex.el; } || \
   printf '')
 NELISP_EMACS_COMPAT_SRC ?= $(shell \
+  { test -f ../nelisp-emacs/packages/nelisp-emacs-buffer-core/lisp/nelisp-emacs-compat.el && \
+    printf '%s\n' ../nelisp-emacs/packages/nelisp-emacs-buffer-core/lisp/nelisp-emacs-compat.el; } || \
   { test -f ../nelisp/src/nelisp-emacs-compat.el && \
     printf '%s\n' ../nelisp/src/nelisp-emacs-compat.el; } || \
   { test -f ../nelisp.wt-mod-expt/src/nelisp-emacs-compat.el && \
