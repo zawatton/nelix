@@ -1,16 +1,16 @@
 EMACS ?= emacs
-SRC = anvil-pkg-compat.el anvil-pkg-state.el anvil-pkg.el anvil-pkg-dsl.el anvil-pkg-import.el anvil-pkg-emacs.el nelix.el nelix-dsl.el nelix-import.el nelix-emacs.el nelix-manifest.el nelix-fast.el nelix-store.el nelix-registry.el nelix-fetch.el nelix-builder.el nelix-backend.el nelix-substitute.el
+SRC = nelix-compat.el nelix-state.el nelix-core.el nelix-dsl.el nelix-import.el nelix-emacs.el nelix.el nelix-dsl.el nelix-import.el nelix-emacs.el nelix-manifest.el nelix-fast.el nelix-store.el nelix-registry.el nelix-fetch.el nelix-builder.el nelix-backend.el nelix-substitute.el
 PKG_METADATA = nelix-pkg.el
-TEST_SRC = test/anvil-pkg-test.el test/anvil-pkg-uninstall-test.el test/anvil-pkg-upgrade-test.el test/anvil-pkg-pin-test.el test/anvil-pkg-info-test.el test/anvil-pkg-doctor-test.el test/anvil-pkg-dsl-test.el test/anvil-pkg-buildsys-test.el test/anvil-pkg-import-test.el test/anvil-pkg-compat-test.el test/anvil-pkg-emacs-test.el test/anvil-pkg-state-test.el test/nelix-manifest-test.el test/nelix-store-test.el test/nelix-cli-test.el
-NELISP_EXEC_TEST_SRC ?= test/anvil-pkg-test.el test/anvil-pkg-uninstall-test.el test/anvil-pkg-upgrade-test.el test/anvil-pkg-pin-test.el test/anvil-pkg-info-test.el test/anvil-pkg-doctor-test.el test/anvil-pkg-dsl-test.el test/anvil-pkg-buildsys-test.el test/anvil-pkg-import-test.el
-SCRIPT_SRC = scripts/anvil-pkg-render.el scripts/anvil-pkg-nelisp-smoke.el scripts/anvil-pkg-nelisp-ert-shim.el scripts/nelix-cli.el scripts/nelix-aot-manifest-engine.el scripts/nelix-aot-native-subset.el scripts/nelix-aot-native-cli-proof.el
+TEST_SRC = test/nelix-core-test.el test/nelix-core-uninstall-test.el test/nelix-core-upgrade-test.el test/nelix-core-pin-test.el test/nelix-core-info-test.el test/nelix-core-doctor-test.el test/nelix-dsl-test.el test/nelix-core-buildsys-test.el test/nelix-import-test.el test/nelix-compat-test.el test/nelix-emacs-test.el test/nelix-state-test.el test/nelix-manifest-test.el test/nelix-store-test.el test/nelix-cli-test.el
+NELISP_EXEC_TEST_SRC ?= test/nelix-core-test.el test/nelix-core-uninstall-test.el test/nelix-core-upgrade-test.el test/nelix-core-pin-test.el test/nelix-core-info-test.el test/nelix-core-doctor-test.el test/nelix-dsl-test.el test/nelix-core-buildsys-test.el test/nelix-import-test.el
+SCRIPT_SRC = scripts/nelix-core-render.el scripts/nelix-nelisp-smoke.el scripts/nelix-nelisp-ert-shim.el scripts/nelix-cli.el scripts/nelix-aot-manifest-engine.el scripts/nelix-aot-native-subset.el scripts/nelix-aot-native-cli-proof.el
 BIN_SRC = bin/nelix
 DOC_SRC = README.org examples/README.org docs/smoke-test.org packaging/README.org
 REGISTRY_SRC = $(sort $(wildcard registry/packages/*/*.el))
 EXPECTED_ERT_TESTS ?= 469
 EXPECTED_NELISP_ERT_TESTS ?= 130
 NELISP_CACHE_DIR ?= .cache/nelisp
-NELISP_SUITE_IMAGE ?= $(NELISP_CACHE_DIR)/anvil-pkg-suite.nlri
+NELISP_SUITE_IMAGE ?= $(NELISP_CACHE_DIR)/nelix-core-suite.nlri
 NELIX_CLI_IMAGE ?= $(NELISP_CACHE_DIR)/nelix-cli.nlri
 NELISP_ERT_SELECTOR ?=
 NELISP_REPO ?= $(abspath ../nelisp)
@@ -109,7 +109,7 @@ NELISP_CL_MACROS_SRC ?= $(shell \
   { test -f ../nelisp.wt-mod-expt/lisp/nelisp-cl-macros.el && \
     printf '%s\n' ../nelisp.wt-mod-expt/lisp/nelisp-cl-macros.el; } || \
   printf '')
-NELISP_ERT_SHIM_SRC ?= scripts/anvil-pkg-nelisp-ert-shim.el
+NELISP_ERT_SHIM_SRC ?= scripts/nelix-nelisp-ert-shim.el
 NELISP_PROCESS_SRC ?= $(shell \
   { test -f ../nelisp/packages/nelisp-process/src/nelisp-process.el && \
     printf '%s\n' ../nelisp/packages/nelisp-process/src/nelisp-process.el; } || \
@@ -134,7 +134,7 @@ NIX ?= $(shell command -v nix 2>/dev/null || \
     printf '%s\n' /nix/var/nix/profiles/default/bin/nix; } || \
   printf '%s\n' nix)
 NIX_CONFIG ?= experimental-features = nix-command flakes
-SMOKE_DIR ?= /tmp/anvil-pkg-smoke
+SMOKE_DIR ?= /tmp/nelix-core-smoke
 
 # Examples whose source/cargo/vendor hashes are real (Phase 4-H).
 # Format:  <example-file>:<nix-attr>
@@ -258,7 +258,7 @@ verify-deb-contents:
 	sh -n debian/tests/load
 	! grep -Eq '^Restrictions:.*(^|[[:space:],])superficial([[:space:],]|$$)' debian/tests/control
 	grep -q 'bash /usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-cli-gate.sh' debian/tests/load
-	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/anvil-pkg.el | grep -q '"nelix/profile"'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/nelix-core.el | grep -q '"nelix/profile"'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-debian.sh'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-debian.sh | grep -Fq 'NELIX_USER_MANIFEST_LOCKED'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-installed-nelix-debian.sh | grep -Fq '1|true|yes|required)'
@@ -437,8 +437,8 @@ verify-deb-contents:
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/nelix-store.el | grep -Fq '(defun nelix-store--commit-entry-dir'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/nelix-builder.el | grep -Fq 'nelix-store--entry-temp-dir'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -q './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/nelix-aot-manifest-engine.el'
-	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -q './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/anvil-pkg-nelisp-smoke.el'
-	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -q './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/anvil-pkg-nelisp-ert-shim.el'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -q './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/nelix-nelisp-smoke.el'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -q './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/nelix-nelisp-ert-shim.el'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/registry/packages/system/ripgrep.el'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/registry/packages/system/git.el'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/registry/packages/system/curl.el'
@@ -954,15 +954,15 @@ smoke-render:
 	  name=$$(basename $$ex .el); \
 	  out=$(SMOKE_DIR)/$$name; \
 	  echo "::group::smoke-render $$ex"; \
-	  $(EMACS_BATCH) -l scripts/anvil-pkg-render.el \
-	    --eval "(anvil-pkg-render-example \"$$ex\" \"$$out\")" \
+	  $(EMACS_BATCH) -l scripts/nelix-core-render.el \
+	    --eval "(nelix-core-render-example \"$$ex\" \"$$out\")" \
 	    || exit 1; \
 	  test -s "$$out/flake.nix" || { \
 	    echo "error: $$out/flake.nix was not written"; \
 	    exit 1; \
 	  }; \
 	  grep -Fq "outputs = { self, nixpkgs }:" "$$out/flake.nix" || { \
-	    echo "error: $$out/flake.nix does not look like an anvil-pkg flake"; \
+	    echo "error: $$out/flake.nix does not look like an nelix-core flake"; \
 	    exit 1; \
 	  }; \
 	  grep -Fq "packages.x86_64-linux" "$$out/flake.nix" || { \
@@ -1003,8 +1003,8 @@ smoke-eval-pairs-check:
 	  }; \
 	  name=$$(basename $$ex .el); \
 	  out=$(SMOKE_DIR)/pair-check/eval/$$name; \
-	  $(EMACS_BATCH) -l scripts/anvil-pkg-render.el \
-	    --eval "(anvil-pkg-render-example-attr-batch \"$$ex\" \"$$attr\" \"$$out\")" \
+	  $(EMACS_BATCH) -l scripts/nelix-core-render.el \
+	    --eval "(nelix-core-render-example-attr-batch \"$$ex\" \"$$attr\" \"$$out\")" \
 	    || exit 1; \
 	done
 
@@ -1035,8 +1035,8 @@ smoke-build-pairs-check:
 	  }; \
 	  name=$$(basename $$ex .el); \
 	  out=$(SMOKE_DIR)/pair-check/build/$$name; \
-	  $(EMACS_BATCH) -l scripts/anvil-pkg-render.el \
-	    --eval "(anvil-pkg-render-example-attr-batch \"$$ex\" \"$$attr\" \"$$out\")" \
+	  $(EMACS_BATCH) -l scripts/nelix-core-render.el \
+	    --eval "(nelix-core-render-example-attr-batch \"$$ex\" \"$$attr\" \"$$out\")" \
 	    || exit 1; \
 	done
 
@@ -1053,8 +1053,8 @@ smoke-eval: smoke-eval-pairs-check
 	  name=$$(basename $$ex .el); \
 	  out=$(SMOKE_DIR)/$$name; \
 	  echo "::group::smoke-eval $$ex"; \
-	  $(EMACS_BATCH) -l scripts/anvil-pkg-render.el \
-	    --eval "(anvil-pkg-render-example \"$$ex\" \"$$out\")" \
+	  $(EMACS_BATCH) -l scripts/nelix-core-render.el \
+	    --eval "(nelix-core-render-example \"$$ex\" \"$$out\")" \
 	    || exit 1; \
 	  NIX_CONFIG="$(NIX_CONFIG)" $(NIX) flake check --no-build "path:$$out" || exit 1; \
 	  echo "::endgroup::"; \
@@ -1073,8 +1073,8 @@ smoke-build: smoke-build-pairs-check
 	  name=$$(basename $$ex .el); \
 	  out=$(SMOKE_DIR)/$$name; \
 	  echo "::group::smoke-build $$ex#$$attr"; \
-	  $(EMACS_BATCH) -l scripts/anvil-pkg-render.el \
-	    --eval "(anvil-pkg-render-example \"$$ex\" \"$$out\")" \
+	  $(EMACS_BATCH) -l scripts/nelix-core-render.el \
+	    --eval "(nelix-core-render-example \"$$ex\" \"$$out\")" \
 	    || exit 1; \
 	  NIX_CONFIG="$(NIX_CONFIG)" $(NIX) build "path:$$out#$$attr" --no-link --print-out-paths || exit 1; \
 	  echo "::endgroup::"; \
@@ -1096,7 +1096,7 @@ smoke-nelisp:
 	  echo "error: $(NELISP) not found (set NELISP=/path/to/nelisp)"; \
 	  exit 1; \
 	}
-	@out=$$("$(NELISP)" --eval '(progn (setq anvil-pkg-nelisp-smoke-json-source "$(NELISP_JSON_SRC)") (setq anvil-pkg-nelisp-smoke-text-buffer-source "$(NELISP_TEXT_BUFFER_SRC)") (setq anvil-pkg-nelisp-smoke-regex-source "$(NELISP_REGEX_SRC)") (setq anvil-pkg-nelisp-smoke-emacs-compat-source "$(NELISP_EMACS_COMPAT_SRC)") (load "scripts/anvil-pkg-nelisp-smoke.el") (load "anvil-pkg-compat.el") (list :smoke-ok (and (fboundp (quote anvil-pkg-compat-runtime)) (memq (anvil-pkg-compat-runtime) (quote (emacs nelisp))) (equal (anvil-pkg-compat-string-trim " ok ") "ok") (equal (anvil-pkg-compat-string-trim nil) "") (fboundp (quote anvil-pkg-compat-json-parse)) (fboundp (quote anvil-pkg-compat-json-serialize)) (anvil-pkg-nelisp-smoke--json-backend-ok-p) (anvil-pkg-nelisp-smoke--buffer-backend-ok-p) (anvil-pkg-nelisp-smoke--unsupported-branches-ok-p) (anvil-pkg-nelisp-smoke--explicit-hooks-ok-p))))'); \
+	@out=$$("$(NELISP)" --eval '(progn (setq nelix-nelisp-smoke-json-source "$(NELISP_JSON_SRC)") (setq nelix-nelisp-smoke-text-buffer-source "$(NELISP_TEXT_BUFFER_SRC)") (setq nelix-nelisp-smoke-regex-source "$(NELISP_REGEX_SRC)") (setq nelix-nelisp-smoke-emacs-compat-source "$(NELISP_EMACS_COMPAT_SRC)") (load "scripts/nelix-nelisp-smoke.el") (load "nelix-compat.el") (list :smoke-ok (and (fboundp (quote nelix-compat-runtime)) (memq (nelix-compat-runtime) (quote (emacs nelisp))) (equal (nelix-compat-string-trim " ok ") "ok") (equal (nelix-compat-string-trim nil) "") (fboundp (quote nelix-compat-json-parse)) (fboundp (quote nelix-compat-json-serialize)) (nelix-nelisp-smoke--json-backend-ok-p) (nelix-nelisp-smoke--buffer-backend-ok-p) (nelix-nelisp-smoke--unsupported-branches-ok-p) (nelix-nelisp-smoke--explicit-hooks-ok-p))))'); \
 	  printf '%s\n' "$$out"; \
 	  printf '%s\n' "$$out" | grep -q ":smoke-ok t" || { \
 	    echo "error: smoke-nelisp did not report :smoke-ok t"; \
@@ -1109,7 +1109,7 @@ smoke-nelix-nelisp:
 	  echo "error: $(NELISP) not found (set NELISP=/path/to/nelisp)"; \
 	  exit 1; \
 	}
-	@out=$$("$(NELISP)" --eval '(progn (setq anvil-pkg-nelisp-smoke-stdlib-eval-special-source "$(NELISP_STDLIB_EVAL_SPECIAL_SRC)") (setq anvil-pkg-nelisp-smoke-cl-macros-source "$(NELISP_CL_MACROS_SRC)") (setq anvil-pkg-nelisp-smoke-json-source "$(NELISP_JSON_SRC)") (setq anvil-pkg-nelisp-smoke-ert-shim-source "$(NELISP_ERT_SHIM_SRC)") (setq anvil-pkg-nelisp-smoke-actor-source "$(NELISP_ACTOR_SRC)") (setq anvil-pkg-nelisp-smoke-process-source "$(NELISP_PROCESS_SRC)") (load "scripts/anvil-pkg-nelisp-smoke.el") (anvil-pkg-nelisp-smoke-public-entrypoints))'); \
+	@out=$$("$(NELISP)" --eval '(progn (setq nelix-nelisp-smoke-stdlib-eval-special-source "$(NELISP_STDLIB_EVAL_SPECIAL_SRC)") (setq nelix-nelisp-smoke-cl-macros-source "$(NELISP_CL_MACROS_SRC)") (setq nelix-nelisp-smoke-json-source "$(NELISP_JSON_SRC)") (setq nelix-nelisp-smoke-ert-shim-source "$(NELISP_ERT_SHIM_SRC)") (setq nelix-nelisp-smoke-actor-source "$(NELISP_ACTOR_SRC)") (setq nelix-nelisp-smoke-process-source "$(NELISP_PROCESS_SRC)") (load "scripts/nelix-nelisp-smoke.el") (nelix-nelisp-smoke-public-entrypoints))'); \
 	  printf '%s\n' "$$out"; \
 	  printf '%s\n' "$$out" | grep -q ":nelix-load t" || { \
 	    echo "error: smoke-nelix-nelisp could not load Nelix public entry points"; \
@@ -1651,16 +1651,16 @@ $(NELIX_CLI_IMAGE): $(SRC) $(SCRIPT_SRC) $(BIN_SRC)
 	}
 	@mkdir -p "$(dir $(NELIX_CLI_IMAGE))"
 	@"$(NELISP)" dump-runtime-image "$(NELIX_CLI_IMAGE)" \
-	  '(setq anvil-pkg-nelisp-smoke-stdlib-eval-special-source "$(NELISP_STDLIB_EVAL_SPECIAL_SRC)")' \
-	  '(setq anvil-pkg-nelisp-smoke-cl-macros-source "$(NELISP_CL_MACROS_SRC)")' \
-	  '(setq anvil-pkg-nelisp-smoke-json-source "$(NELISP_JSON_SRC)")' \
-	  '(setq anvil-pkg-nelisp-smoke-ert-shim-source "$(NELISP_ERT_SHIM_SRC)")' \
-	  '(setq anvil-pkg-nelisp-smoke-actor-source "$(NELISP_ACTOR_SRC)")' \
-	  '(setq anvil-pkg-nelisp-smoke-process-source "$(NELISP_PROCESS_SRC)")' \
-	  '(setq anvil-pkg-nelisp-smoke-network-source "$(NELISP_NETWORK_SRC)")' \
-	  '(setq anvil-pkg-nelisp-smoke-http-source "$(NELISP_HTTP_SRC)")' \
-	  '(load "scripts/anvil-pkg-nelisp-smoke.el")' \
-	  '(anvil-pkg-nelisp-smoke-preload-suite-runtime)' \
+	  '(setq nelix-nelisp-smoke-stdlib-eval-special-source "$(NELISP_STDLIB_EVAL_SPECIAL_SRC)")' \
+	  '(setq nelix-nelisp-smoke-cl-macros-source "$(NELISP_CL_MACROS_SRC)")' \
+	  '(setq nelix-nelisp-smoke-json-source "$(NELISP_JSON_SRC)")' \
+	  '(setq nelix-nelisp-smoke-ert-shim-source "$(NELISP_ERT_SHIM_SRC)")' \
+	  '(setq nelix-nelisp-smoke-actor-source "$(NELISP_ACTOR_SRC)")' \
+	  '(setq nelix-nelisp-smoke-process-source "$(NELISP_PROCESS_SRC)")' \
+	  '(setq nelix-nelisp-smoke-network-source "$(NELISP_NETWORK_SRC)")' \
+	  '(setq nelix-nelisp-smoke-http-source "$(NELISP_HTTP_SRC)")' \
+	  '(load "scripts/nelix-nelisp-smoke.el")' \
+	  '(nelix-nelisp-smoke-preload-suite-runtime)' \
 	  '(load "scripts/nelix-cli.el")' >/dev/null
 
 smoke-nelix-cli-image-build: $(NELIX_CLI_IMAGE)
@@ -1684,15 +1684,15 @@ smoke-nelisp-capabilities:
 	  echo "error: $(NELISP) not found (set NELISP=/path/to/nelisp)"; \
 	  exit 1; \
 	}
-	@out=$$("$(NELISP)" --eval '(progn (setq anvil-pkg-nelisp-smoke-json-source "$(NELISP_JSON_SRC)") (setq anvil-pkg-nelisp-smoke-text-buffer-source "$(NELISP_TEXT_BUFFER_SRC)") (setq anvil-pkg-nelisp-smoke-regex-source "$(NELISP_REGEX_SRC)") (setq anvil-pkg-nelisp-smoke-emacs-compat-source "$(NELISP_EMACS_COMPAT_SRC)") (setq anvil-pkg-nelisp-smoke-stdlib-eval-special-source "$(NELISP_STDLIB_EVAL_SPECIAL_SRC)") (setq anvil-pkg-nelisp-smoke-cl-macros-source "$(NELISP_CL_MACROS_SRC)") (setq anvil-pkg-nelisp-smoke-ert-shim-source "$(NELISP_ERT_SHIM_SRC)") (setq anvil-pkg-nelisp-smoke-actor-source "$(NELISP_ACTOR_SRC)") (setq anvil-pkg-nelisp-smoke-process-source "$(NELISP_PROCESS_SRC)") (setq anvil-pkg-nelisp-smoke-network-source "$(NELISP_NETWORK_SRC)") (setq anvil-pkg-nelisp-smoke-http-source "$(NELISP_HTTP_SRC)") (load "scripts/anvil-pkg-nelisp-smoke.el") (anvil-pkg-nelisp-smoke-capabilities))'); \
+	@out=$$("$(NELISP)" --eval '(progn (setq nelix-nelisp-smoke-json-source "$(NELISP_JSON_SRC)") (setq nelix-nelisp-smoke-text-buffer-source "$(NELISP_TEXT_BUFFER_SRC)") (setq nelix-nelisp-smoke-regex-source "$(NELISP_REGEX_SRC)") (setq nelix-nelisp-smoke-emacs-compat-source "$(NELISP_EMACS_COMPAT_SRC)") (setq nelix-nelisp-smoke-stdlib-eval-special-source "$(NELISP_STDLIB_EVAL_SPECIAL_SRC)") (setq nelix-nelisp-smoke-cl-macros-source "$(NELISP_CL_MACROS_SRC)") (setq nelix-nelisp-smoke-ert-shim-source "$(NELISP_ERT_SHIM_SRC)") (setq nelix-nelisp-smoke-actor-source "$(NELISP_ACTOR_SRC)") (setq nelix-nelisp-smoke-process-source "$(NELISP_PROCESS_SRC)") (setq nelix-nelisp-smoke-network-source "$(NELISP_NETWORK_SRC)") (setq nelix-nelisp-smoke-http-source "$(NELISP_HTTP_SRC)") (load "scripts/nelix-nelisp-smoke.el") (nelix-nelisp-smoke-capabilities))'); \
 	  printf '%s\n' "$$out"; \
 	  printf '%s\n' "$$out" | grep -q ":native-gap-accounted t" || { \
 	    echo "error: smoke-nelisp-capabilities did not account for native backend gaps"; \
 	    exit 1; \
 	  }
-	@marker=$$(mktemp /tmp/anvil-pkg-nelisp-call-process.XXXXXX); \
+	@marker=$$(mktemp /tmp/nelix-nelisp-call-process.XXXXXX); \
 	  rm -f "$$marker"; \
-	  "$(NELISP)" --eval '(progn (setq anvil-pkg-nelisp-smoke-stdlib-eval-special-source "$(NELISP_STDLIB_EVAL_SPECIAL_SRC)") (setq anvil-pkg-nelisp-smoke-actor-source "$(NELISP_ACTOR_SRC)") (setq anvil-pkg-nelisp-smoke-process-source "$(NELISP_PROCESS_SRC)") (load "scripts/anvil-pkg-nelisp-smoke.el") (anvil-pkg-nelisp-smoke--load-native-prereqs) (anvil-pkg-nelisp-smoke--load-optional anvil-pkg-nelisp-smoke-process-source) (when (fboundp (quote nelisp-call-process)) (nelisp-call-process "/bin/sh" nil nil nil "-c" "printf ok > '"$$marker"'"))) ' >/dev/null 2>&1 || true; \
+	  "$(NELISP)" --eval '(progn (setq nelix-nelisp-smoke-stdlib-eval-special-source "$(NELISP_STDLIB_EVAL_SPECIAL_SRC)") (setq nelix-nelisp-smoke-actor-source "$(NELISP_ACTOR_SRC)") (setq nelix-nelisp-smoke-process-source "$(NELISP_PROCESS_SRC)") (load "scripts/nelix-nelisp-smoke.el") (nelix-nelisp-smoke--load-native-prereqs) (nelix-nelisp-smoke--load-optional nelix-nelisp-smoke-process-source) (when (fboundp (quote nelisp-call-process)) (nelisp-call-process "/bin/sh" nil nil nil "-c" "printf ok > '"$$marker"'"))) ' >/dev/null 2>&1 || true; \
 	  if test -s "$$marker"; then \
 	    echo ":nelisp-call-process-executes t"; \
 	  else \
@@ -1705,7 +1705,7 @@ smoke-nelisp-suite-readiness:
 	  echo "error: $(NELISP) not found (set NELISP=/path/to/nelisp)"; \
 	  exit 1; \
 	}
-	@out=$$("$(NELISP)" --eval '(progn (setq anvil-pkg-nelisp-smoke-stdlib-eval-special-source "$(NELISP_STDLIB_EVAL_SPECIAL_SRC)") (setq anvil-pkg-nelisp-smoke-cl-macros-source "$(NELISP_CL_MACROS_SRC)") (setq anvil-pkg-nelisp-smoke-json-source "$(NELISP_JSON_SRC)") (setq anvil-pkg-nelisp-smoke-ert-shim-source "$(NELISP_ERT_SHIM_SRC)") (setq anvil-pkg-nelisp-smoke-actor-source "$(NELISP_ACTOR_SRC)") (setq anvil-pkg-nelisp-smoke-process-source "$(NELISP_PROCESS_SRC)") (setq anvil-pkg-nelisp-smoke-network-source "$(NELISP_NETWORK_SRC)") (setq anvil-pkg-nelisp-smoke-http-source "$(NELISP_HTTP_SRC)") (load "scripts/anvil-pkg-nelisp-smoke.el") (prin1 (anvil-pkg-nelisp-smoke-suite-readiness)))'); \
+	@out=$$("$(NELISP)" --eval '(progn (setq nelix-nelisp-smoke-stdlib-eval-special-source "$(NELISP_STDLIB_EVAL_SPECIAL_SRC)") (setq nelix-nelisp-smoke-cl-macros-source "$(NELISP_CL_MACROS_SRC)") (setq nelix-nelisp-smoke-json-source "$(NELISP_JSON_SRC)") (setq nelix-nelisp-smoke-ert-shim-source "$(NELISP_ERT_SHIM_SRC)") (setq nelix-nelisp-smoke-actor-source "$(NELISP_ACTOR_SRC)") (setq nelix-nelisp-smoke-process-source "$(NELISP_PROCESS_SRC)") (setq nelix-nelisp-smoke-network-source "$(NELISP_NETWORK_SRC)") (setq nelix-nelisp-smoke-http-source "$(NELISP_HTTP_SRC)") (load "scripts/nelix-nelisp-smoke.el") (prin1 (nelix-nelisp-smoke-suite-readiness)))'); \
 	  printf '%s\n' "$$out"; \
 	  printf '%s\n' "$$out" | grep -q ":readiness-audit-ok t" || { \
 	    echo "error: smoke-nelisp-suite-readiness did not produce an actionable readiness audit"; \
@@ -1720,8 +1720,8 @@ smoke-nelisp-suite-loadability:
 	@total=0; \
 	for file in $(TEST_SRC); do \
 	  echo "::group::smoke-nelisp-suite-loadability $$file"; \
-	  result=$$(mktemp /tmp/anvil-pkg-nelisp-loadability.XXXXXX); \
-	  "$(NELISP)" --eval '(progn (setq anvil-pkg-nelisp-smoke-stdlib-eval-special-source "$(NELISP_STDLIB_EVAL_SPECIAL_SRC)") (setq anvil-pkg-nelisp-smoke-cl-macros-source "$(NELISP_CL_MACROS_SRC)") (setq anvil-pkg-nelisp-smoke-json-source "$(NELISP_JSON_SRC)") (setq anvil-pkg-nelisp-smoke-ert-shim-source "$(NELISP_ERT_SHIM_SRC)") (load "scripts/anvil-pkg-nelisp-smoke.el") (setq anvil-pkg-nelisp-smoke-suite-test-files (list "'"$$file"'")) (write-region (format "%S" (anvil-pkg-nelisp-smoke-suite-loadability)) nil "'"$$result"'") 0)' >/dev/null; \
+	  result=$$(mktemp /tmp/nelix-nelisp-loadability.XXXXXX); \
+	  "$(NELISP)" --eval '(progn (setq nelix-nelisp-smoke-stdlib-eval-special-source "$(NELISP_STDLIB_EVAL_SPECIAL_SRC)") (setq nelix-nelisp-smoke-cl-macros-source "$(NELISP_CL_MACROS_SRC)") (setq nelix-nelisp-smoke-json-source "$(NELISP_JSON_SRC)") (setq nelix-nelisp-smoke-ert-shim-source "$(NELISP_ERT_SHIM_SRC)") (load "scripts/nelix-nelisp-smoke.el") (setq nelix-nelisp-smoke-suite-test-files (list "'"$$file"'")) (write-region (format "%S" (nelix-nelisp-smoke-suite-loadability)) nil "'"$$result"'") 0)' >/dev/null; \
 	  out=$$(cat "$$result"); \
 	  rm -f "$$result"; \
 	  printf '%s\n' "$$out"; \
@@ -1755,8 +1755,8 @@ smoke-nelisp-suite:
 	@total=0; \
 	for file in $(NELISP_EXEC_TEST_SRC); do \
 	  echo "::group::smoke-nelisp-suite $$file"; \
-	  result=$$(mktemp /tmp/anvil-pkg-nelisp-suite.XXXXXX); \
-	  "$(NELISP)" --eval '(progn (setq anvil-pkg-nelisp-smoke-stdlib-eval-special-source "$(NELISP_STDLIB_EVAL_SPECIAL_SRC)") (setq anvil-pkg-nelisp-smoke-cl-macros-source "$(NELISP_CL_MACROS_SRC)") (setq anvil-pkg-nelisp-smoke-json-source "$(NELISP_JSON_SRC)") (setq anvil-pkg-nelisp-smoke-ert-shim-source "$(NELISP_ERT_SHIM_SRC)") (setq anvil-pkg-nelisp-smoke-actor-source "$(NELISP_ACTOR_SRC)") (setq anvil-pkg-nelisp-smoke-process-source "$(NELISP_PROCESS_SRC)") (setq anvil-pkg-nelisp-smoke-network-source "$(NELISP_NETWORK_SRC)") (setq anvil-pkg-nelisp-smoke-http-source "$(NELISP_HTTP_SRC)") (load "scripts/anvil-pkg-nelisp-smoke.el") (setq anvil-pkg-nelisp-smoke-suite-test-files (list "'"$$file"'")) (write-region (format "%S" (anvil-pkg-nelisp-smoke-run-suite)) nil "'"$$result"'") 0)' >/dev/null; \
+	  result=$$(mktemp /tmp/nelix-nelisp-suite.XXXXXX); \
+	  "$(NELISP)" --eval '(progn (setq nelix-nelisp-smoke-stdlib-eval-special-source "$(NELISP_STDLIB_EVAL_SPECIAL_SRC)") (setq nelix-nelisp-smoke-cl-macros-source "$(NELISP_CL_MACROS_SRC)") (setq nelix-nelisp-smoke-json-source "$(NELISP_JSON_SRC)") (setq nelix-nelisp-smoke-ert-shim-source "$(NELISP_ERT_SHIM_SRC)") (setq nelix-nelisp-smoke-actor-source "$(NELISP_ACTOR_SRC)") (setq nelix-nelisp-smoke-process-source "$(NELISP_PROCESS_SRC)") (setq nelix-nelisp-smoke-network-source "$(NELISP_NETWORK_SRC)") (setq nelix-nelisp-smoke-http-source "$(NELISP_HTTP_SRC)") (load "scripts/nelix-nelisp-smoke.el") (setq nelix-nelisp-smoke-suite-test-files (list "'"$$file"'")) (write-region (format "%S" (nelix-nelisp-smoke-run-suite)) nil "'"$$result"'") 0)' >/dev/null; \
 	  out=$$(cat "$$result"); \
 	  rm -f "$$result"; \
 	  printf '%s\n' "$$out"; \
@@ -1794,16 +1794,16 @@ $(NELISP_SUITE_IMAGE): $(SRC) $(SCRIPT_SRC)
 	@mkdir -p "$(NELISP_CACHE_DIR)"
 	@printf '%s\n' \
 	  ';;; nelisp-runtime-image source-v1' \
-	  '(setq anvil-pkg-nelisp-smoke-stdlib-eval-special-source "$(NELISP_STDLIB_EVAL_SPECIAL_SRC)")' \
-	  '(setq anvil-pkg-nelisp-smoke-cl-macros-source "$(NELISP_CL_MACROS_SRC)")' \
-	  '(setq anvil-pkg-nelisp-smoke-json-source "$(NELISP_JSON_SRC)")' \
-	  '(setq anvil-pkg-nelisp-smoke-ert-shim-source "$(NELISP_ERT_SHIM_SRC)")' \
-	  '(setq anvil-pkg-nelisp-smoke-actor-source "$(NELISP_ACTOR_SRC)")' \
-	  '(setq anvil-pkg-nelisp-smoke-process-source "$(NELISP_PROCESS_SRC)")' \
-	  '(setq anvil-pkg-nelisp-smoke-network-source "$(NELISP_NETWORK_SRC)")' \
-	  '(setq anvil-pkg-nelisp-smoke-http-source "$(NELISP_HTTP_SRC)")' \
-	  '(load "scripts/anvil-pkg-nelisp-smoke.el")' \
-	  '(anvil-pkg-nelisp-smoke-preload-suite-runtime)' \
+	  '(setq nelix-nelisp-smoke-stdlib-eval-special-source "$(NELISP_STDLIB_EVAL_SPECIAL_SRC)")' \
+	  '(setq nelix-nelisp-smoke-cl-macros-source "$(NELISP_CL_MACROS_SRC)")' \
+	  '(setq nelix-nelisp-smoke-json-source "$(NELISP_JSON_SRC)")' \
+	  '(setq nelix-nelisp-smoke-ert-shim-source "$(NELISP_ERT_SHIM_SRC)")' \
+	  '(setq nelix-nelisp-smoke-actor-source "$(NELISP_ACTOR_SRC)")' \
+	  '(setq nelix-nelisp-smoke-process-source "$(NELISP_PROCESS_SRC)")' \
+	  '(setq nelix-nelisp-smoke-network-source "$(NELISP_NETWORK_SRC)")' \
+	  '(setq nelix-nelisp-smoke-http-source "$(NELISP_HTTP_SRC)")' \
+	  '(load "scripts/nelix-nelisp-smoke.el")' \
+	  '(nelix-nelisp-smoke-preload-suite-runtime)' \
 	  >"$@"
 
 smoke-nelisp-suite-image-build: $(NELISP_SUITE_IMAGE)
@@ -1813,9 +1813,9 @@ smoke-nelisp-suite-image: $(NELISP_SUITE_IMAGE)
 	@total=0; \
 	for file in $(NELISP_EXEC_TEST_SRC); do \
 	  echo "::group::smoke-nelisp-suite-image $$file"; \
-	  result=$$(mktemp /tmp/anvil-pkg-nelisp-suite-image.XXXXXX); \
-	  progress=$$(mktemp /tmp/anvil-pkg-nelisp-suite-image-progress.XXXXXX); \
-	  "$(NELISP)" --eval '(progn (load "$(NELISP_SUITE_IMAGE)") (setq anvil-pkg-nelisp-smoke-progress-file "'"$$progress"'") (setq anvil-pkg-nelisp-smoke-ert-selector (let ((s "$(NELISP_ERT_SELECTOR)")) (if (equal s "") nil s))) (setq anvil-pkg-nelisp-smoke-suite-test-files (list "'"$$file"'")) (nelisp-process-call-process "/usr/bin/printf" nil "'"$$result"'" nil "%s" (format "%S" (anvil-pkg-nelisp-smoke-run-suite))))' >/dev/null; \
+	  result=$$(mktemp /tmp/nelix-nelisp-suite-image.XXXXXX); \
+	  progress=$$(mktemp /tmp/nelix-nelisp-suite-image-progress.XXXXXX); \
+	  "$(NELISP)" --eval '(progn (load "$(NELISP_SUITE_IMAGE)") (setq nelix-nelisp-smoke-progress-file "'"$$progress"'") (setq nelix-nelisp-smoke-ert-selector (let ((s "$(NELISP_ERT_SELECTOR)")) (if (equal s "") nil s))) (setq nelix-nelisp-smoke-suite-test-files (list "'"$$file"'")) (nelisp-process-call-process "/usr/bin/printf" nil "'"$$result"'" nil "%s" (format "%S" (nelix-nelisp-smoke-run-suite))))' >/dev/null; \
 	  out=$$(cat "$$result"); \
 	  if test ! -s "$$result"; then \
 	    echo "error: standalone NeLisp image suite produced no result for $$file"; \

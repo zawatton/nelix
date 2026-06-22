@@ -12,8 +12,8 @@
 
 ;;; Code:
 
-(require 'anvil-pkg)
-(require 'anvil-pkg-compat)
+(require 'nelix-core)
+(require 'nelix-compat)
 (require 'nelix-manifest)
 
 (declare-function nelix-aot-audit "nelix-aot-manifest-engine" (input-text))
@@ -100,7 +100,7 @@
                (fboundp 'nelix-aot-upgrade-plan)
                (fboundp 'nelix-aot-audit-json)
                (fboundp 'nelix-aot-upgrade-plan-json))
-    (signal 'anvil-pkg-error
+    (signal 'nelix-error
             (list "NELIX_NELISP_AOT=1 requested, but nelix-aot-manifest-engine is not loadable"))))
 
 (defun nelix-fast--target-cache ()
@@ -247,18 +247,18 @@ In real standalone NeLisp this asks the Nix subprocess to reduce
 standalone predicate, fall back to `nelix-list' so fixtures stay pure."
   (if (boundp 'emacs-version)
       (mapcar (lambda (row) (plist-get row :name)) (nelix-list))
-    (let* ((profile (expand-file-name (or profile-dir anvil-pkg-profile-dir)))
+    (let* ((profile (expand-file-name (or profile-dir nelix-core-profile-dir)))
            (script
             "\"$1\" profile list --profile \"$2\" | sed -n 's/\\x1b\\[[0-9;]*m//g; s/^Name:[[:space:]]*//p'")
-           (res (anvil-pkg-compat-call-process
+           (res (nelix-compat-call-process
                  "sh"
                  (list "-c" script "nelix-fast-profile-list"
-                       anvil-pkg-nix-program profile))))
+                       nelix-core-nix-program profile))))
       (unless (eq 0 (plist-get res :exit))
-        (signal 'anvil-pkg-nix-failed
+        (signal 'nelix-nix-failed
                 (list (format "nix profile list failed (exit %s): %s"
                               (plist-get res :exit)
-                              (anvil-pkg-compat-string-trim
+                              (nelix-compat-string-trim
                                (or (plist-get res :stderr) "")))
                       :stderr (plist-get res :stderr))))
       (nelix-fast--parse-name-lines (plist-get res :stdout)))))
@@ -308,7 +308,7 @@ prescient-1 from collapsing to the same target."
   (let ((field (nelix-fast--target-name value)))
     (when (or (string-match-p "\n" field)
               (string-match-p "\t" field))
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-fast AOT field contains tab/newline: %S"
                             field))))
     field))
@@ -420,8 +420,8 @@ cannot drift apart -- e.g. a key added to one branch but not the other."
 
 (defun nelix-fast-load-manifest (manifest-file)
   "Load MANIFEST-FILE and compile it into the fast manifest shape."
-  (or (and (fboundp 'anvil-pkg-compat--standalone-nelisp-p)
-           (anvil-pkg-compat--standalone-nelisp-p)
+  (or (and (fboundp 'nelix-compat--standalone-nelisp-p)
+           (nelix-compat--standalone-nelisp-p)
            (nelix-fast--environment-manifest-load manifest-file))
       (let* ((manifest (nelix-manifest-load manifest-file)))
         (nelix-fast--compile-manifest manifest))))
@@ -433,8 +433,8 @@ cannot drift apart -- e.g. a key added to one branch but not the other."
 (defun nelix-fast--read-file-as-string (path)
   "Return PATH contents as a string."
   (cond
-   ((and (fboundp 'anvil-pkg-compat--standalone-nelisp-p)
-         (anvil-pkg-compat--standalone-nelisp-p)
+   ((and (fboundp 'nelix-compat--standalone-nelisp-p)
+         (nelix-compat--standalone-nelisp-p)
          (fboundp 'rdf))
     (or (rdf path) ""))
    ((fboundp 'nelisp-core-read-file-as-string)
@@ -443,10 +443,10 @@ cannot drift apart -- e.g. a key added to one branch but not the other."
     (with-temp-buffer
       (insert-file-contents path)
       (buffer-string)))
-   ((fboundp 'anvil-pkg-compat-read-file)
-    (anvil-pkg-compat-read-file path))
+   ((fboundp 'nelix-compat-read-file)
+    (nelix-compat-read-file path))
    (t
-    (signal 'anvil-pkg-error
+    (signal 'nelix-error
             (list (format "nelix-fast: no file reader for %s" path))))))
 
 (defun nelix-fast--read-forms (path)
@@ -466,7 +466,7 @@ cannot drift apart -- e.g. a key added to one branch but not the other."
               (setq pos next))))
       (end-of-file nil)
       (error
-       (signal 'anvil-pkg-error
+       (signal 'nelix-error
                (list (format "nelix-fast: cannot read %s: %s"
                              path
                              (error-message-string err))))))
@@ -518,7 +518,7 @@ cannot drift apart -- e.g. a key added to one branch but not the other."
              (listp values))
         (mapcar #'cadr values))
        (t
-        (signal 'anvil-pkg-error
+        (signal 'nelix-error
                 (list (format "nelix-fast validate: unsupported mapcar form %S"
                               form)))))))
    ((symbolp form)
@@ -599,7 +599,7 @@ cannot drift apart -- e.g. a key added to one branch but not the other."
      ((stringp value) value)
      ((symbolp value) (symbol-name value))
      (t
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "%s must be a string or symbol, got %S"
                             caller value)))))))
 
@@ -610,7 +610,7 @@ cannot drift apart -- e.g. a key added to one branch but not the other."
              ((stringp value) value)
              ((symbolp value) (symbol-name value))
              (t
-              (signal 'anvil-pkg-error
+              (signal 'nelix-error
                       (list (format "%s must contain strings or symbols, got %S"
                                     caller value))))))
           values))
@@ -618,11 +618,11 @@ cannot drift apart -- e.g. a key added to one branch but not the other."
 (defun nelix-fast--package-row-name (caller args)
   "Return a one-element string list for package row ARGS in CALLER."
   (unless args
-    (signal 'anvil-pkg-error
+    (signal 'nelix-error
             (list (format "%s requires a package name" caller))))
   (let ((name (car args)))
     (unless (or (symbolp name) (stringp name))
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "%s package name must be string or symbol, got %S"
                             caller name))))
     (nelix-fast--dsl-string-list caller (list name))))
@@ -641,13 +641,13 @@ cannot drift apart -- e.g. a key added to one branch but not the other."
 (defun nelix-fast--validate-backend-policy (args)
   "Validate DSL v1 backend-policy ARGS without evaluating values."
   (unless args
-    (signal 'anvil-pkg-error
+    (signal 'nelix-error
             (list "nelix-fast validate: backend-policy requires at least one backend or OS row")))
   (cond
    ((nelix-fast--every #'symbolp args)
     (dolist (backend args)
       (unless (nelix-fast--supported-backend-p backend)
-        (signal 'anvil-pkg-error
+        (signal 'nelix-error
                 (list (format "nelix-fast validate: unsupported backend %S"
                               backend))))))
    ((nelix-fast--every (lambda (row)
@@ -655,16 +655,16 @@ cannot drift apart -- e.g. a key added to one branch but not the other."
                        args)
     (dolist (row args)
       (unless (cdr row)
-        (signal 'anvil-pkg-error
+        (signal 'nelix-error
                 (list (format "nelix-fast validate: backend-policy row %S has no backends"
                               row))))
       (dolist (backend (cdr row))
         (unless (nelix-fast--supported-backend-p backend)
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list (format "nelix-fast validate: unsupported backend %S"
                                 backend)))))))
    (t
-    (signal 'anvil-pkg-error
+    (signal 'nelix-error
             (list "nelix-fast validate: backend-policy must use backend symbols or OS rows")))))
 
 (defun nelix-fast--validate-package-row-options (caller options)
@@ -672,41 +672,41 @@ cannot drift apart -- e.g. a key added to one branch but not the other."
   (let ((rest options))
     (while rest
       (unless (and (consp rest) (consp (cdr rest)) (keywordp (car rest)))
-        (signal 'anvil-pkg-error
+        (signal 'nelix-error
                 (list (format "%s options must be keyword pairs, got %S"
                               caller options))))
       (let ((key (car rest))
             (value (cadr rest)))
         (when (nelix-fast--forbidden-package-option-p key)
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list (format "%s private data option %S is forbidden"
                                 caller key))))
         (unless (memq key nelix-fast--environment-package-option-keys)
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list (format "%s unknown option %S" caller key))))
         (when (eq key :backend)
           (unless (nelix-fast--supported-backend-p value)
-            (signal 'anvil-pkg-error
+            (signal 'nelix-error
                     (list (format "%s unsupported backend %S"
                                   caller value)))))
         (when (eq key :pin)
           (unless (memq value '(nil t))
-            (signal 'anvil-pkg-error
+            (signal 'nelix-error
                     (list (format "%s :pin must be t or nil, got %S"
                                   caller value)))))
         (when (memq key '(:version :profile :group :feature))
           (unless (or (symbolp value) (stringp value))
-            (signal 'anvil-pkg-error
+            (signal 'nelix-error
                     (list (format "%s %S must be a string or symbol, got %S"
                                   caller key value)))))
         (when (eq key :platform)
           (unless (or (symbolp value) (stringp value) (listp value))
-            (signal 'anvil-pkg-error
+            (signal 'nelix-error
                     (list (format "%s :platform must be a string, symbol, or list, got %S"
                                   caller value)))))
         (when (eq key :when)
           (unless (or (symbolp value) (listp value))
-            (signal 'anvil-pkg-error
+            (signal 'nelix-error
                     (list (format "%s :when must be a symbol or list, got %S"
                                   caller value)))))
         (setq rest (cddr rest))))))
@@ -719,23 +719,23 @@ cannot drift apart -- e.g. a key added to one branch but not the other."
 (defun nelix-fast--validate-version-pin-row (args)
   "Validate DSL v1 version-pin ARGS."
   (unless (= 2 (length args))
-    (signal 'anvil-pkg-error
+    (signal 'nelix-error
             (list (format "nelix-fast validate: version-pin expected NAME VERSION, got %S"
                           args))))
   (dolist (value args)
     (unless (or (symbolp value) (stringp value))
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-fast validate: version-pin values must be strings or symbols, got %S"
                             value))))))
 
 (defun nelix-fast--validate-remove-policy (args)
   "Validate DSL v1 remove-policy ARGS."
   (unless (= 1 (length args))
-    (signal 'anvil-pkg-error
+    (signal 'nelix-error
             (list (format "nelix-fast validate: remove-policy expects one value, got %S"
                           args))))
   (unless (memq (car args) nelix-environment-dsl-remove-policy-values)
-    (signal 'anvil-pkg-error
+    (signal 'nelix-error
             (list (format "nelix-fast validate: unsupported remove-policy %S"
                           (car args))))))
 
@@ -762,10 +762,10 @@ cannot drift apart -- e.g. a key added to one branch but not the other."
                  (nelix-fast--symbol-name-p (car form) "nelix-manifest"))
         (push form manifest-forms)))
     (when manifest-forms
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list "nelix-fast validate: top-level nelix-manifest is not DSL v1")))
     (unless (= 1 (length environment-forms))
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-fast validate: expected one nelix-environment form, got %S"
                             (length environment-forms)))))
     (dolist (environment-form environment-forms)
@@ -777,26 +777,26 @@ cannot drift apart -- e.g. a key added to one branch but not the other."
   (let (seen)
     (dolist (form (cdr environment-form))
       (unless (and (consp form) (symbolp (car form)))
-        (signal 'anvil-pkg-error
+        (signal 'nelix-error
                 (list (format "nelix-fast validate: malformed DSL form %S"
                               form))))
       (let ((name (symbol-name (car form))))
         (when (member name nelix-fast--environment-forbidden-form-names)
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list (format "nelix-fast validate: private data form %S is forbidden"
                                 (car form)))))
         (when (member name nelix-fast--environment-deferred-form-names)
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list (format "nelix-fast validate: form %S is reserved for a later DSL version"
                                 (car form)))))
         (unless (member name nelix-fast--environment-form-names)
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list (format "nelix-fast validate: unknown DSL form %S"
                                 (car form)))))
         (when (and (member name seen)
                    (not (member name
                                 nelix-fast--environment-repeated-form-names)))
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list (format "nelix-fast validate: duplicate DSL form %S"
                                 (car form)))))
         (cond
@@ -822,7 +822,7 @@ cannot drift apart -- e.g. a key added to one branch but not the other."
                  (nelix-fast--symbol-name-p (car form) "imports"))
         (dolist (item (cdr form))
           (unless (stringp item)
-            (signal 'anvil-pkg-error
+            (signal 'nelix-error
                     (list (format "nelix-fast validate: import must be literal string, got %S"
                                   item))))
           (push item imports))))))
@@ -1012,7 +1012,7 @@ cannot drift apart -- e.g. a key added to one branch but not the other."
          env)))
     (dolist (form (cdr environment-form))
       (unless (and (consp form) (symbolp (car form)))
-        (signal 'anvil-pkg-error
+        (signal 'nelix-error
                 (list (format "nelix-fast validate: malformed DSL form %S"
                               form))))
       (cond
@@ -1091,7 +1091,7 @@ cannot drift apart -- e.g. a key added to one branch but not the other."
        ((nelix-fast--symbol-name-p (car form) "remove-policy")
         nil)
        (t
-        (signal 'anvil-pkg-error
+        (signal 'nelix-error
                 (list (format "nelix-fast validate: unknown DSL form %S"
                               (car form)))))))
     (list :manifest manifest
@@ -1153,8 +1153,8 @@ when the manifest is a literal `nelix-environment' form."
 ;;;###autoload
 (defun nelix-fast-validate-json (manifest-file)
   "Return DSL v1 validation JSON for MANIFEST-FILE without loading it."
-  (when (and (fboundp 'anvil-pkg-compat--standalone-nelisp-p)
-             (anvil-pkg-compat--standalone-nelisp-p))
+  (when (and (fboundp 'nelix-compat--standalone-nelisp-p)
+             (nelix-compat--standalone-nelisp-p))
     (let* ((manifest (expand-file-name manifest-file))
            (dir (file-name-directory manifest))
            (environment-form (car (nelix-fast--environment-forms manifest)))
@@ -1417,7 +1417,7 @@ record-by-record in Elisp."
                   chunks)))
         (push "end\n" chunks)
         (apply #'concat (nreverse chunks)))
-    (let* ((profile (expand-file-name anvil-pkg-profile-dir))
+    (let* ((profile (expand-file-name nelix-core-profile-dir))
            (script
             (concat
              "if awk -F '\\t' '$1 == \"target-id\" { found = 1 } "
@@ -1440,18 +1440,18 @@ record-by-record in Elisp."
              "else if (lookup in ids) print \"installed-id\", ids[lookup] }"
              "' \"$1\" -; "
              "printf 'end\\n'"))
-           (res (anvil-pkg-compat-call-process
+           (res (nelix-compat-call-process
                  "sh"
                  (list "-c" script
                        "nelix-aot-target-cache"
                        cache-file
-                       anvil-pkg-nix-program
+                       nelix-core-nix-program
                        profile))))
       (unless (eq 0 (plist-get res :exit))
-        (signal 'anvil-pkg-nix-failed
+        (signal 'nelix-nix-failed
                 (list (format "nix profile list failed (exit %s): %s"
                               (plist-get res :exit)
-                              (anvil-pkg-compat-string-trim
+                              (nelix-compat-string-trim
                                (or (plist-get res :stderr) "")))
                       :stderr (plist-get res :stderr))))
       (plist-get res :stdout))))
@@ -1552,8 +1552,8 @@ artifact replaces this Elisp bridge.")
 Keep the non-AOT direct writer scoped to standalone NeLisp so ordinary Emacs
 commands continue to use the full plist/report encoder."
   (or (nelix-fast-aot-enabled-p)
-      (and (fboundp 'anvil-pkg-compat--standalone-nelisp-p)
-           (anvil-pkg-compat--standalone-nelisp-p))))
+      (and (fboundp 'nelix-compat--standalone-nelisp-p)
+           (nelix-compat--standalone-nelisp-p))))
 
 (defun nelix-fast--json-escape-string (string)
   "Return STRING escaped as a JSON string body."

@@ -291,7 +291,7 @@
 
 (ert-deftest nelix-store-test-backend-policy-prefers-native-without-nix ()
   "Backend selection can choose nelix-native without requiring Nix."
-  (cl-letf (((symbol-function 'anvil-pkg-compat-executable-find)
+  (cl-letf (((symbol-function 'nelix-compat-executable-find)
              (lambda (_program) nil)))
     (let ((selection (nelix-backend-select
                       "ripgrep" 'x86_64-linux '(nelix-native nix))))
@@ -372,7 +372,7 @@
               (insert " :class 'system-tool\n")
               (insert " :systems '((x86_64-linux :source (:type local :path \"/tmp/bad\") :install (:type copy :files nil))))\n"))
             (should-error (nelix-registry-update (list registry))
-                          :type 'anvil-pkg-error)
+                          :type 'nelix-error)
             (should-not (file-exists-p marker)))
         (when (file-directory-p registry)
           (delete-directory registry t))))))
@@ -394,7 +394,7 @@
               (insert " :class 'system-tool\n")
               (insert " :systems (list (list 'x86_64-linux)))\n"))
             (should-error (nelix-registry-update (list registry))
-                          :type 'anvil-pkg-error))
+                          :type 'nelix-error))
         (when (file-directory-p registry)
           (delete-directory registry t))))))
 
@@ -605,7 +605,7 @@
                                :sha256
                                (nelix-fetch-sha256-file index-file)))))
               (should-error (nelix-registry-update)
-                            :type 'anvil-pkg-error)))
+                            :type 'nelix-error)))
         (when (file-directory-p remote-root)
           (delete-directory remote-root t))))))
 
@@ -653,7 +653,7 @@
                                :sha256
                                (nelix-fetch-sha256-file index-file)))))
               (should-error (nelix-registry-update)
-                            :type 'anvil-pkg-error)))
+                            :type 'nelix-error)))
         (when (file-directory-p remote-root)
           (delete-directory remote-root t))))))
 
@@ -673,7 +673,7 @@
                                :sha256
                                "sha256-0000000000000000000000000000000000000000000000000000000000000000"))))
               (should-error (nelix-registry-update)
-                            :type 'anvil-pkg-error)))
+                            :type 'nelix-error)))
         (when (file-directory-p remote-root)
           (delete-directory remote-root t))))))
 
@@ -741,7 +741,7 @@
                                :sha256 (nelix-fetch-sha256-file index-file)
                                :require-signature t))))
               (should-error (nelix-registry-update)
-                            :type 'anvil-pkg-error)))
+                            :type 'nelix-error)))
         (when (file-directory-p remote-root)
           (delete-directory remote-root t))))))
 
@@ -774,14 +774,14 @@
                                        :algorithm
                                        'nelix-sha256-digest))))))
               (should-error (nelix-registry-update)
-                            :type 'anvil-pkg-error)))
+                            :type 'nelix-error)))
         (when (file-directory-p remote-root)
           (delete-directory remote-root t))))))
 
 (ert-deftest nelix-store-test-native-audit-does-not-require-nix ()
   "nelix-native-audit returns an OK report even when Nix is unavailable."
   (nelix-store-test--with-temp-roots
-    (cl-letf (((symbol-function 'anvil-pkg-compat-executable-find)
+    (cl-letf (((symbol-function 'nelix-compat-executable-find)
                (lambda (_program) nil)))
       (let ((audit (nelix-native-audit)))
         (should (plist-get audit :ok))
@@ -1162,7 +1162,7 @@
                                :bin '("bin/fixture-bad-unpack"))))))
       (should-error
        (nelix-native-install-recipe recipe "default" 'x86_64-linux)
-       :type 'anvil-pkg-error)
+       :type 'nelix-error)
       (should-not (file-exists-p (nelix-profile--current-file "default")))
       (should (equal nil (nelix-store-list)))
       (should (equal nil
@@ -1196,7 +1196,7 @@
                                            "missing-file"))))))))
       (should-error
        (nelix-native-install-recipe recipe "default" 'x86_64-linux)
-       :type 'anvil-pkg-error)
+       :type 'nelix-error)
       (should-not (file-exists-p (nelix-profile--current-file "default")))
       (should (equal nil (nelix-store-list)))
       (should (equal nil
@@ -1306,7 +1306,7 @@
               (setenv "PATH" "")
               (should-error
                (nelix-native-install-recipe recipe "default" 'x86_64-linux)
-               :type 'anvil-pkg-error))
+               :type 'nelix-error))
             (with-temp-file tool
               (insert "#!/bin/sh\n")
               (insert "echo fixture-required-tool\n"))
@@ -1494,7 +1494,7 @@
                         :target "/usr/bin/b")))))
     (should-error (nelix-native-install
                    "fixture-a" "default" 'x86_64-linux)
-                  :type 'anvil-pkg-error)))
+                  :type 'nelix-error)))
 
 (ert-deftest nelix-store-test-native-install-lock-package-replays-source ()
   "nelix-native-install-lock-package installs from lock row source/install data."
@@ -1601,7 +1601,7 @@
       (should-error
        (nelix-native-install-lock-package
         app "default" 'x86_64-linux (list app))
-       :type 'anvil-pkg-error))))
+       :type 'nelix-error))))
 
 (ert-deftest nelix-store-test-native-upgrade-plan-reports-registry-candidate ()
   "Native upgrade plan compares current profile entries to registry recipes."
@@ -1859,10 +1859,10 @@
         (insert "keep me\n"))
       (cl-letf (((symbol-function 'nelix-profile--activate-link-file)
                  (lambda (&rest _args)
-                   (signal 'anvil-pkg-error
+                   (signal 'nelix-error
                            (list "fixture activation failure")))))
         (should-error (nelix-profile-activate-runtime "default")
-                      :type 'anvil-pkg-error))
+                      :type 'nelix-error))
       (should (file-exists-p active-dir))
       (should (file-exists-p shim))
       (should (file-exists-p path-fragment))
@@ -1998,7 +1998,7 @@
                                 :version "1.0.0"
                                 :system 'x86_64-linux
                                 :source 'nelix-cache)
-              :type 'anvil-pkg-error)))
+              :type 'nelix-error)))
     (should (string-match-p "missing :sha256" (cadr err)))))
 
 (ert-deftest nelix-store-test-substitute-nix-bridge-normalizes-metadata ()
@@ -2026,7 +2026,7 @@
                                 :system 'x86_64-linux
                                 :source 'nix-cache
                                 :sha256 "sha256-nar")
-              :type 'anvil-pkg-error)))
+              :type 'nelix-error)))
     (should (string-match-p "nix-cache source missing" (cadr err)))))
 
 (ert-deftest nelix-store-test-substitute-parse-narinfo ()

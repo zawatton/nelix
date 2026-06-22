@@ -1,4 +1,4 @@
-;;; python-black.el --- Python pyproject example for anvil-pkg -*- lexical-binding: t; -*-
+;;; python-black.el --- Python pyproject example for nelix-core -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026 zawatton
 ;; SPDX-License-Identifier: GPL-3.0-or-later
@@ -17,12 +17,12 @@
 ;; pyproject.toml so we set :format "pyproject" explicitly.
 ;;
 ;; Usage:
-;;   M-: (load-file "/path/to/anvil-pkg/examples/python-black.el")
+;;   M-: (load-file "/path/to/nelix-core/examples/python-black.el")
 ;;   M-: (pkg-install 'black)
 
 ;;; Code:
 
-(require 'anvil-pkg-dsl)
+(require 'nelix-dsl)
 
 ;; Phase 4-H: source hash is *real*, prefetched 2026-05-06 with
 ;; `nix-prefetch-url --unpack' against nixpkgs-unstable.

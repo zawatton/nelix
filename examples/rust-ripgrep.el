@@ -1,4 +1,4 @@
-;;; rust-ripgrep.el --- Rust example for anvil-pkg -*- lexical-binding: t; -*-
+;;; rust-ripgrep.el --- Rust example for nelix-core -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026 zawatton
 ;; SPDX-License-Identifier: GPL-3.0-or-later
@@ -16,12 +16,12 @@
 ;; with no native deps beyond the Rust toolchain Nix provides.
 ;;
 ;; Usage:
-;;   M-: (load-file "/path/to/anvil-pkg/examples/rust-ripgrep.el")
+;;   M-: (load-file "/path/to/nelix-core/examples/rust-ripgrep.el")
 ;;   M-: (pkg-install 'ripgrep)
 
 ;;; Code:
 
-(require 'anvil-pkg-dsl)
+(require 'nelix-dsl)
 
 (pkg-define ripgrep
   (version "14.1.0")

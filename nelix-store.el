@@ -14,12 +14,12 @@
 ;;; Code:
 
 (require 'cl-lib)
-(require 'anvil-pkg)
-(require 'anvil-pkg-compat)
+(require 'nelix-core)
+(require 'nelix-compat)
 
 (defgroup nelix-store nil
   "Native Nelix store/profile primitives."
-  :group 'anvil-pkg
+  :group 'nelix-core
   :prefix "nelix-store-")
 
 (defcustom nelix-store-root nil
@@ -56,27 +56,27 @@ depend on privileged symlink creation."
   "Return the base user data directory for native Nelix data."
   (cond
    ((and (eq system-type 'windows-nt)
-         (anvil-pkg-compat-getenv "LOCALAPPDATA"))
-    (anvil-pkg-compat-getenv "LOCALAPPDATA"))
-   ((anvil-pkg-compat-getenv "XDG_DATA_HOME")
-    (anvil-pkg-compat-getenv "XDG_DATA_HOME"))
+         (nelix-compat-getenv "LOCALAPPDATA"))
+    (nelix-compat-getenv "LOCALAPPDATA"))
+   ((nelix-compat-getenv "XDG_DATA_HOME")
+    (nelix-compat-getenv "XDG_DATA_HOME"))
    (t
     (expand-file-name
      ".local/share"
-     (or (anvil-pkg-compat-getenv "HOME") "~")))))
+     (or (nelix-compat-getenv "HOME") "~")))))
 
 (defun nelix-store--local-state-home ()
   "Return the base user state directory for native Nelix profiles."
   (cond
    ((and (eq system-type 'windows-nt)
-         (anvil-pkg-compat-getenv "LOCALAPPDATA"))
-    (anvil-pkg-compat-getenv "LOCALAPPDATA"))
-   ((anvil-pkg-compat-getenv "XDG_STATE_HOME")
-    (anvil-pkg-compat-getenv "XDG_STATE_HOME"))
+         (nelix-compat-getenv "LOCALAPPDATA"))
+    (nelix-compat-getenv "LOCALAPPDATA"))
+   ((nelix-compat-getenv "XDG_STATE_HOME")
+    (nelix-compat-getenv "XDG_STATE_HOME"))
    (t
     (expand-file-name
      ".local/state"
-     (or (anvil-pkg-compat-getenv "HOME") "~")))))
+     (or (nelix-compat-getenv "HOME") "~")))))
 
 ;;;###autoload
 (defun nelix-store-root ()
@@ -98,7 +98,7 @@ depend on privileged symlink creation."
         keys)
     (while rest
       (unless (and (consp rest) (consp (cdr rest)))
-        (signal 'anvil-pkg-error
+        (signal 'nelix-error
                 (list (format "nelix-store: malformed plist %S" plist))))
       (push (car rest) keys)
       (setq rest (cddr rest)))
@@ -109,11 +109,11 @@ depend on privileged symlink creation."
   (let ((value (plist-get plist key)))
     (cond
      ((and (stringp value)
-           (> (length (anvil-pkg-compat-string-trim value)) 0))
-      (anvil-pkg-compat-string-trim value))
+           (> (length (nelix-compat-string-trim value)) 0))
+      (nelix-compat-string-trim value))
      ((symbolp value) (symbol-name value))
      (t
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "%s: %S must be a non-empty string or symbol, got %S"
                             caller key value)))))))
 
@@ -131,7 +131,7 @@ depend on privileged symlink creation."
 Required keys are `:name', `:version', `:system', and `:hash'."
   (dolist (key '(:name :version :system :hash))
     (unless (memq key (nelix-store--plist-keys plist))
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-store-entry: missing %S" key)))))
   (let* ((name (nelix-store--required-string "nelix-store-entry" plist :name))
          (version (nelix-store--required-string "nelix-store-entry" plist :version))
@@ -140,7 +140,7 @@ Required keys are `:name', `:version', `:system', and `:hash'."
          (backend (or (plist-get plist :backend) 'nelix-native))
          (entry (copy-sequence plist)))
     (unless (symbolp system)
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-store-entry: :system must be a symbol, got %S"
                             system))))
     (setq entry (plist-put entry :name name))
@@ -200,8 +200,8 @@ This is used by transactional native builders that populate a temporary
 store directory before committing it to the final store path."
   (let* ((normalized (apply #'nelix-store-entry entry))
          (metadata (nelix-store--metadata-file store-path)))
-    (anvil-pkg-compat-make-directory (file-name-directory metadata) t)
-    (anvil-pkg-compat-write-file
+    (nelix-compat-make-directory (file-name-directory metadata) t)
+    (nelix-compat-write-file
      metadata
      (concat ";;; store-entry.el --- generated Nelix store metadata -*- lexical-binding: t; -*-\n\n"
              "(require 'nelix-store)\n\n"
@@ -218,7 +218,7 @@ store directory before committing it to the final store path."
 (defun nelix-store--entry-temp-dir (entry)
   "Create and return a temporary store build directory for ENTRY."
   (let ((root (nelix-store-root)))
-    (anvil-pkg-compat-make-directory root t)
+    (nelix-compat-make-directory root t)
     (make-temp-file
      (expand-file-name
       (concat ".tmp-" (nelix-store--entry-dir-name entry) "-")
@@ -241,9 +241,9 @@ store directory before committing it to the final store path."
                    t))
             (delete-directory backup-dir t)
             (rename-file store-path backup-dir))
-          (when (and (anvil-pkg-compat-file-exists-p store-path)
+          (when (and (nelix-compat-file-exists-p store-path)
                      (not (file-directory-p store-path)))
-            (signal 'anvil-pkg-error
+            (signal 'nelix-error
                     (list (format "nelix-store: final store path is not a directory: %s"
                                   store-path))))
           (rename-file temp-dir store-path)
@@ -263,8 +263,8 @@ store directory before committing it to the final store path."
   "Read native store entry metadata from STORE-PATH."
   (let ((file (nelix-store--metadata-file store-path))
         (nelix-store-entry-last nil))
-    (unless (anvil-pkg-compat-file-exists-p file)
-      (signal 'anvil-pkg-error
+    (unless (nelix-compat-file-exists-p file)
+      (signal 'nelix-error
               (list (format "nelix-store-read-entry: missing metadata %s" file))))
     (load file nil nil t)
     nelix-store-entry-last))
@@ -278,7 +278,7 @@ store directory before committing it to the final store path."
                (file-directory-p root))
       (dolist (path (directory-files root t "\\`[^.]"))
         (when (and (file-directory-p path)
-                   (anvil-pkg-compat-file-exists-p
+                   (nelix-compat-file-exists-p
                     (nelix-store--metadata-file path)))
           (push (nelix-store-read-entry path) entries))))
     (nreverse entries)))
@@ -302,18 +302,18 @@ store directory before committing it to the final store path."
   "Return normalized native profile PLIST."
   (dolist (key '(:name :generation :system :entries))
     (unless (memq key (nelix-store--plist-keys plist))
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-profile: missing %S" key)))))
   (let ((profile (copy-sequence plist)))
     (setq profile
           (plist-put profile :name
                      (nelix-store--required-string "nelix-profile" plist :name)))
     (unless (integerp (plist-get profile :generation))
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-profile: :generation must be integer, got %S"
                             (plist-get profile :generation)))))
     (unless (symbolp (plist-get profile :system))
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-profile: :system must be symbol, got %S"
                             (plist-get profile :system)))))
     (setq nelix-profile-last profile)))
@@ -348,7 +348,7 @@ store directory before committing it to the final store path."
 (defun nelix-profile--activation-temp-dir (profile-name)
   "Create and return a temporary activation directory for PROFILE-NAME."
   (let ((profile-dir (nelix-profile--dir profile-name)))
-    (anvil-pkg-compat-make-directory profile-dir t)
+    (nelix-compat-make-directory profile-dir t)
     (make-temp-file (expand-file-name "active.tmp-" profile-dir) t)))
 
 (defun nelix-profile--delete-directory-quietly (directory)
@@ -412,13 +412,13 @@ store directory before committing it to the final store path."
          (name (plist-get normalized :name))
          (generation (plist-get normalized :generation))
          (file (nelix-profile--profile-file name generation)))
-    (anvil-pkg-compat-make-directory (file-name-directory file) t)
-    (anvil-pkg-compat-write-file
+    (nelix-compat-make-directory (file-name-directory file) t)
+    (nelix-compat-write-file
      file
      (concat ";;; profile.el --- generated Nelix profile metadata -*- lexical-binding: t; -*-\n\n"
              "(require 'nelix-store)\n\n"
              (nelix-store--format-plist-call 'nelix-profile normalized)))
-    (anvil-pkg-compat-write-file
+    (nelix-compat-write-file
      (nelix-profile--current-file name)
      (format "%S\n" (list :generation generation :file file)))
     normalized))
@@ -437,13 +437,13 @@ store directory before committing it to the final store path."
   "Read PROFILE-NAME metadata for GENERATION or current generation."
   (let* ((gen (or generation
                   (plist-get (car (read-from-string
-                                   (anvil-pkg-compat-read-file
+                                   (nelix-compat-read-file
                                     (nelix-profile--current-file profile-name))))
                              :generation)))
          (file (nelix-profile--profile-file profile-name gen))
          (nelix-profile-last nil))
-    (unless (anvil-pkg-compat-file-exists-p file)
-      (signal 'anvil-pkg-error
+    (unless (nelix-compat-file-exists-p file)
+      (signal 'nelix-error
               (list (format "nelix-profile-read: missing profile %s" file))))
     (load file nil nil t)
     nelix-profile-last))
@@ -455,12 +455,12 @@ store directory before committing it to the final store path."
          (gen (or generation
                   (let ((gens (nelix-profile--existing-generations name)))
                     (unless (> (length gens) 1)
-                      (signal 'anvil-pkg-error
+                      (signal 'nelix-error
                               (list (format "nelix-profile-rollback: no previous generation for %s"
                                             name))))
                     (nth (- (length gens) 2) gens))))
          (profile (nelix-profile-read name gen)))
-    (anvil-pkg-compat-write-file
+    (nelix-compat-write-file
      (nelix-profile--current-file name)
      (format "%S\n" (list :generation gen
                           :file (nelix-profile--profile-file name gen))))
@@ -608,7 +608,7 @@ the profile metadata order."
     (when (and store-path bins)
       (dolist (bin bins (nreverse rows))
         (let ((target (expand-file-name bin store-path)))
-          (when (anvil-pkg-compat-file-exists-p target)
+          (when (nelix-compat-file-exists-p target)
             (push (list :name (plist-get entry :name)
                         :runtime-bin bin
                         :target target)
@@ -636,8 +636,8 @@ the profile metadata order."
 (defun nelix-profile--activate-link-file (target link mode)
   "Materialize TARGET at activation LINK using MODE.
 Return the concrete mode used, either `symlink' or `copy'."
-  (anvil-pkg-compat-make-directory (file-name-directory link) t)
-  (when (anvil-pkg-compat-file-exists-p link)
+  (nelix-compat-make-directory (file-name-directory link) t)
+  (when (nelix-compat-file-exists-p link)
     (delete-file link))
   (pcase mode
     ('symlink
@@ -684,9 +684,9 @@ use symlinks when available, while Windows profiles use copied files."
          shims links seen seen-links)
     (condition-case err
         (progn
-          (anvil-pkg-compat-make-directory build-bin-dir t)
+          (nelix-compat-make-directory build-bin-dir t)
           (when link-mode
-            (anvil-pkg-compat-make-directory build-profile-dir t))
+            (nelix-compat-make-directory build-profile-dir t))
           (dolist (entry (plist-get profile :entries))
             (dolist (row (nelix-profile--runtime-bin-targets entry))
               (let* ((command (nelix-profile--command-name
@@ -703,7 +703,7 @@ use symlinks when available, while Windows profiles use copied files."
                            (expand-file-name relative build-profile-dir))))
                 (unless (member command seen)
                   (push command seen)
-                  (anvil-pkg-compat-write-file
+                  (nelix-compat-write-file
                    build-shim
                    (if windows-p
                        (nelix-profile--render-windows-shim target)
@@ -726,7 +726,7 @@ use symlinks when available, while Windows profiles use copied files."
                                         :link link
                                         :mode used-mode))
                           links))))))
-          (anvil-pkg-compat-write-file
+          (nelix-compat-write-file
            build-path-fragment
            (if windows-p
                (format "@echo off\r\nset \"PATH=%s;%%PATH%%\"\r\n" bin-dir)

@@ -1,25 +1,25 @@
-;;; anvil-pkg-uninstall-test.el --- ERT tests for pkg-uninstall -*- lexical-binding: t; -*-
+;;; nelix-core-uninstall-test.el --- ERT tests for pkg-uninstall -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026 zawatton
 
-;; This file is part of anvil-pkg.  GPL-3.0-or-later.
+;; This file is part of nelix-core.  GPL-3.0-or-later.
 
 ;;; Commentary:
 
 ;; Phase 6-A ERT coverage for `pkg-uninstall'.  All tests mock
-;; `anvil-pkg--call-nix-fn' so no nix binary is required to run them.
+;; `nelix-core--call-nix-fn' so no nix binary is required to run them.
 
 ;;; Code:
 
 (require 'ert)
 (require 'cl-lib)
-(require 'anvil-pkg)
-(require 'anvil-pkg-state)
+(require 'nelix-core)
+(require 'nelix-state)
 
-(defmacro anvil-pkg-uninstall-test--with-mock (mock-fn &rest body)
-  "Run BODY with `anvil-pkg--call-nix-fn' bound to MOCK-FN.
+(defmacro nelix-core-uninstall-test--with-mock (mock-fn &rest body)
+  "Run BODY with `nelix-core--call-nix-fn' bound to MOCK-FN.
 
-The mock is also relied on by `anvil-pkg--ensure-nix' to skip the
+The mock is also relied on by `nelix-core--ensure-nix' to skip the
 real `executable-find' check (the ensure helper exempts test mode
 when the call-nix fn is not the default).
 
@@ -31,30 +31,30 @@ The state file is bound to a tmp path so the real
 ~/.local/state/nelix/state.json is never touched and the
 in-process state cache is reset between tests."
   (declare (indent 1))
-  `(let* ((tmp (make-temp-file "anvil-pkg-uninstall-test-" nil ".json"))
-          (anvil-pkg-state-file tmp)
-          (anvil-pkg-state--cache 'unloaded)
-          (anvil-pkg-state--loaded-from nil)
-          (anvil-pkg--call-nix-fn ,mock-fn)
-          (anvil-pkg-nix-channel "nixpkgs")
-          (anvil-pkg-profile-dir "/tmp/anvil-pkg-test-profile"))
+  `(let* ((tmp (make-temp-file "nelix-core-uninstall-test-" nil ".json"))
+          (nelix-state-file tmp)
+          (nelix-state--cache 'unloaded)
+          (nelix-state--loaded-from nil)
+          (nelix-core--call-nix-fn ,mock-fn)
+          (nelix-core-nix-channel "nixpkgs")
+          (nelix-core-profile-dir "/tmp/nelix-core-test-profile"))
      (unwind-protect
          (progn
            (delete-file tmp)
-           (anvil-pkg-state-put anvil-pkg--nix-version-namespace
-                                anvil-pkg--nix-version-key
+           (nelix-state-put nelix-core--nix-version-namespace
+                                nelix-core--nix-version-key
                                 "2.18.0")
            ,@body)
        (when (file-exists-p tmp) (delete-file tmp)))))
 
-(ert-deftest anvil-pkg-uninstall-test-happy ()
+(ert-deftest nelix-core-uninstall-test-happy ()
   "pkg-uninstall returns t and forwards correct remove args on nix exit 0."
   (let ((remove-args nil))
     (cl-letf (((symbol-function 'pkg-list-generations)
                (lambda () 'ignored))
-              ((symbol-function 'anvil-pkg--rollback-replay-emacs-hooks)
+              ((symbol-function 'nelix-core--rollback-replay-emacs-hooks)
                (lambda () 'ignored)))
-      (anvil-pkg-uninstall-test--with-mock
+      (nelix-core-uninstall-test--with-mock
           (lambda (args)
             (cond
              ((and (member "profile" args)
@@ -77,12 +77,12 @@ in-process state cache is reset between tests."
              (t (ert-fail (format "unexpected nix args: %S" args)))))
         (should (eq t (pkg-uninstall "ripgrep")))))
     (should (equal '("profile" "remove" "ripgrep"
-                     "--profile" "/tmp/anvil-pkg-test-profile")
+                     "--profile" "/tmp/nelix-core-test-profile")
                    remove-args))))
 
-(ert-deftest anvil-pkg-uninstall-test-not-installed ()
-  "pkg-uninstall signals `anvil-pkg-error' when NAME is absent from the profile."
-  (anvil-pkg-uninstall-test--with-mock
+(ert-deftest nelix-core-uninstall-test-not-installed ()
+  "pkg-uninstall signals `nelix-error' when NAME is absent from the profile."
+  (nelix-core-uninstall-test--with-mock
       (lambda (args)
         (cond
          ((and (member "profile" args)
@@ -93,13 +93,13 @@ in-process state cache is reset between tests."
                 :stderr ""))
          (t (ert-fail (format "unexpected nix args: %S" args)))))
     (let ((err (should-error (pkg-uninstall "ripgrep")
-                             :type 'anvil-pkg-error)))
-      (should (string-match-p "not installed in the anvil-pkg profile"
+                             :type 'nelix-error)))
+      (should (string-match-p "not installed in the nelix-core profile"
                               (cadr err))))))
 
-(ert-deftest anvil-pkg-uninstall-test-remove-error ()
-  "pkg-uninstall signals `anvil-pkg-nix-failed' on non-zero remove exit."
-  (anvil-pkg-uninstall-test--with-mock
+(ert-deftest nelix-core-uninstall-test-remove-error ()
+  "pkg-uninstall signals `nelix-nix-failed' on non-zero remove exit."
+  (nelix-core-uninstall-test--with-mock
       (lambda (args)
         (cond
          ((and (member "profile" args)
@@ -122,17 +122,17 @@ in-process state cache is reset between tests."
                 :stderr "error: no such installed package\n"))
          (t (ert-fail (format "unexpected nix args: %S" args)))))
     (let ((err (should-error (pkg-uninstall "ripgrep")
-                             :type 'anvil-pkg-nix-failed)))
+                             :type 'nelix-nix-failed)))
       (should (string-match-p "no such installed package" (cadr err))))))
 
-(ert-deftest anvil-pkg-uninstall-test-symbol-name-coercion ()
+(ert-deftest nelix-core-uninstall-test-symbol-name-coercion ()
   "pkg-uninstall coerces symbol NAME via `symbol-name' before removal."
   (let ((remove-args nil))
     (cl-letf (((symbol-function 'pkg-list-generations)
                (lambda () 'ignored))
-              ((symbol-function 'anvil-pkg--rollback-replay-emacs-hooks)
+              ((symbol-function 'nelix-core--rollback-replay-emacs-hooks)
                (lambda () 'ignored)))
-      (anvil-pkg-uninstall-test--with-mock
+      (nelix-core-uninstall-test--with-mock
           (lambda (args)
             (cond
              ((and (member "profile" args)
@@ -156,17 +156,17 @@ in-process state cache is reset between tests."
         (should (eq t (pkg-uninstall 'ripgrep)))))
     (should (equal "ripgrep" (nth 2 remove-args)))))
 
-(ert-deftest anvil-pkg-uninstall-test-refreshes-generations-and-replays-hooks ()
+(ert-deftest nelix-core-uninstall-test-refreshes-generations-and-replays-hooks ()
   "pkg-uninstall refreshes the generations mirror and replays hooks after remove."
   (let ((calls nil))
     (cl-letf (((symbol-function 'pkg-list-generations)
                (lambda ()
                  (push 'refresh calls)
-                 (signal 'anvil-pkg-error '("ignore refresh failure"))))
-              ((symbol-function 'anvil-pkg--rollback-replay-emacs-hooks)
+                 (signal 'nelix-error '("ignore refresh failure"))))
+              ((symbol-function 'nelix-core--rollback-replay-emacs-hooks)
                (lambda ()
                  (push 'replay calls))))
-      (anvil-pkg-uninstall-test--with-mock
+      (nelix-core-uninstall-test--with-mock
           (lambda (args)
             (cond
              ((and (member "profile" args)
@@ -189,14 +189,14 @@ in-process state cache is reset between tests."
         (should (eq t (pkg-uninstall "ripgrep")))))
     (should (equal '(refresh replay) (nreverse calls)))))
 
-(ert-deftest anvil-pkg-uninstall-test-bad-name-type ()
-  "pkg-uninstall signals `anvil-pkg-error' for an invalid NAME type."
-  (anvil-pkg-uninstall-test--with-mock
+(ert-deftest nelix-core-uninstall-test-bad-name-type ()
+  "pkg-uninstall signals `nelix-error' for an invalid NAME type."
+  (nelix-core-uninstall-test--with-mock
       (lambda (args)
         (ert-fail (format "unexpected nix args: %S" args)))
     (let ((err (should-error (pkg-uninstall 42)
-                             :type 'anvil-pkg-error)))
+                             :type 'nelix-error)))
       (should (string-match-p "NAME must be string or symbol" (cadr err))))))
 
-(provide 'anvil-pkg-uninstall-test)
-;;; anvil-pkg-uninstall-test.el ends here
+(provide 'nelix-core-uninstall-test)
+;;; nelix-core-uninstall-test.el ends here

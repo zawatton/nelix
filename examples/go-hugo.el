@@ -1,4 +1,4 @@
-;;; go-hugo.el --- Go build example for anvil-pkg -*- lexical-binding: t; -*-
+;;; go-hugo.el --- Go build example for nelix-core -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026 zawatton
 ;; SPDX-License-Identifier: GPL-3.0-or-later
@@ -17,12 +17,12 @@
 ;; with a vendored go.mod tree.
 ;;
 ;; Usage:
-;;   M-: (load-file "/path/to/anvil-pkg/examples/go-hugo.el")
+;;   M-: (load-file "/path/to/nelix-core/examples/go-hugo.el")
 ;;   M-: (pkg-install 'hugo)
 
 ;;; Code:
 
-(require 'anvil-pkg-dsl)
+(require 'nelix-dsl)
 
 ;; Phase 4-H: hashes are *real*, prefetched 2026-05-06.  Source via
 ;; `nix-prefetch-url --unpack', vendor via `vendorHash = lib.fakeHash'

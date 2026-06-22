@@ -6,12 +6,12 @@
 ;;; Commentary:
 
 ;; Nelix is the public name for the package-management surface that began as
-;; anvil-pkg.  This file provides the new require/provide boundary while the
+;; nelix-core.  This file provides the new require/provide boundary while the
 ;; implementation modules keep their original names for compatibility.
 
 ;;; Code:
 
-(require 'anvil-pkg)
+(require 'nelix-core)
 (require 'nelix-manifest)
 (require 'nelix-fast)
 (require 'nelix-store)

@@ -12,15 +12,15 @@
 ;;; Code:
 
 (require 'cl-lib)
-(require 'anvil-pkg)
-(require 'anvil-pkg-compat)
+(require 'nelix-core)
+(require 'nelix-compat)
 (require 'nelix-store)
 (require 'nelix-registry)
 (require 'nelix-builder)
 
 (defgroup nelix-backend nil
   "Nelix backend dispatch."
-  :group 'anvil-pkg
+  :group 'nelix-core
   :prefix "nelix-backend-")
 
 (defcustom nelix-backend-policy
@@ -101,7 +101,7 @@
 (defun nelix-backend-register (name capabilities)
   "Register backend NAME with CAPABILITIES."
   (unless (symbolp name)
-    (signal 'anvil-pkg-error
+    (signal 'nelix-error
             (list (format "nelix-backend-register: NAME must be symbol, got %S"
                           name))))
   (puthash name
@@ -336,7 +336,7 @@ Emacs's `version<' is unavailable."
          (nelix-backend--supports-system-p caps system*)
          (let ((program (plist-get caps :requires-program)))
            (or (null program)
-               (anvil-pkg-compat-executable-find program))))))
+               (nelix-compat-executable-find program))))))
 
 ;;;###autoload
 (defun nelix-backend-select (&optional target system policy)
@@ -371,7 +371,7 @@ PROFILE-NAME and SYSTEM are used by backends with native profiles."
                (nelix-native-install target profile-name system))
              (if (listp targets) targets (list targets))))
     (_
-     (signal 'anvil-pkg-error
+     (signal 'nelix-error
              (list (format "nelix-backend-install: unsupported backend %S"
                            backend))))))
 
@@ -384,7 +384,7 @@ PROFILE-NAME and SYSTEM are used by backends with native profiles."
      (list :store (nelix-store-list)
            :profiles-root (nelix-profile-root)))
     (_
-     (signal 'anvil-pkg-error
+     (signal 'nelix-error
              (list (format "nelix-backend-list: unsupported backend %S"
                            backend))))))
 
@@ -398,7 +398,7 @@ PROFILE-NAME and SYSTEM are used by backends with native profiles."
     ('nelix-native
      (nelix-backend--native-upgrade-plan targets))
     (_
-     (signal 'anvil-pkg-error
+     (signal 'nelix-error
              (list (format "nelix-backend-upgrade-plan: unsupported backend %S"
                            backend))))))
 

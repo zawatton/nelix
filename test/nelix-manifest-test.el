@@ -14,7 +14,7 @@
 (require 'cl-lib)
 (require 'nelix-manifest)
 (require 'nelix-dsl)
-(require 'anvil-pkg-state)
+(require 'nelix-state)
 
 (defvar nelix-manifest-test-import-loaded nil
   "Non-nil when a manifest import fixture has been loaded.")
@@ -30,9 +30,9 @@
   "Run BODY with isolated persistent state."
   (declare (indent 0))
   `(let* ((tmp-state (make-temp-file "nelix-manifest-state-" nil ".json"))
-          (anvil-pkg-state-file tmp-state)
-          (anvil-pkg-state--cache 'unloaded)
-          (anvil-pkg-state--loaded-from nil))
+          (nelix-state-file tmp-state)
+          (nelix-state--cache 'unloaded)
+          (nelix-state--loaded-from nil))
      (unwind-protect
          (progn
            (delete-file tmp-state)
@@ -250,7 +250,7 @@
               (eval '(nelix-environment
                       (name "first")
                       (name "second")))
-              :type 'anvil-pkg-error)))
+              :type 'nelix-error)))
     (should (string-match-p "duplicate form name" (cadr err)))))
 
 (ert-deftest nelix-manifest-test-environment-dsl-v1-reserves-future-forms ()
@@ -259,7 +259,7 @@
               (eval '(nelix-environment
                       (name "reserved")
                       (platform gnu/linux)))
-              :type 'anvil-pkg-error)))
+              :type 'nelix-error)))
     (should (string-match-p "reserved for a later DSL version"
                             (cadr err)))))
 
@@ -269,7 +269,7 @@
               (eval '(nelix-environment
                       (name "private")
                       (secret github-token "token-value")))
-              :type 'anvil-pkg-error)))
+              :type 'nelix-error)))
     (should (string-match-p "private data form"
                             (cadr err)))))
 
@@ -279,7 +279,7 @@
               (eval '(nelix-environment
                       (name "private-package")
                       (package magit :secret "token-value")))
-              :type 'anvil-pkg-error)))
+              :type 'nelix-error)))
     (should (string-match-p "private data option :secret"
                             (cadr err)))))
 
@@ -304,7 +304,7 @@
                :name "raw-private"
                :package-rows
                '((:kind package :name magit :secret "token-value")))
-              :type 'anvil-pkg-error)))
+              :type 'nelix-error)))
     (should (string-match-p "private data option :secret"
                             (cadr err))))
   (let ((err (should-error
@@ -312,7 +312,7 @@
                :name "raw-unknown"
                :package-rows
                '((:kind package :name magit :unsupported t)))
-              :type 'anvil-pkg-error)))
+              :type 'nelix-error)))
     (should (string-match-p "unknown option :unsupported"
                             (cadr err))))
   (let ((err (should-error
@@ -320,7 +320,7 @@
                :name "raw-bad-pin"
                :linux-package-rows
                '((:kind linux-package :name ripgrep :pin yes)))
-              :type 'anvil-pkg-error)))
+              :type 'nelix-error)))
     (should (string-match-p ":pin must be t or nil"
                             (cadr err))))
   (let ((err (should-error
@@ -328,7 +328,7 @@
                :name "raw-wrong-kind"
                :package-rows
                '((:kind linux-package :name ripgrep)))
-              :type 'anvil-pkg-error)))
+              :type 'nelix-error)))
     (should (string-match-p "expected :kind package"
                             (cadr err)))))
 
@@ -350,14 +350,14 @@
               (eval '(nelix-environment
                       (name "bad-backend")
                       (backend-policy imaginary-backend)))
-              :type 'anvil-pkg-error)))
+              :type 'nelix-error)))
     (should (string-match-p "unsupported backend imaginary-backend"
                             (cadr err))))
   (let ((err (should-error
               (eval '(nelix-environment
                       (name "mixed-backend-policy")
                       (backend-policy nix (gnu/linux nelix-native))))
-              :type 'anvil-pkg-error)))
+              :type 'nelix-error)))
     (should (string-match-p "either backend symbols or OS rows"
                             (cadr err)))))
 
@@ -367,7 +367,7 @@
               (eval '(nelix-environment
                       (name "bad-package-backend")
                       (package magit :backend imaginary-backend)))
-              :type 'anvil-pkg-error)))
+              :type 'nelix-error)))
     (should (string-match-p "unsupported backend imaginary-backend"
                             (cadr err)))))
 
@@ -377,20 +377,20 @@
                   (eval '(nelix-environment
                           (name "bad-pin")
                           (package magit :pin yes)))
-                  :type 'anvil-pkg-error)))
+                  :type 'nelix-error)))
     (should (string-match-p ":pin must be t or nil" (cadr bad-pin))))
   (let ((bad-version (should-error
                       (eval '(nelix-environment
                               (name "bad-version")
                               (package magit :version 1)))
-                      :type 'anvil-pkg-error)))
+                      :type 'nelix-error)))
     (should (string-match-p ":version must be a string or symbol"
                             (cadr bad-version))))
   (let ((bad-when (should-error
                    (eval '(nelix-environment
                            (name "bad-when")
                            (package magit :when 1)))
-                   :type 'anvil-pkg-error)))
+                   :type 'nelix-error)))
     (should (string-match-p ":when must be a symbol or list"
                             (cadr bad-when)))))
 
@@ -445,7 +445,7 @@
   "Unknown manifest keywords fail before profile mutation."
   (let ((err (should-error
               (nelix-manifest :name "default" :unknown t)
-              :type 'anvil-pkg-error)))
+              :type 'nelix-error)))
     (should (string-match-p "unknown keyword" (cadr err)))))
 
 (ert-deftest nelix-manifest-test-loads-imports-relative-to-manifest ()
@@ -479,7 +479,7 @@
           (cl-letf (((symbol-function 'nelix-package-install-target)
                      (lambda (package)
                        (if (eq package 'magit) "emacsPackages.magit" package)))
-                    ((symbol-function 'anvil-pkg-compat-executable-find)
+                    ((symbol-function 'nelix-compat-executable-find)
                      (lambda (program)
                        (and (equal program "nix") "/usr/bin/nix")))
                     ((symbol-function 'nelix-list)
@@ -488,7 +488,7 @@
                                    :attr-path "legacyPackages.x86_64-linux.emacsPackages.magit")
                              (list :name "bat"
                                    :attr-path "legacyPackages.x86_64-linux.bat"))))
-                    ((symbol-function 'anvil-pkg--call-nix)
+                    ((symbol-function 'nelix-core--call-nix)
                      (lambda (args)
                        (push args nix-calls)
                        (list :exit 0 :stdout "" :stderr "")))
@@ -501,7 +501,7 @@
                        t)))
             (let ((err (should-error
                         (nelix-apply (expand-file-name "manifest.el" dir))
-                        :type 'anvil-pkg-error)))
+                        :type 'nelix-error)))
               (should (string-match-p "refusing to remove 1 package"
                                       (cadr err))))
             (should-not nix-calls)
@@ -565,7 +565,7 @@
           (nelix-manifest-test--write
            dir "manifest.el"
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep fd))\n")
-          (cl-letf (((symbol-function 'anvil-pkg-compat-executable-find)
+          (cl-letf (((symbol-function 'nelix-compat-executable-find)
                      (lambda (program)
                        (and (equal program "nix") "/usr/bin/nix")))
                     ((symbol-function 'nelix-list)
@@ -581,7 +581,7 @@
                        (setq rollback-generation generation)
                        (setq active-generation generation)
                        t))
-                    ((symbol-function 'anvil-pkg--call-nix)
+                    ((symbol-function 'nelix-core--call-nix)
                      (lambda (args)
                        (push args nix-calls)
                        (if (equal (car (last args)) "nixpkgs#fd")
@@ -590,7 +590,7 @@
                          (list :exit 0 :stdout "" :stderr "")))))
             (let ((err (should-error
                         (nelix-apply (expand-file-name "manifest.el" dir))
-                        :type 'anvil-pkg-error)))
+                        :type 'nelix-error)))
               (should (string-match-p "rollback=ok" (cadr err)))
               (should (equal 7 rollback-generation))
               (let ((rollback (plist-get (cddr err) :rollback)))
@@ -627,7 +627,7 @@
           (nelix-manifest-test--write
            dir "manifest.el"
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep fd))\n")
-          (cl-letf (((symbol-function 'anvil-pkg-compat-executable-find)
+          (cl-letf (((symbol-function 'nelix-compat-executable-find)
                      (lambda (program)
                        (and (equal program "nix") "/usr/bin/nix")))
                     ((symbol-function 'nelix-list)
@@ -642,7 +642,7 @@
                      (lambda (_generation)
                        (setq rollback-called t)
                        (ert-fail "rollback must not be called when disabled")))
-                    ((symbol-function 'anvil-pkg--call-nix)
+                    ((symbol-function 'nelix-core--call-nix)
                      (lambda (args)
                        (if (equal (car (last args)) "nixpkgs#fd")
                            (list :exit 1 :stdout "" :stderr "install failed")
@@ -651,7 +651,7 @@
             (let ((err (should-error
                         (nelix-apply (expand-file-name "manifest.el" dir)
                                      :rollback-on-error nil)
-                        :type 'anvil-pkg-error)))
+                        :type 'nelix-error)))
               (should (string-match-p "rollback=not-ok" (cadr err)))
               (should-not rollback-called)
               (let ((rollback (plist-get (cddr err) :rollback)))
@@ -745,7 +745,7 @@
                      (lambda (_name) t)))
             (let ((err (should-error
                         (nelix-apply (expand-file-name "manifest.el" dir))
-                        :type 'anvil-pkg-error)))
+                        :type 'nelix-error)))
               (should (string-match-p "rollback=ok" (cadr err)))
               (should (equal '("fixture-b" "fixture-a") install-calls))
               (let ((profile (nelix-profile-read "dev")))
@@ -782,7 +782,7 @@
           (nelix-manifest-test--write
            dir "manifest.el"
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep fd))\n")
-          (cl-letf (((symbol-function 'anvil-pkg-compat-executable-find)
+          (cl-letf (((symbol-function 'nelix-compat-executable-find)
                      (lambda (program)
                        (and (equal program "nix") "/usr/bin/nix")))
                     ((symbol-function 'nelix-list)
@@ -797,7 +797,7 @@
                      (lambda (generation)
                        (setq rollback-generation generation)
                        t))
-                    ((symbol-function 'anvil-pkg--call-nix)
+                    ((symbol-function 'nelix-core--call-nix)
                      (lambda (args)
                        (if (equal (car (last args)) "nixpkgs#fd")
                            (list :exit 1 :stdout "" :stderr "install failed")
@@ -805,7 +805,7 @@
                          (list :exit 0 :stdout "" :stderr "")))))
             (let ((err (should-error
                         (nelix-apply (expand-file-name "manifest.el" dir))
-                        :type 'anvil-pkg-error)))
+                        :type 'nelix-error)))
               (should (string-match-p "rollback=not-ok" (cadr err)))
               (should (equal 7 rollback-generation))
               (let ((rollback (plist-get (cddr err) :rollback)))
@@ -857,7 +857,7 @@
            (concat (prin1-to-string record) "\n"))
           (let ((err (should-error
                       (nelix-transaction-record-read file)
-                      :type 'anvil-pkg-error)))
+                      :type 'nelix-error)))
             (should (string-match-p "rollback-plan"
                                     (cadr err)))))
       (delete-directory dir t))))
@@ -904,7 +904,7 @@
            (concat (prin1-to-string record) "\n"))
           (let ((err (should-error
                       (nelix-transaction-record-read file)
-                      :type 'anvil-pkg-error)))
+                      :type 'nelix-error)))
             (should (string-match-p "unstable unavailable reason"
                                     (cadr err)))))
       (delete-directory dir t))))
@@ -918,7 +918,7 @@
           (nelix-manifest-test--write
            dir "manifest.el"
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :emacs '(magit) :linux '(ripgrep) :pins '(ripgrep))\n")
-          (cl-letf (((symbol-function 'anvil-pkg-compat--standalone-nelisp-p)
+          (cl-letf (((symbol-function 'nelix-compat--standalone-nelisp-p)
                      (lambda () t))
                     ((symbol-function 'nelix-package-install-target)
                      (lambda (package)
@@ -929,10 +929,10 @@
                                    :attr-path nil
                                    :original-url nil
                                    :store-paths nil))))
-                    ((symbol-function 'anvil-pkg-compat-executable-find)
+                    ((symbol-function 'nelix-compat-executable-find)
                      (lambda (program)
                        (and (equal program "nix") "/usr/bin/nix")))
-                    ((symbol-function 'anvil-pkg--call-nix)
+                    ((symbol-function 'nelix-core--call-nix)
                      (lambda (_args)
                        (setq nix-called t)
                        (list :exit 0 :stdout "" :stderr ""))))
@@ -954,15 +954,15 @@
           (nelix-manifest-test--write
            dir "manifest.el"
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep))\n")
-          (cl-letf (((symbol-function 'anvil-pkg-compat--standalone-nelisp-p)
+          (cl-letf (((symbol-function 'nelix-compat--standalone-nelisp-p)
                      (lambda () t))
                     ((symbol-function 'nelix-list)
                      (lambda () nil))
-                    ((symbol-function 'anvil-pkg-compat-executable-find)
+                    ((symbol-function 'nelix-compat-executable-find)
                      (lambda (program)
                        (and (member program '("nix" "sha256sum"))
                             (format "/usr/bin/%s" program))))
-                    ((symbol-function 'anvil-pkg--detect-nix-version)
+                    ((symbol-function 'nelix-core--detect-nix-version)
                      (lambda () "2.34.7")))
             (let* ((manifest-file (expand-file-name "manifest.el" dir))
                    (_lock (nelix-lock-write manifest-file))
@@ -989,7 +989,7 @@
           (nelix-manifest-test--write
            dir "manifest.el"
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep) :pins '(fd) :backend-policy '(nix))\n")
-          (cl-letf (((symbol-function 'anvil-pkg-compat--standalone-nelisp-p)
+          (cl-letf (((symbol-function 'nelix-compat--standalone-nelisp-p)
                      (lambda () t))
                     ((symbol-function 'nelix-list)
                      (lambda ()
@@ -1028,7 +1028,7 @@
           (nelix-manifest-test--write
            dir "manifest.el"
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep))\n")
-          (cl-letf (((symbol-function 'anvil-pkg-compat--standalone-nelisp-p)
+          (cl-letf (((symbol-function 'nelix-compat--standalone-nelisp-p)
                      (lambda () t))
                     ((symbol-function 'nelix-list)
                      (lambda ()
@@ -1040,13 +1040,13 @@
                                    :attr-path nil
                                    :original-url nil
                                    :store-paths nil))))
-                    ((symbol-function 'anvil-pkg-compat-executable-find)
+                    ((symbol-function 'nelix-compat-executable-find)
                      (lambda (program)
                        (and (equal program "nix") "/usr/bin/nix")))
                     ((symbol-function 'pkg-list-generations)
                      (lambda ()
                        '((:id 7 :date "before" :packages nil :active t))))
-                    ((symbol-function 'anvil-pkg--call-nix)
+                    ((symbol-function 'nelix-core--call-nix)
                      (lambda (_args)
                        (list :exit 0 :stdout "" :stderr "")))
                     ((symbol-function 'nelix-install)
@@ -1097,7 +1097,7 @@
                                                 :command "fixture-tool"
                                                 :target "/usr/bin/fixture-tool")))))
                                  (list :status 'ok :loaded 1)))
-                              ((symbol-function 'anvil-pkg-compat-executable-find)
+                              ((symbol-function 'nelix-compat-executable-find)
                              (lambda (_program) nil)))
                       (let ((plan (nelix-plan
                                    (expand-file-name "manifest.el" dir))))
@@ -1147,7 +1147,7 @@
                                                 :command "fixture-tool"
                                                 :target "/usr/bin/fixture-tool")))))
                                  (list :status 'ok :loaded 1)))
-                              ((symbol-function 'anvil-pkg-compat-executable-find)
+                              ((symbol-function 'nelix-compat-executable-find)
                              (lambda (_program) nil))
                             ((symbol-function 'nelix-native-install)
                              (lambda (&rest _args)
@@ -1177,7 +1177,7 @@
           (nelix-manifest-test--write
            dir "manifest.el"
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep fd) :pins '(ripgrep))\n")
-          (cl-letf (((symbol-function 'anvil-pkg-compat-executable-find)
+          (cl-letf (((symbol-function 'nelix-compat-executable-find)
                      (lambda (program)
                        (and (equal program "nix") "nix")))
                     ((symbol-function 'nelix-list)
@@ -1210,7 +1210,7 @@
           (nelix-manifest-test--write
            dir "manifest.el"
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(fixture-tool) :backend-policy '(nelix-native nix))\n")
-          (cl-letf (((symbol-function 'anvil-pkg-compat-executable-find)
+          (cl-letf (((symbol-function 'nelix-compat-executable-find)
                      (lambda (_program) nil))
                     ((symbol-function 'nelix-list-pins)
                      (lambda () nil))
@@ -1236,7 +1236,7 @@
           (nelix-manifest-test--write
            dir "manifest.el"
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(darwin-only) :backend-policy '(nelix-native))\n")
-          (cl-letf (((symbol-function 'anvil-pkg-compat-executable-find)
+          (cl-letf (((symbol-function 'nelix-compat-executable-find)
                      (lambda (_program) nil))
                     ((symbol-function 'nelix-list-pins)
                      (lambda () nil))
@@ -1286,7 +1286,7 @@
            "default" 'x86_64-linux
            (list (list :name "fixture-tool" :store-path store-a)
                  (list :name "extra-tool" :store-path store-b)))
-          (cl-letf (((symbol-function 'anvil-pkg-compat-executable-find)
+          (cl-letf (((symbol-function 'nelix-compat-executable-find)
                      (lambda (_program) nil))
                     ((symbol-function 'nelix-native-install)
                      (lambda (target _profile _system)
@@ -1327,7 +1327,7 @@
           (nelix-manifest-test--write
            dir "manifest.el"
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep) :pins '(jq))\n")
-          (cl-letf (((symbol-function 'anvil-pkg-compat-executable-find)
+          (cl-letf (((symbol-function 'nelix-compat-executable-find)
                      (lambda (program)
                        (and (equal program "nix") "nix")))
                     ((symbol-function 'nelix-list)
@@ -1359,10 +1359,10 @@
                      (lambda ()
                        (list (list :name "ripgrep"
                                    :attr-path "legacyPackages.x86_64-linux.ripgrep"))))
-                    ((symbol-function 'anvil-pkg-compat-executable-find)
+                    ((symbol-function 'nelix-compat-executable-find)
                      (lambda (program)
                        (and (equal program "nix") "/usr/bin/nix")))
-                    ((symbol-function 'anvil-pkg--detect-nix-version)
+                    ((symbol-function 'nelix-core--detect-nix-version)
                      (lambda () "2.34.7")))
             (let* ((manifest-file (expand-file-name "manifest.el" dir))
                    (lock (nelix-lock-write manifest-file))
@@ -1400,10 +1400,10 @@
                      (lambda ()
                        (list (list :name "ripgrep"
                                    :attr-path "legacyPackages.x86_64-linux.ripgrep"))))
-                    ((symbol-function 'anvil-pkg-compat-executable-find)
+                    ((symbol-function 'nelix-compat-executable-find)
                      (lambda (program)
                        (and (equal program "nix") "/usr/bin/nix")))
-                    ((symbol-function 'anvil-pkg--detect-nix-version)
+                    ((symbol-function 'nelix-core--detect-nix-version)
                      (lambda () "2.34.7")))
             (let* ((manifest-file (expand-file-name "manifest.el" dir))
                    (_lock (nelix-lock-write manifest-file))
@@ -1489,10 +1489,10 @@
                      (lambda ()
                        (list (list :name "ripgrep"
                                    :attr-path "legacyPackages.x86_64-linux.ripgrep"))))
-                    ((symbol-function 'anvil-pkg-compat-executable-find)
+                    ((symbol-function 'nelix-compat-executable-find)
                      (lambda (program)
                        (and (equal program "nix") "/usr/bin/nix")))
-                    ((symbol-function 'anvil-pkg--detect-nix-version)
+                    ((symbol-function 'nelix-core--detect-nix-version)
                      (lambda () "2.34.7")))
             (let* ((manifest-file (expand-file-name "manifest.el" dir))
                    (lock (nelix-lock-write manifest-file))
@@ -1532,10 +1532,10 @@
                      (lambda ()
                        (list (list :name "ripgrep"
                                    :attr-path "legacyPackages.x86_64-linux.ripgrep"))))
-                    ((symbol-function 'anvil-pkg-compat-executable-find)
+                    ((symbol-function 'nelix-compat-executable-find)
                      (lambda (program)
                        (and (equal program "nix") "/usr/bin/nix")))
-                    ((symbol-function 'anvil-pkg--detect-nix-version)
+                    ((symbol-function 'nelix-core--detect-nix-version)
                      (lambda () "2.34.7")))
             (let* ((manifest-file (expand-file-name "manifest.el" dir))
                    (lock (nelix-lock-write manifest-file))
@@ -1575,10 +1575,10 @@
                      (lambda ()
                        (list (list :name "ripgrep"
                                    :attr-path "legacyPackages.x86_64-linux.ripgrep"))))
-                    ((symbol-function 'anvil-pkg-compat-executable-find)
+                    ((symbol-function 'nelix-compat-executable-find)
                      (lambda (program)
                        (and (equal program "nix") "/usr/bin/nix")))
-                    ((symbol-function 'anvil-pkg--detect-nix-version)
+                    ((symbol-function 'nelix-core--detect-nix-version)
                      (lambda () "2.34.7")))
             (let* ((manifest-file (expand-file-name "manifest.el" dir))
                    (lock (nelix-lock-write manifest-file))
@@ -1777,10 +1777,10 @@
                      (lambda ()
                        (list (list :name "ripgrep"
                                    :attr-path "legacyPackages.x86_64-linux.ripgrep"))))
-                    ((symbol-function 'anvil-pkg-compat-executable-find)
+                    ((symbol-function 'nelix-compat-executable-find)
                      (lambda (program)
                        (and (equal program "nix") "/usr/bin/nix")))
-                    ((symbol-function 'anvil-pkg--detect-nix-version)
+                    ((symbol-function 'nelix-core--detect-nix-version)
                      (lambda () "2.34.7")))
             (let ((dry-run (nelix-lock-migrate manifest-file :dry-run t)))
               (should (plist-get dry-run :needed))
@@ -1842,10 +1842,10 @@
                      (lambda ()
                        (list (list :name "ripgrep"
                                    :attr-path "legacyPackages.x86_64-linux.ripgrep"))))
-                    ((symbol-function 'anvil-pkg-compat-executable-find)
+                    ((symbol-function 'nelix-compat-executable-find)
                      (lambda (program)
                        (and (equal program "nix") "/usr/bin/nix")))
-                    ((symbol-function 'anvil-pkg--detect-nix-version)
+                    ((symbol-function 'nelix-core--detect-nix-version)
                      (lambda () "2.34.7")))
             (let* ((manifest-file (expand-file-name "manifest.el" dir))
                    (lock (nelix-lock-write manifest-file))
@@ -1877,10 +1877,10 @@
                      (lambda ()
                        (list (list :name "ripgrep"
                                    :attr-path "legacyPackages.x86_64-linux.ripgrep"))))
-                    ((symbol-function 'anvil-pkg-compat-executable-find)
+                    ((symbol-function 'nelix-compat-executable-find)
                      (lambda (program)
                        (and (equal program "nix") "/usr/bin/nix")))
-                    ((symbol-function 'anvil-pkg--detect-nix-version)
+                    ((symbol-function 'nelix-core--detect-nix-version)
                      (lambda () "2.34.7")))
             (let* ((manifest-file (expand-file-name "manifest.el" dir))
                    (_lock (nelix-lock-write manifest-file))
@@ -1909,10 +1909,10 @@
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :imports '(\"packages.el\") :linux '(ripgrep))\n")
           (cl-letf (((symbol-function 'nelix-list)
                      (lambda () nil))
-                    ((symbol-function 'anvil-pkg-compat-executable-find)
+                    ((symbol-function 'nelix-compat-executable-find)
                      (lambda (program)
                        (and (equal program "nix") "/usr/bin/nix")))
-                    ((symbol-function 'anvil-pkg--detect-nix-version)
+                    ((symbol-function 'nelix-core--detect-nix-version)
                      (lambda () "2.34.7"))
                     ((symbol-function 'nelix-install)
                      (lambda (targets)
@@ -1926,7 +1926,7 @@
                dir "packages.el"
                "(setq nelix-manifest-test-import-loaded 'v2)\n")
               (should-error (nelix-apply manifest-file :locked t)
-                            :type 'anvil-pkg-error)
+                            :type 'nelix-error)
               (should-not installed-targets))))
       (delete-directory dir t))))
 
@@ -1941,12 +1941,12 @@
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep))\n")
           (cl-letf (((symbol-function 'nelix-list)
                      (lambda () nil))
-                    ((symbol-function 'anvil-pkg-compat-executable-find)
+                    ((symbol-function 'nelix-compat-executable-find)
                      (lambda (program)
                        (and (equal program "nix") "/usr/bin/nix")))
-                    ((symbol-function 'anvil-pkg--detect-nix-version)
+                    ((symbol-function 'nelix-core--detect-nix-version)
                      (lambda () "2.34.7"))
-                    ((symbol-function 'anvil-pkg--call-nix)
+                    ((symbol-function 'nelix-core--call-nix)
                      (lambda (args)
                        (push args nix-calls)
                        (list :exit 0 :stdout "" :stderr "")))
@@ -1982,7 +1982,7 @@
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep))\n")
           (cl-letf (((symbol-function 'nelix-list)
                      (lambda () nil))
-                    ((symbol-function 'anvil-pkg-compat-executable-find)
+                    ((symbol-function 'nelix-compat-executable-find)
                      (lambda (program)
                        (and (equal program "nix") "/usr/bin/nix")))
                     ((symbol-function 'nelix-install)
@@ -2007,7 +2007,7 @@
                          (lambda (_manifest) lock)))
                 (let ((err (should-error
                             (nelix-apply manifest-file :locked t)
-                            :type 'anvil-pkg-error)))
+                            :type 'nelix-error)))
                   (should (string-match-p "lock version 1 cannot enforce"
                                           (cadr err))))
                 (should-not installed-targets)))))
@@ -2026,12 +2026,12 @@
                      (lambda ()
                        (list (list :name "ripgrep"
                                    :attr-path "legacyPackages.x86_64-linux.ripgrep"))))
-                    ((symbol-function 'anvil-pkg-compat-executable-find)
+                    ((symbol-function 'nelix-compat-executable-find)
                      (lambda (program)
                        (and (equal program "nix") "/usr/bin/nix")))
-                    ((symbol-function 'anvil-pkg--detect-nix-version)
+                    ((symbol-function 'nelix-core--detect-nix-version)
                      (lambda () "2.34.7"))
-                    ((symbol-function 'anvil-pkg--call-nix)
+                    ((symbol-function 'nelix-core--call-nix)
                      (lambda (args)
                        (push args nix-calls)
                        (list :exit 0 :stdout "" :stderr "")))
@@ -2050,7 +2050,7 @@
                future-lock)
               (let ((err (should-error
                           (nelix-apply manifest-file :locked t)
-                          :type 'anvil-pkg-error)))
+                          :type 'nelix-error)))
                 (should (string-match-p "lock schema incompatible"
                                         (cadr err))))
               (should-not nix-calls))))
@@ -2067,10 +2067,10 @@
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep))\n")
           (cl-letf (((symbol-function 'nelix-list)
                      (lambda () nil))
-                    ((symbol-function 'anvil-pkg-compat-executable-find)
+                    ((symbol-function 'nelix-compat-executable-find)
                      (lambda (program)
                        (and (equal program "nix") "/usr/bin/nix")))
-                    ((symbol-function 'anvil-pkg--detect-nix-version)
+                    ((symbol-function 'nelix-core--detect-nix-version)
                      (lambda () "2.34.7"))
                     ((symbol-function 'nelix-install)
                      (lambda (targets)
@@ -2090,7 +2090,7 @@
               (cl-letf (((symbol-function 'nelix-lock-read)
                          (lambda (_manifest) drift-lock)))
                 (should-error (nelix-apply manifest-file :locked t)
-                              :type 'anvil-pkg-error)
+                              :type 'nelix-error)
                 (should-not installed-targets)))))
       (delete-directory dir t))))
 
@@ -2346,10 +2346,10 @@
           (nelix-manifest-test--write
            dir "manifest.el"
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep))\n")
-          (let ((anvil-pkg--call-nix-fn
+          (let ((nelix-core--call-nix-fn
                  (lambda (_args)
                    (ert-fail "nelix-upgrade-plan must not invoke nix in this test"))))
-            (cl-letf (((symbol-function 'anvil-pkg-compat-executable-find)
+            (cl-letf (((symbol-function 'nelix-compat-executable-find)
                        (lambda (program)
                          (and (equal program "nix") "nix")))
                       ((symbol-function 'pkg-list)
@@ -2382,7 +2382,7 @@
           (nelix-manifest-test--write
            dir "manifest.el"
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep) :pins '(fd))\n")
-          (cl-letf (((symbol-function 'anvil-pkg-compat--standalone-nelisp-p)
+          (cl-letf (((symbol-function 'nelix-compat--standalone-nelisp-p)
                      (lambda () t))
                     ((symbol-function 'pkg-upgrade-plan)
                      (lambda (&optional _name)
@@ -2496,7 +2496,7 @@
              (lambda (_backend &optional _system) t))
             ((symbol-function 'nelix-backend-upgrade-plan)
              (lambda (backend &optional _targets)
-               (signal 'anvil-pkg-error
+               (signal 'nelix-error
                        (list (format "unsupported backend %S" backend))))))
     (let ((report (nelix-outdated)))
       (should (plist-get report :empty))
@@ -2623,7 +2623,7 @@
           (nelix-manifest-test--write
            dir "manifest.el"
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep))\n")
-          (cl-letf (((symbol-function 'anvil-pkg-compat--standalone-nelisp-p)
+          (cl-letf (((symbol-function 'nelix-compat--standalone-nelisp-p)
                      (lambda () t))
                     ((symbol-function 'nelix-list)
                      (lambda ()

@@ -1,32 +1,32 @@
-;;; anvil-pkg-dsl-test.el --- ERT tests for anvil-pkg-dsl -*- lexical-binding: t; -*-
+;;; nelix-dsl-test.el --- ERT tests for nelix-dsl -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026 zawatton
-;; This file is part of anvil-pkg.  GPL-3.0-or-later.
+;; This file is part of nelix-core.  GPL-3.0-or-later.
 
 ;;; Commentary:
 
-;; Phase 2 ERT coverage.  Mocks `anvil-pkg--call-nix-fn' and
-;; `anvil-pkg--write-flake-fn' so neither the nix binary nor disk
+;; Phase 2 ERT coverage.  Mocks `nelix-core--call-nix-fn' and
+;; `nelix-core--write-flake-fn' so neither the nix binary nor disk
 ;; access is required to run the suite.
 
 ;;; Code:
 
 (require 'ert)
 (require 'cl-lib)
-(require 'anvil-pkg-dsl)
+(require 'nelix-dsl)
 
-(defvar anvil-pkg-emacs--render-fetch-fn nil)
+(defvar nelix-emacs--render-fetch-fn nil)
 
-(declare-function anvil-pkg-render-example "scripts/anvil-pkg-render")
-(declare-function anvil-pkg-render-example-attr "scripts/anvil-pkg-render")
+(declare-function nelix-core-render-example "scripts/nelix-core-render")
+(declare-function nelix-core-render-example-attr "scripts/nelix-core-render")
 
-(defmacro anvil-pkg-dsl-test--with-clean-registry (&rest body)
+(defmacro nelix-dsl-test--with-clean-registry (&rest body)
   "Run BODY against an empty registry, restored on exit."
   (declare (indent 0))
-  `(let ((anvil-pkg--registry (make-hash-table :test 'eq)))
+  `(let ((nelix-core--registry (make-hash-table :test 'eq)))
      ,@body))
 
-(defun anvil-pkg-dsl-test--contains-p (needle haystack)
+(defun nelix-dsl-test--contains-p (needle haystack)
   "Return non-nil when literal NEEDLE occurs in HAYSTACK.
 Keep this helper regex-free so the standalone NeLisp suite does
 not depend on regex features for plain generated-output checks."
@@ -45,15 +45,15 @@ not depend on regex features for plain generated-output checks."
 
 ;;;; --- pkg-define / parser ---------------------------------------------------
 
-(ert-deftest anvil-pkg-dsl-test-define-registers ()
+(ert-deftest nelix-dsl-test-define-registers ()
   "pkg-define stores IR under the correct symbol with parsed source."
-  (anvil-pkg-dsl-test--with-clean-registry
+  (nelix-dsl-test--with-clean-registry
     (eval '(pkg-define my-tool
              (version "1.0.0")
              (source (url-fetch "https://example.com/tool-1.0.tar.gz"
                                 :sha256 "sha256-abc")))
           t)
-    (let ((ir (gethash 'my-tool anvil-pkg--registry)))
+    (let ((ir (gethash 'my-tool nelix-core--registry)))
       (should ir)
       (should (eq 'my-tool (plist-get ir :name)))
       (should (equal "1.0.0" (plist-get ir :version)))
@@ -64,7 +64,7 @@ not depend on regex features for plain generated-output checks."
                        (plist-get src :url)))
         (should (equal "sha256-abc" (plist-get src :sha256)))))))
 
-(ert-deftest anvil-pkg-dsl-test-define-rejects-unknown-keyword ()
+(ert-deftest nelix-dsl-test-define-rejects-unknown-keyword ()
   "Unknown sub-form keyword raises at expansion time."
   (should-error
    (macroexpand-1
@@ -72,9 +72,9 @@ not depend on regex features for plain generated-output checks."
        (version "1.0")
        (source (url-fetch "https://x" :sha256 "y"))
        (typo-key "oops")))
-   :type 'anvil-pkg-dsl-error))
+   :type 'nelix-dsl-error))
 
-(ert-deftest anvil-pkg-dsl-test-define-rejects-unknown-build-system ()
+(ert-deftest nelix-dsl-test-define-rejects-unknown-build-system ()
   "Unknown build-system symbol errors at parser."
   (should-error
    (macroexpand-1
@@ -82,22 +82,22 @@ not depend on regex features for plain generated-output checks."
        (version "1.0")
        (source (url-fetch "https://x" :sha256 "y"))
        (build-system nim)))
-   :type 'anvil-pkg-dsl-error))
+   :type 'nelix-dsl-error))
 
-(ert-deftest anvil-pkg-dsl-test-define-build-system-emacs-package ()
+(ert-deftest nelix-dsl-test-define-build-system-emacs-package ()
   "emacs-package build-system parses to the expected IR shape."
-  (anvil-pkg-dsl-test--with-clean-registry
+  (nelix-dsl-test--with-clean-registry
     (eval '(pkg-define my-elisp
              (version "1.2.3")
              (source (url-fetch "https://example.com/my-elisp.tar.gz"
                                 :sha256 "sha256-elisp"))
              (build-system emacs-package))
           t)
-    (let* ((ir (gethash 'my-elisp anvil-pkg--registry))
+    (let* ((ir (gethash 'my-elisp nelix-core--registry))
            (bs (plist-get ir :build-system)))
       (should (equal '(:type emacs-package) bs)))))
 
-(ert-deftest anvil-pkg-dsl-test-define-rejects-install-phase-on-emacs-package ()
+(ert-deftest nelix-dsl-test-define-rejects-install-phase-on-emacs-package ()
   "install-phase is rejected for emacs-package build-system."
   (should-error
    (macroexpand-1
@@ -107,11 +107,11 @@ not depend on regex features for plain generated-output checks."
                           :sha256 "sha256-elisp"))
        (build-system (emacs-package))
        (install-phase "mkdir -p $out")))
-   :type 'anvil-pkg-dsl-error))
+   :type 'nelix-dsl-error))
 
-(ert-deftest anvil-pkg-dsl-test-define-depends-on-list ()
+(ert-deftest nelix-dsl-test-define-depends-on-list ()
   "depends-on list parses to a list of symbols."
-  (anvil-pkg-dsl-test--with-clean-registry
+  (nelix-dsl-test--with-clean-registry
     (eval '(pkg-define my-elisp
              (version "1.2.3")
              (source (url-fetch "https://example.com/my-elisp.tar.gz"
@@ -119,13 +119,13 @@ not depend on regex features for plain generated-output checks."
              (build-system emacs-package)
              (depends-on (list dash transient)))
           t)
-    (let ((ir (gethash 'my-elisp anvil-pkg--registry)))
+    (let ((ir (gethash 'my-elisp nelix-core--registry)))
       (should (equal '(dash transient)
                      (plist-get ir :depends-on))))))
 
 ;;;; --- renderer (pure, golden) ----------------------------------------------
 
-(ert-deftest anvil-pkg-dsl-test-render-stdenv-url-fetch-golden ()
+(ert-deftest nelix-dsl-test-render-stdenv-url-fetch-golden ()
   "Renderer emits expected Nix derivation for stdenv + url-fetch + inputs."
   (let ((ir '(:name my-rg
               :version "13.0.0"
@@ -149,28 +149,28 @@ not depend on regex features for plain generated-output checks."
                    "    make install PREFIX=$out\n"
                    "  '';\n"
                    "}")))
-    (should (equal expected (anvil-pkg-render-nix ir)))))
+    (should (equal expected (nelix-core-render-nix ir)))))
 
 ;;;; --- pkg-install symbol path ----------------------------------------------
 
-(ert-deftest anvil-pkg-dsl-test-install-symbol-dispatches ()
+(ert-deftest nelix-dsl-test-install-symbol-dispatches ()
   "pkg-install with symbol arg writes flake + calls nix install."
-  (anvil-pkg-dsl-test--with-clean-registry
+  (nelix-dsl-test--with-clean-registry
     (eval '(pkg-define my-tool
              (version "1.0.0")
              (source (url-fetch "https://x" :sha256 "sha256-y")))
           t)
     (let* (call-nix-args
            write-called
-           (anvil-pkg--call-nix-fn
+           (nelix-core--call-nix-fn
             (lambda (args)
               (setq call-nix-args args)
               (list :exit 0 :stdout "" :stderr "")))
-           (anvil-pkg--write-flake-fn
+           (nelix-core--write-flake-fn
             (lambda ()
               (setq write-called t)
-              "/tmp/anvil-pkg-test/flake.nix"))
-           (anvil-pkg-profile-dir "/tmp/anvil-pkg-test/profile"))
+              "/tmp/nelix-core-test/flake.nix"))
+           (nelix-core-profile-dir "/tmp/nelix-core-test/profile"))
       (should (eq t (pkg-install 'my-tool)))
       (should write-called)
       (should (member "install" call-nix-args))
@@ -179,28 +179,28 @@ not depend on regex features for plain generated-output checks."
                               (string-match-p "path:.*#my-tool" a)))
                        call-nix-args)))))
 
-(ert-deftest anvil-pkg-dsl-test-install-undefined-errors ()
+(ert-deftest nelix-dsl-test-install-undefined-errors ()
   "pkg-install of an unregistered symbol signals undefined-package."
-  (anvil-pkg-dsl-test--with-clean-registry
-    (let ((anvil-pkg--call-nix-fn
+  (nelix-dsl-test--with-clean-registry
+    (let ((nelix-core--call-nix-fn
            (lambda (_args) (list :exit 0 :stdout "" :stderr "")))
-          (anvil-pkg--write-flake-fn
+          (nelix-core--write-flake-fn
            (lambda () "/tmp/dummy.nix")))
       (should-error (pkg-install 'never-defined)
-                    :type 'anvil-pkg-undefined-package))))
+                    :type 'nelix-undefined-package))))
 
 ;;;; --- Phase 3: source types -----------------------------------------------
 
-(ert-deftest anvil-pkg-dsl-test-define-source-github-fetch ()
+(ert-deftest nelix-dsl-test-define-source-github-fetch ()
   "github-fetch sub-form parses owner / repo / rev / sha256."
-  (anvil-pkg-dsl-test--with-clean-registry
+  (nelix-dsl-test--with-clean-registry
     (eval '(pkg-define my-rg
              (version "13.0.0")
              (source (github-fetch :owner "BurntSushi" :repo "ripgrep"
                                    :rev "13.0.0"
                                    :sha256 "sha256-abc")))
           t)
-    (let* ((ir (gethash 'my-rg anvil-pkg--registry))
+    (let* ((ir (gethash 'my-rg nelix-core--registry))
            (src (plist-get ir :source)))
       (should (eq 'github-fetch (plist-get src :type)))
       (should (equal "BurntSushi" (plist-get src :owner)))
@@ -208,16 +208,16 @@ not depend on regex features for plain generated-output checks."
       (should (equal "13.0.0"      (plist-get src :rev)))
       (should (equal "sha256-abc"  (plist-get src :sha256))))))
 
-(ert-deftest anvil-pkg-dsl-test-define-source-git-fetch ()
+(ert-deftest nelix-dsl-test-define-source-git-fetch ()
   "git-fetch sub-form parses url / rev / sha256."
-  (anvil-pkg-dsl-test--with-clean-registry
+  (nelix-dsl-test--with-clean-registry
     (eval '(pkg-define my-priv
              (version "0.1.0")
              (source (git-fetch :url "https://example.com/private.git"
                                 :rev "abc1234"
                                 :sha256 "sha256-priv")))
           t)
-    (let* ((ir (gethash 'my-priv anvil-pkg--registry))
+    (let* ((ir (gethash 'my-priv nelix-core--registry))
            (src (plist-get ir :source)))
       (should (eq 'git-fetch (plist-get src :type)))
       (should (equal "https://example.com/private.git"
@@ -225,7 +225,7 @@ not depend on regex features for plain generated-output checks."
       (should (equal "abc1234"      (plist-get src :rev)))
       (should (equal "sha256-priv"  (plist-get src :sha256))))))
 
-(ert-deftest anvil-pkg-dsl-test-render-github-fetch-golden ()
+(ert-deftest nelix-dsl-test-render-github-fetch-golden ()
   "Renderer emits fetchFromGitHub for github-fetch source."
   (let ((ir '(:name my-rg
               :version "13.0.0"
@@ -246,9 +246,9 @@ not depend on regex features for plain generated-output checks."
                    "    sha256 = \"sha256-abc\";\n"
                    "  };\n"
                    "}")))
-    (should (equal expected (anvil-pkg-render-nix ir)))))
+    (should (equal expected (nelix-core-render-nix ir)))))
 
-(ert-deftest anvil-pkg-dsl-test-render-git-fetch-golden ()
+(ert-deftest nelix-dsl-test-render-git-fetch-golden ()
   "Renderer emits fetchgit for git-fetch source."
   (let ((ir '(:name my-priv
               :version "0.1.0"
@@ -267,24 +267,24 @@ not depend on regex features for plain generated-output checks."
                    "    sha256 = \"sha256-priv\";\n"
                    "  };\n"
                    "}")))
-    (should (equal expected (anvil-pkg-render-nix ir)))))
+    (should (equal expected (nelix-core-render-nix ir)))))
 
 ;;;; --- Phase 3: build systems ----------------------------------------------
 
-(ert-deftest anvil-pkg-dsl-test-define-build-system-rust-with-args ()
+(ert-deftest nelix-dsl-test-define-build-system-rust-with-args ()
   "Rust build-system with :cargo-sha256 parses into IR."
-  (anvil-pkg-dsl-test--with-clean-registry
+  (nelix-dsl-test--with-clean-registry
     (eval '(pkg-define my-rust-tool
              (version "1.0.0")
              (source (url-fetch "https://x" :sha256 "sha256-src"))
              (build-system (rust :cargo-sha256 "sha256-cargo")))
           t)
-    (let* ((ir (gethash 'my-rust-tool anvil-pkg--registry))
+    (let* ((ir (gethash 'my-rust-tool nelix-core--registry))
            (bs (plist-get ir :build-system)))
       (should (eq 'rust (plist-get bs :type)))
       (should (equal "sha256-cargo" (plist-get bs :cargo-sha256))))))
 
-(ert-deftest anvil-pkg-dsl-test-rust-requires-cargo-sha256 ()
+(ert-deftest nelix-dsl-test-rust-requires-cargo-sha256 ()
   "Rust build-system without :cargo-sha256 errors at parser."
   (should-error
    (macroexpand-1
@@ -292,9 +292,9 @@ not depend on regex features for plain generated-output checks."
        (version "1.0")
        (source (url-fetch "https://x" :sha256 "y"))
        (build-system (rust))))
-   :type 'anvil-pkg-dsl-error))
+   :type 'nelix-dsl-error))
 
-(ert-deftest anvil-pkg-dsl-test-render-rust-golden ()
+(ert-deftest nelix-dsl-test-render-rust-golden ()
   "Renderer emits rustPlatform.buildRustPackage for rust build-system."
   (let ((ir '(:name my-rust-tool
               :version "1.0.0"
@@ -314,9 +314,9 @@ not depend on regex features for plain generated-output checks."
                    "  buildInputs = with pkgs; [ openssl ];\n"
                    "  cargoHash = \"sha256-cargo\";\n"
                    "}")))
-    (should (equal expected (anvil-pkg-render-nix ir)))))
+    (should (equal expected (nelix-core-render-nix ir)))))
 
-(ert-deftest anvil-pkg-dsl-test-render-rust-emits-cargo-hash-not-sha256 ()
+(ert-deftest nelix-dsl-test-render-rust-emits-cargo-hash-not-sha256 ()
   "Phase 4-H regression: rust renderer must emit `cargoHash', not
 `cargoSha256'.  Modern nixpkgs (>=23.11) deprecated `cargoSha256'
 and nixpkgs-unstable rejects it with `cargoHash, cargoVendorDir,
@@ -325,11 +325,11 @@ cargoDeps, or cargoLock must be set'."
                :version "1.0"
                :source (:type url-fetch :url "https://x/x.tgz" :sha256 "sha256-x")
                :build-system (:type rust :cargo-sha256 "sha256-cargoval")))
-         (out (anvil-pkg-render-nix ir)))
+         (out (nelix-core-render-nix ir)))
     (should (string-match-p "cargoHash = \"sha256-cargoval\";" out))
     (should-not (string-match-p "cargoSha256" out))))
 
-(ert-deftest anvil-pkg-dsl-test-render-python-golden ()
+(ert-deftest nelix-dsl-test-render-python-golden ()
   "Renderer emits buildPythonPackage for python build-system with :format."
   (let ((ir '(:name my-py-tool
               :version "0.5.0"
@@ -347,9 +347,9 @@ cargoDeps, or cargoLock must be set'."
                    "  };\n"
                    "  format = \"pyproject\";\n"
                    "}")))
-    (should (equal expected (anvil-pkg-render-nix ir)))))
+    (should (equal expected (nelix-core-render-nix ir)))))
 
-(ert-deftest anvil-pkg-dsl-test-render-go-golden ()
+(ert-deftest nelix-dsl-test-render-go-golden ()
   "Renderer emits buildGoModule for go build-system, vendorHash null when absent."
   (let ((ir '(:name my-go-tool
               :version "0.3.0"
@@ -369,9 +369,9 @@ cargoDeps, or cargoLock must be set'."
                    "  };\n"
                    "  vendorHash = null;\n"
                    "}")))
-    (should (equal expected (anvil-pkg-render-nix ir)))))
+    (should (equal expected (nelix-core-render-nix ir)))))
 
-(ert-deftest anvil-pkg-dsl-test-render-emacs-package-with-deps-golden ()
+(ert-deftest nelix-dsl-test-render-emacs-package-with-deps-golden ()
   "Renderer emits trivialBuild with packageRequires for emacs-package."
   (let ((ir '(:name magit
               :version "3.3.0"
@@ -402,63 +402,63 @@ cargoDeps, or cargoLock must be set'."
                    "    license = pkgs.lib.licenses.gpl3;\n"
                    "  };\n"
                    "}")))
-    (should (equal expected (anvil-pkg-render-nix ir)))))
+    (should (equal expected (nelix-core-render-nix ir)))))
 
 ;;;; --- Phase 4-B sub-task A: emacs-package :format / :native-comp ----------
 
-(ert-deftest anvil-pkg-dsl-test-define-build-system-emacs-package-format-trivial ()
+(ert-deftest nelix-dsl-test-define-build-system-emacs-package-format-trivial ()
   "Explicit :format \"trivial\" parses to (:type emacs-package :format \"trivial\")."
-  (anvil-pkg-dsl-test--with-clean-registry
+  (nelix-dsl-test--with-clean-registry
     (eval '(pkg-define my-elisp
              (version "1.0.0")
              (source (url-fetch "https://example.com/my-elisp.tar.gz"
                                 :sha256 "sha256-elisp"))
              (build-system (emacs-package :format "trivial")))
           t)
-    (let ((bs (plist-get (gethash 'my-elisp anvil-pkg--registry) :build-system)))
+    (let ((bs (plist-get (gethash 'my-elisp nelix-core--registry) :build-system)))
       (should (eq 'emacs-package (plist-get bs :type)))
       (should (equal "trivial" (plist-get bs :format))))))
 
-(ert-deftest anvil-pkg-dsl-test-define-build-system-emacs-package-format-melpa ()
+(ert-deftest nelix-dsl-test-define-build-system-emacs-package-format-melpa ()
   ":format \"melpa\" round-trips into the IR build-system plist."
-  (anvil-pkg-dsl-test--with-clean-registry
+  (nelix-dsl-test--with-clean-registry
     (eval '(pkg-define my-elisp
              (version "1.0.0")
              (source (url-fetch "https://example.com/my-elisp.tar.gz"
                                 :sha256 "sha256-elisp"))
              (build-system (emacs-package :format "melpa")))
           t)
-    (let ((bs (plist-get (gethash 'my-elisp anvil-pkg--registry) :build-system)))
+    (let ((bs (plist-get (gethash 'my-elisp nelix-core--registry) :build-system)))
       (should (eq 'emacs-package (plist-get bs :type)))
       (should (equal "melpa" (plist-get bs :format))))))
 
-(ert-deftest anvil-pkg-dsl-test-define-rejects-unknown-format ()
-  "Unknown :format value raises anvil-pkg-dsl-error at parse time."
+(ert-deftest nelix-dsl-test-define-rejects-unknown-format ()
+  "Unknown :format value raises nelix-dsl-error at parse time."
   (should-error
    (macroexpand-1
     '(pkg-define my-elisp
        (version "1.0")
        (source (url-fetch "https://x" :sha256 "y"))
        (build-system (emacs-package :format "garbage"))))
-   :type 'anvil-pkg-dsl-error))
+   :type 'nelix-dsl-error))
 
-(ert-deftest anvil-pkg-dsl-test-define-build-system-emacs-package-native-comp ()
+(ert-deftest nelix-dsl-test-define-build-system-emacs-package-native-comp ()
   ":native-comp t round-trips into the IR build-system plist."
-  (anvil-pkg-dsl-test--with-clean-registry
+  (nelix-dsl-test--with-clean-registry
     (eval '(pkg-define my-elisp
              (version "1.0.0")
              (source (url-fetch "https://example.com/my-elisp.tar.gz"
                                 :sha256 "sha256-elisp"))
              (build-system (emacs-package :format "melpa" :native-comp t)))
           t)
-    (let ((bs (plist-get (gethash 'my-elisp anvil-pkg--registry) :build-system)))
+    (let ((bs (plist-get (gethash 'my-elisp nelix-core--registry) :build-system)))
       (should (eq 'emacs-package (plist-get bs :type)))
       (should (equal "melpa" (plist-get bs :format)))
       (should (eq t (plist-get bs :native-comp))))))
 
-(ert-deftest anvil-pkg-dsl-test-define-build-system-emacs-package-pname ()
+(ert-deftest nelix-dsl-test-define-build-system-emacs-package-pname ()
   ":pname round-trips into the IR build-system plist."
-  (anvil-pkg-dsl-test--with-clean-registry
+  (nelix-dsl-test--with-clean-registry
     (eval '(pkg-define emacs-async
              (version "0.0.0")
              (source (github-fetch :owner "jwiegley"
@@ -468,14 +468,14 @@ cargoDeps, or cargoLock must be set'."
              (build-system (emacs-package :format "melpa"
                                           :pname "async")))
           t)
-    (let ((bs (plist-get (gethash 'emacs-async anvil-pkg--registry) :build-system)))
+    (let ((bs (plist-get (gethash 'emacs-async nelix-core--registry) :build-system)))
       (should (eq 'emacs-package (plist-get bs :type)))
       (should (equal "melpa" (plist-get bs :format)))
       (should (equal "async" (plist-get bs :pname))))))
 
-(ert-deftest anvil-pkg-dsl-test-define-build-system-emacs-package-ignore-compilation-error ()
+(ert-deftest nelix-dsl-test-define-build-system-emacs-package-ignore-compilation-error ()
   ":ignore-compilation-error round-trips into the IR build-system plist."
-  (anvil-pkg-dsl-test--with-clean-registry
+  (nelix-dsl-test--with-clean-registry
     (eval '(pkg-define noisy-elisp
              (version "0.0.0")
              (source (github-fetch :owner "example"
@@ -485,12 +485,12 @@ cargoDeps, or cargoLock must be set'."
              (build-system (emacs-package :format "melpa"
                                           :ignore-compilation-error t)))
           t)
-    (let ((bs (plist-get (gethash 'noisy-elisp anvil-pkg--registry) :build-system)))
+    (let ((bs (plist-get (gethash 'noisy-elisp nelix-core--registry) :build-system)))
       (should (eq 'emacs-package (plist-get bs :type)))
       (should (equal "melpa" (plist-get bs :format)))
       (should (eq t (plist-get bs :ignore-compilation-error))))))
 
-(ert-deftest anvil-pkg-dsl-test-define-rejects-bad-emacs-package-pname ()
+(ert-deftest nelix-dsl-test-define-rejects-bad-emacs-package-pname ()
   ":pname must be a non-empty string."
   (should-error
    (macroexpand-1
@@ -501,9 +501,9 @@ cargoDeps, or cargoLock must be set'."
                              :rev "rev"
                              :sha256 "sha256-async"))
        (build-system (emacs-package :format "melpa" :pname async))))
-   :type 'anvil-pkg-dsl-error))
+   :type 'nelix-dsl-error))
 
-(ert-deftest anvil-pkg-dsl-test-define-rejects-bad-ignore-compilation-error ()
+(ert-deftest nelix-dsl-test-define-rejects-bad-ignore-compilation-error ()
   ":ignore-compilation-error must be boolean."
   (should-error
    (macroexpand-1
@@ -515,9 +515,9 @@ cargoDeps, or cargoLock must be set'."
                              :sha256 "sha256-noisy"))
        (build-system (emacs-package :format "melpa"
                                     :ignore-compilation-error yes))))
-   :type 'anvil-pkg-dsl-error))
+   :type 'nelix-dsl-error))
 
-(ert-deftest anvil-pkg-dsl-test-define-rejects-native-comp-on-non-emacs-package ()
+(ert-deftest nelix-dsl-test-define-rejects-native-comp-on-non-emacs-package ()
   ":native-comp on stdenv / rust / python / go raises at parse time (L13)."
   (should-error
    (macroexpand-1
@@ -525,21 +525,21 @@ cargoDeps, or cargoLock must be set'."
        (version "1.0")
        (source (url-fetch "https://x" :sha256 "y"))
        (build-system (rust :cargo-sha256 "sha256-cargo" :native-comp t))))
-   :type 'anvil-pkg-dsl-error)
+   :type 'nelix-dsl-error)
   (should-error
    (macroexpand-1
     '(pkg-define my-py-tool
        (version "1.0")
        (source (url-fetch "https://x" :sha256 "y"))
        (build-system (python :native-comp t))))
-   :type 'anvil-pkg-dsl-error))
+   :type 'nelix-dsl-error))
 
-(ert-deftest anvil-pkg-dsl-test-render-emacs-package-melpa-golden ()
+(ert-deftest nelix-dsl-test-render-emacs-package-melpa-golden ()
   "Renderer emits melpaBuild when :format is \"melpa\".
 Phase 4-D L23: github-fetch + default :melpa-synth `auto' adds a
 postUnpack block synthesising recipes/<pname>.
 Phase 4-E L28: default :files comes from
-`anvil-pkg--default-melpa-files' (full package-build spec)."
+`nelix-core--default-melpa-files' (full package-build spec)."
   (let* ((ir '(:name magit
                :version "3.3.0"
                :source (:type github-fetch
@@ -553,8 +553,8 @@ Phase 4-E L28: default :files comes from
           (concat "    (magit :fetcher git :url "
                   "\"https://github.com/magit/magit\" :files "
                   (format "(%s)"
-                          (mapconcat #'anvil-pkg--render-elisp-literal
-                                     anvil-pkg--default-melpa-files
+                          (mapconcat #'nelix-core--render-elisp-literal
+                                     nelix-core--default-melpa-files
                                      " "))
                   ")\n"))
          (expected (concat
@@ -575,9 +575,9 @@ Phase 4-E L28: default :files comes from
                     "    ANVIL_PKG_RECIPE_EOF\n"
                     "  '';\n"
                     "}")))
-    (should (equal expected (anvil-pkg-render-nix ir)))))
+    (should (equal expected (nelix-core-render-nix ir)))))
 
-(ert-deftest anvil-pkg-dsl-test-render-emacs-package-ignore-compilation-error ()
+(ert-deftest nelix-dsl-test-render-emacs-package-ignore-compilation-error ()
   "Renderer emits ignoreCompilationError for emacs-package builders."
   (let* ((ir '(:name noisy-elisp
                :version "0.0.0"
@@ -589,10 +589,10 @@ Phase 4-E L28: default :files comes from
                :build-system (:type emacs-package
                               :format "trivial"
                               :ignore-compilation-error t)))
-         (out (anvil-pkg-render-nix ir)))
+         (out (nelix-core-render-nix ir)))
     (should (string-match-p "  ignoreCompilationError = true;" out))))
 
-(ert-deftest anvil-pkg-dsl-test-render-emacs-package-pname-golden ()
+(ert-deftest nelix-dsl-test-render-emacs-package-pname-golden ()
   ":pname overrides derivation pname and synthetic MELPA recipe name."
   (let* ((ir '(:name emacs-async
                :version "0.0.0"
@@ -604,14 +604,14 @@ Phase 4-E L28: default :files comes from
                :build-system (:type emacs-package
                               :format "melpa"
                               :pname "async")))
-         (out (anvil-pkg-render-nix ir)))
+         (out (nelix-core-render-nix ir)))
     (should (string-match-p "  pname = \"async\";" out))
     (should (string-match-p "cat > \"\\$NIX_BUILD_TOP/recipes/async\"" out))
     (should (string-match-p
              "(async :fetcher git :url \"https://github\\.com/jwiegley/emacs-async\""
              out))))
 
-(ert-deftest anvil-pkg-dsl-test-render-emacs-package-native-comp-golden ()
+(ert-deftest nelix-dsl-test-render-emacs-package-native-comp-golden ()
   "Renderer wraps with (emacsPackagesFor pkgs.emacs) when :native-comp t."
   (let ((ir '(:name dash
               :version "2.20.0"
@@ -632,11 +632,11 @@ Phase 4-E L28: default :files comes from
                    "    sha256 = \"sha256-dash\";\n"
                    "  };\n"
                    "}")))
-    (should (equal expected (anvil-pkg-render-nix ir)))))
+    (should (equal expected (nelix-core-render-nix ir)))))
 
 ;;;; --- Phase 4-D sub-task A: :melpa-synth / :melpa-recipe / :melpa-files (L23) -
 
-(ert-deftest anvil-pkg-dsl-test-melpa-synth-auto-with-github-fetch ()
+(ert-deftest nelix-dsl-test-melpa-synth-auto-with-github-fetch ()
   "L23: :format \"melpa\" + github-fetch + default `:melpa-synth auto'
 emits a postUnpack block carrying the github URL.
 Phase 4-E L28: synth uses the full default :files spec when
@@ -649,21 +649,21 @@ Phase 4-E L28: synth uses the full default :files spec when
                         :rev "v3.9.7"
                         :sha256 "sha256-helm")
                :build-system (:type emacs-package :format "melpa")))
-         (out (anvil-pkg-render-nix ir)))
-    (should (anvil-pkg-dsl-test--contains-p "postUnpack = ''" out))
-    (should (anvil-pkg-dsl-test--contains-p
+         (out (nelix-core-render-nix ir)))
+    (should (nelix-dsl-test--contains-p "postUnpack = ''" out))
+    (should (nelix-dsl-test--contains-p
              "mkdir -p \"$NIX_BUILD_TOP/recipes\"" out))
-    (should (anvil-pkg-dsl-test--contains-p
+    (should (nelix-dsl-test--contains-p
              "cat > \"$NIX_BUILD_TOP/recipes/helm\"" out))
-    (should (anvil-pkg-dsl-test--contains-p
+    (should (nelix-dsl-test--contains-p
              "(helm :fetcher git :url \"https://github.com/emacs-helm/helm\" :files ("
              out))
     ;; L28: new default expands to lisp/*.el etc., so the synth carries
     ;; more than the bare ("*.el") glob.
-    (should (anvil-pkg-dsl-test--contains-p "\"lisp/*.el\"" out))
-    (should (anvil-pkg-dsl-test--contains-p ":exclude" out))))
+    (should (nelix-dsl-test--contains-p "\"lisp/*.el\"" out))
+    (should (nelix-dsl-test--contains-p ":exclude" out))))
 
-(ert-deftest anvil-pkg-dsl-test-melpa-synth-auto-with-git-fetch ()
+(ert-deftest nelix-dsl-test-melpa-synth-auto-with-git-fetch ()
   "L23: :format \"melpa\" + git-fetch + default `auto' uses the upstream URL.
 Phase 4-E L28: default :files spec is the full package-build glob."
   (let* ((ir '(:name myelp
@@ -673,15 +673,15 @@ Phase 4-E L28: default :files spec is the full package-build glob."
                         :rev "abc1234"
                         :sha256 "sha256-myelp")
                :build-system (:type emacs-package :format "melpa")))
-         (out (anvil-pkg-render-nix ir)))
-    (should (anvil-pkg-dsl-test--contains-p "postUnpack = ''" out))
-    (should (anvil-pkg-dsl-test--contains-p
+         (out (nelix-core-render-nix ir)))
+    (should (nelix-dsl-test--contains-p "postUnpack = ''" out))
+    (should (nelix-dsl-test--contains-p
              "(myelp :fetcher git :url \"https://example.com/myelp.git\" :files ("
              out))
-    (should (anvil-pkg-dsl-test--contains-p "\"lisp/*.el\"" out))
-    (should (anvil-pkg-dsl-test--contains-p ":exclude" out))))
+    (should (nelix-dsl-test--contains-p "\"lisp/*.el\"" out))
+    (should (nelix-dsl-test--contains-p ":exclude" out))))
 
-(ert-deftest anvil-pkg-dsl-test-melpa-synth-auto-skipped-for-url-fetch ()
+(ert-deftest nelix-dsl-test-melpa-synth-auto-skipped-for-url-fetch ()
   "L23: :format \"melpa\" + url-fetch + `auto' silently skips synth
 \(no postUnpack, no error)."
   (let* ((ir '(:name foo
@@ -690,12 +690,12 @@ Phase 4-E L28: default :files spec is the full package-build glob."
                         :url "https://example.com/foo-1.0.0.tar.gz"
                         :sha256 "sha256-foo")
                :build-system (:type emacs-package :format "melpa")))
-         (out (anvil-pkg-render-nix ir)))
-    (should-not (anvil-pkg-dsl-test--contains-p "postUnpack" out))
-    (should (anvil-pkg-dsl-test--contains-p
+         (out (nelix-core-render-nix ir)))
+    (should-not (nelix-dsl-test--contains-p "postUnpack" out))
+    (should (nelix-dsl-test--contains-p
              "pkgs.emacsPackages.melpaBuild {" out))))
 
-(ert-deftest anvil-pkg-dsl-test-melpa-synth-never-disables ()
+(ert-deftest nelix-dsl-test-melpa-synth-never-disables ()
   "L23: :melpa-synth `never' suppresses synth even on github-fetch."
   (let* ((ir '(:name helm
                :version "3.9.7"
@@ -707,12 +707,12 @@ Phase 4-E L28: default :files spec is the full package-build glob."
                :build-system (:type emacs-package
                               :format "melpa"
                               :melpa-synth never)))
-         (out (anvil-pkg-render-nix ir)))
-    (should-not (anvil-pkg-dsl-test--contains-p "postUnpack" out))))
+         (out (nelix-core-render-nix ir)))
+    (should-not (nelix-dsl-test--contains-p "postUnpack" out))))
 
-(ert-deftest anvil-pkg-dsl-test-melpa-synth-force-on-url-fetch-errors ()
-  "L23: :melpa-synth `force' over url-fetch raises `anvil-pkg-error'."
-  (anvil-pkg-dsl-test--with-clean-registry
+(ert-deftest nelix-dsl-test-melpa-synth-force-on-url-fetch-errors ()
+  "L23: :melpa-synth `force' over url-fetch raises `nelix-error'."
+  (nelix-dsl-test--with-clean-registry
     (should-error
      (macroexpand-1
       '(pkg-define foo
@@ -720,9 +720,9 @@ Phase 4-E L28: default :files spec is the full package-build glob."
          (source (url-fetch "https://example.com/foo-1.0.0.tar.gz"
                             :sha256 "sha256-foo"))
          (build-system (emacs-package :format "melpa" :melpa-synth force))))
-     :type 'anvil-pkg-error)))
+     :type 'nelix-error)))
 
-(ert-deftest anvil-pkg-dsl-test-melpa-recipe-explicit-wins-and-files-keyword ()
+(ert-deftest nelix-dsl-test-melpa-recipe-explicit-wins-and-files-keyword ()
   "L23: :melpa-recipe verbatim wins over auto-synth; separately,
 :melpa-files overrides the default \(\"*.el\") glob list in the
 synthesised recipe."
@@ -739,15 +739,15 @@ synthesised recipe."
                            :format "melpa"
                            :melpa-recipe
                            "(helm :fetcher git :url \"u\" :files (\"*.el\" \"lisp/*.el\"))")))
-         (out-explicit (anvil-pkg-render-nix ir-explicit)))
-    (should (anvil-pkg-dsl-test--contains-p "postUnpack = ''" out-explicit))
+         (out-explicit (nelix-core-render-nix ir-explicit)))
+    (should (nelix-dsl-test--contains-p "postUnpack = ''" out-explicit))
     ;; The user string is emitted verbatim, including its own URL "u".
-    (should (anvil-pkg-dsl-test--contains-p
+    (should (nelix-dsl-test--contains-p
              "(helm :fetcher git :url \"u\" :files (\"*.el\" \"lisp/*.el\"))"
              out-explicit))
     ;; Auto-synth would have used the github URL — verify it did NOT.
     (should-not
-     (anvil-pkg-dsl-test--contains-p
+     (nelix-dsl-test--contains-p
       "https://github.com/emacs-helm/helm" out-explicit)))
   ;; Part 2: :melpa-files overrides the default ("*.el") glob list.
   (let* ((ir-files
@@ -761,16 +761,16 @@ synthesised recipe."
             :build-system (:type emacs-package
                            :format "melpa"
                            :melpa-files ("*.el" "lisp/*.el"))))
-         (out-files (anvil-pkg-render-nix ir-files)))
-    (should (anvil-pkg-dsl-test--contains-p "postUnpack = ''" out-files))
-    (should (anvil-pkg-dsl-test--contains-p
+         (out-files (nelix-core-render-nix ir-files)))
+    (should (nelix-dsl-test--contains-p "postUnpack = ''" out-files))
+    (should (nelix-dsl-test--contains-p
              "(helm :fetcher git :url \"https://github.com/emacs-helm/helm\" :files (\"*.el\" \"lisp/*.el\"))"
              out-files))))
 
 ;;;; --- Phase 4-E sub-task: L27 upstream MELPA recipe fetch + L28 default ----
 
-(ert-deftest anvil-pkg-dsl-test-l28-default-files-uses-package-build-spec ()
-  "L28: default :melpa-files spec is `anvil-pkg--default-melpa-files'.
+(ert-deftest nelix-dsl-test-l28-default-files-uses-package-build-spec ()
+  "L28: default :melpa-files spec is `nelix-core--default-melpa-files'.
 
 When :melpa-files is omitted, the synth carries the full
 `package-build-default-files-spec' equivalent so subdir / .el.in /
@@ -783,30 +783,30 @@ When :melpa-files is omitted, the synth carries the full
                         :rev "2.20.0"
                         :sha256 "sha256-dash")
                :build-system (:type emacs-package :format "melpa")))
-         (out (anvil-pkg-render-nix ir)))
+         (out (nelix-core-render-nix ir)))
     ;; Top-level patterns
-    (should (anvil-pkg-dsl-test--contains-p "\"*.el\"" out))
-    (should (anvil-pkg-dsl-test--contains-p "\"*.el.in\"" out))
+    (should (nelix-dsl-test--contains-p "\"*.el\"" out))
+    (should (nelix-dsl-test--contains-p "\"*.el.in\"" out))
     ;; Subdir patterns
-    (should (anvil-pkg-dsl-test--contains-p "\"lisp/*.el\"" out))
+    (should (nelix-dsl-test--contains-p "\"lisp/*.el\"" out))
     ;; Doc patterns
-    (should (anvil-pkg-dsl-test--contains-p "\"*.info\"" out))
+    (should (nelix-dsl-test--contains-p "\"*.info\"" out))
     ;; Exclusion clause
-    (should (anvil-pkg-dsl-test--contains-p ":exclude" out))
-    (should (anvil-pkg-dsl-test--contains-p "\"*-test.el\"" out))))
+    (should (nelix-dsl-test--contains-p ":exclude" out))
+    (should (nelix-dsl-test--contains-p "\"*-test.el\"" out))))
 
-(ert-deftest anvil-pkg-dsl-test-l27-auto-uses-upstream-recipe-when-fluid-hits ()
+(ert-deftest nelix-dsl-test-l27-auto-uses-upstream-recipe-when-fluid-hits ()
   "L27: :melpa-synth `auto' + render-fetch fluid returning recipe →
 upstream body is emitted verbatim (no local synth).
 
 The fluid is normally consulted only when
-`anvil-pkg-emacs-melpa-upstream-fetch' is non-nil (it short-circuits
+`nelix-emacs-melpa-upstream-fetch' is non-nil (it short-circuits
 to nil otherwise), but the dsl render delegates entirely to the
 fluid value, so re-binding it directly with a stub bypasses the
 defcustom gate for test purposes."
   (let* ((upstream-recipe
           "(magit :fetcher github :repo \"magit/magit\" :files (\"lisp/*.el\" \"*.texi\"))")
-         (saved-fetch-fn anvil-pkg-emacs--render-fetch-fn)
+         (saved-fetch-fn nelix-emacs--render-fetch-fn)
          (ir '(:name magit
                :version "3.3.0"
                :source (:type github-fetch
@@ -818,26 +818,26 @@ defcustom gate for test purposes."
          out)
     (unwind-protect
         (progn
-          (setq anvil-pkg-emacs--render-fetch-fn
+          (setq nelix-emacs--render-fetch-fn
                 (lambda (pname) (when (equal pname "magit") upstream-recipe)))
-          (setq out (anvil-pkg-render-nix ir))
-          (should (anvil-pkg-dsl-test--contains-p "postUnpack = ''" out))
+          (setq out (nelix-core-render-nix ir))
+          (should (nelix-dsl-test--contains-p "postUnpack = ''" out))
           ;; The upstream body landed verbatim.
-          (should (anvil-pkg-dsl-test--contains-p ":fetcher github" out))
-          (should (anvil-pkg-dsl-test--contains-p
+          (should (nelix-dsl-test--contains-p ":fetcher github" out))
+          (should (nelix-dsl-test--contains-p
                    ":repo \"magit/magit\"" out))
-          (should (anvil-pkg-dsl-test--contains-p "\"lisp/*.el\"" out))
-          (should (anvil-pkg-dsl-test--contains-p "\"*.texi\"" out))
+          (should (nelix-dsl-test--contains-p "\"lisp/*.el\"" out))
+          (should (nelix-dsl-test--contains-p "\"*.texi\"" out))
           ;; The local synth's :fetcher-git URL did NOT.
-          (should-not (anvil-pkg-dsl-test--contains-p
+          (should-not (nelix-dsl-test--contains-p
                        "fetcher git :url \"https://github.com/magit/magit\""
                        out)))
-      (setq anvil-pkg-emacs--render-fetch-fn saved-fetch-fn))))
+      (setq nelix-emacs--render-fetch-fn saved-fetch-fn))))
 
-(ert-deftest anvil-pkg-dsl-test-l27-auto-falls-back-to-synth-on-miss ()
+(ert-deftest nelix-dsl-test-l27-auto-falls-back-to-synth-on-miss ()
   "L27: :melpa-synth `auto' + render-fetch fluid returning nil →
 synth proceeds normally (Phase 4-D behaviour)."
-  (let* ((anvil-pkg-emacs--render-fetch-fn (lambda (_pname) nil))
+  (let* ((nelix-emacs--render-fetch-fn (lambda (_pname) nil))
          (ir '(:name magit
                :version "3.3.0"
                :source (:type github-fetch
@@ -846,19 +846,19 @@ synth proceeds normally (Phase 4-D behaviour)."
                         :rev "v3.3.0"
                         :sha256 "sha256-magit")
                :build-system (:type emacs-package :format "melpa")))
-         (out (anvil-pkg-render-nix ir)))
-    (should (anvil-pkg-dsl-test--contains-p "postUnpack = ''" out))
+         (out (nelix-core-render-nix ir)))
+    (should (nelix-dsl-test--contains-p "postUnpack = ''" out))
     ;; Synth always uses :fetcher git.
-    (should (anvil-pkg-dsl-test--contains-p
+    (should (nelix-dsl-test--contains-p
              "(magit :fetcher git :url \"https://github.com/magit/magit\""
              out))))
 
-(ert-deftest anvil-pkg-dsl-test-l27-force-skips-upstream-fetch ()
+(ert-deftest nelix-dsl-test-l27-force-skips-upstream-fetch ()
   "L27: :melpa-synth `force' bypasses the upstream fetch fluid even
 when it would have hit.  This is the user's explicit \"do not consult
 MELPA\" signal."
   (let* ((calls 0)
-         (anvil-pkg-emacs--render-fetch-fn
+         (nelix-emacs--render-fetch-fn
           (lambda (_pname) (cl-incf calls) "(magit :fetcher upstream)"))
          (ir '(:name magit
                :version "3.3.0"
@@ -870,26 +870,26 @@ MELPA\" signal."
                :build-system (:type emacs-package
                               :format "melpa"
                               :melpa-synth force)))
-         (out (anvil-pkg-render-nix ir)))
+         (out (nelix-core-render-nix ir)))
     (should (= 0 calls))
-    (should (anvil-pkg-dsl-test--contains-p
+    (should (nelix-dsl-test--contains-p
              "(magit :fetcher git :url \"https://github.com/magit/magit\""
              out))))
 
 ;;;; --- render script (Phase 4-H) -------------------------------------------
 
-(defun anvil-pkg-dsl-test--load-render-script ()
+(defun nelix-dsl-test--load-render-script ()
   "Load the batch render helper used by smoke tests."
-  (unless (fboundp 'anvil-pkg-render-example)
-    (load (expand-file-name "scripts/anvil-pkg-render.el" default-directory)
+  (unless (fboundp 'nelix-core-render-example)
+    (load (expand-file-name "scripts/nelix-core-render.el" default-directory)
           nil :nomessage)))
 
-(ert-deftest anvil-pkg-render-script-test-write-flake ()
+(ert-deftest nelix-core-render-script-test-write-flake ()
   "Render script writes a non-empty flake.nix for the stdenv example."
-  (anvil-pkg-dsl-test--load-render-script)
-  (let ((dir (make-temp-file "anvil-pkg-render-test-" t)))
+  (nelix-dsl-test--load-render-script)
+  (let ((dir (make-temp-file "nelix-core-render-test-" t)))
     (unwind-protect
-        (let ((flake (anvil-pkg-render-example
+        (let ((flake (nelix-core-render-example
                       "examples/stdenv-hello.el" dir)))
           (should (file-exists-p flake))
           (let ((contents (with-temp-buffer
@@ -899,12 +899,12 @@ MELPA\" signal."
             (should (string-match-p "pkgs.stdenv.mkDerivation" contents))))
       (delete-directory dir t))))
 
-(ert-deftest anvil-pkg-render-script-test-rust-no-cargo-sha256 ()
+(ert-deftest nelix-core-render-script-test-rust-no-cargo-sha256 ()
   "Rendered rust example uses nixpkgs' modern cargoHash attribute."
-  (anvil-pkg-dsl-test--load-render-script)
-  (let ((dir (make-temp-file "anvil-pkg-render-test-" t)))
+  (nelix-dsl-test--load-render-script)
+  (let ((dir (make-temp-file "nelix-core-render-test-" t)))
     (unwind-protect
-        (let ((flake (anvil-pkg-render-example
+        (let ((flake (nelix-core-render-example
                       "examples/rust-ripgrep.el" dir)))
           (let ((contents (with-temp-buffer
                             (insert-file-contents flake)
@@ -913,28 +913,28 @@ MELPA\" signal."
             (should-not (string-match-p "cargoSha256" contents))))
       (delete-directory dir t))))
 
-(ert-deftest anvil-pkg-render-script-test-empty-example-errors ()
+(ert-deftest nelix-core-render-script-test-empty-example-errors ()
   "Render script rejects example files that register no packages."
-  (anvil-pkg-dsl-test--load-render-script)
-  (let ((dir (make-temp-file "anvil-pkg-render-test-empty-" t))
-        (example (make-temp-file "anvil-pkg-empty-example-" nil ".el")))
+  (nelix-dsl-test--load-render-script)
+  (let ((dir (make-temp-file "nelix-core-render-test-empty-" t))
+        (example (make-temp-file "nelix-core-empty-example-" nil ".el")))
     (unwind-protect
         (progn
           (with-temp-file example
             (insert ";;; empty example\n"))
-          (should-error (anvil-pkg-render-example example dir))
+          (should-error (nelix-core-render-example example dir))
           (should-not (file-exists-p (expand-file-name "flake.nix" dir))))
       (when (file-exists-p example)
         (delete-file example))
       (when (file-exists-p dir)
         (delete-directory dir t)))))
 
-(ert-deftest anvil-pkg-render-script-test-example-attr-writes-flake ()
+(ert-deftest nelix-core-render-script-test-example-attr-writes-flake ()
   "Render script pair helper writes a flake when ATTR is registered."
-  (anvil-pkg-dsl-test--load-render-script)
-  (let ((dir (make-temp-file "anvil-pkg-render-test-attr-" t)))
+  (nelix-dsl-test--load-render-script)
+  (let ((dir (make-temp-file "nelix-core-render-test-attr-" t)))
     (unwind-protect
-        (let ((flake (anvil-pkg-render-example-attr
+        (let ((flake (nelix-core-render-example-attr
                       "examples/stdenv-hello.el" "gnu-hello" dir)))
           (should (file-exists-p flake))
           (let ((contents (with-temp-buffer
@@ -943,33 +943,33 @@ MELPA\" signal."
             (should (string-match-p "gnu-hello =" contents))))
       (delete-directory dir t))))
 
-(ert-deftest anvil-pkg-render-script-test-example-attr-errors-on-missing ()
+(ert-deftest nelix-core-render-script-test-example-attr-errors-on-missing ()
   "Render script pair helper rejects stale example-file:attr metadata."
-  (anvil-pkg-dsl-test--load-render-script)
-  (let ((dir (make-temp-file "anvil-pkg-render-test-attr-missing-" t)))
+  (nelix-dsl-test--load-render-script)
+  (let ((dir (make-temp-file "nelix-core-render-test-attr-missing-" t)))
     (unwind-protect
         (progn
           (should-error
-           (anvil-pkg-render-example-attr
+           (nelix-core-render-example-attr
             "examples/stdenv-hello.el" "not-there" dir))
           (should-not (file-exists-p (expand-file-name "flake.nix" dir))))
       (delete-directory dir t))))
 
-(ert-deftest anvil-pkg-render-script-test-all-examples-render ()
+(ert-deftest nelix-core-render-script-test-all-examples-render ()
   "Every example file loads and renders a non-empty flake.nix.
 
 This does not invoke Nix or require real hashes.  It catches stale
 example forms whenever the DSL surface changes."
-  (anvil-pkg-dsl-test--load-render-script)
+  (nelix-dsl-test--load-render-script)
   (let ((examples (sort (directory-files "examples" t "\\.el\\'")
                         #'string<))
-        (dir (make-temp-file "anvil-pkg-render-test-all-" t)))
+        (dir (make-temp-file "nelix-core-render-test-all-" t)))
     (should examples)
     (unwind-protect
         (dolist (example examples)
           (let* ((out-dir (expand-file-name
                            (file-name-base example) dir))
-                 (flake (anvil-pkg-render-example example out-dir)))
+                 (flake (nelix-core-render-example example out-dir)))
             (should (file-exists-p flake))
             (let ((contents (with-temp-buffer
                               (insert-file-contents flake)
@@ -979,5 +979,5 @@ example forms whenever the DSL surface changes."
                                       contents)))))
       (delete-directory dir t))))
 
-(provide 'anvil-pkg-dsl-test)
-;;; anvil-pkg-dsl-test.el ends here
+(provide 'nelix-dsl-test)
+;;; nelix-dsl-test.el ends here

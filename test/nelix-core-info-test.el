@@ -1,8 +1,8 @@
-;;; anvil-pkg-info-test.el --- ERT tests for pkg-info -*- lexical-binding: t; -*-
+;;; nelix-core-info-test.el --- ERT tests for pkg-info -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026 zawatton
 
-;; This file is part of anvil-pkg.  GPL-3.0-or-later.
+;; This file is part of nelix-core.  GPL-3.0-or-later.
 
 ;;; Commentary:
 
@@ -11,19 +11,19 @@
 ;;; Code:
 
 (require 'ert)
-(require 'anvil-pkg)
+(require 'nelix-core)
 
-(defmacro anvil-pkg-info-test--with-mock (mock-fn &rest body)
-  "Run BODY with `anvil-pkg--call-nix-fn' bound to MOCK-FN."
+(defmacro nelix-core-info-test--with-mock (mock-fn &rest body)
+  "Run BODY with `nelix-core--call-nix-fn' bound to MOCK-FN."
   (declare (indent 1))
-  `(let ((anvil-pkg--call-nix-fn ,mock-fn)
-         (anvil-pkg-nix-channel "nixpkgs")
-         (anvil-pkg-profile-dir "/tmp/anvil-pkg-test-profile"))
+  `(let ((nelix-core--call-nix-fn ,mock-fn)
+         (nelix-core-nix-channel "nixpkgs")
+         (nelix-core-profile-dir "/tmp/nelix-core-test-profile"))
      ,@body))
 
-(ert-deftest anvil-pkg-info-test-installed-merges-search-metadata ()
+(ert-deftest nelix-core-info-test-installed-merges-search-metadata ()
   "pkg-info returns installed t and merges in search metadata."
-  (anvil-pkg-info-test--with-mock
+  (nelix-core-info-test--with-mock
       (lambda (args)
         (cond
          ((member "list" args)
@@ -64,9 +64,9 @@
       (should (equal '("/nix/store/abc-ripgrep-14.1.1")
                      (plist-get info :store-paths))))))
 
-(ert-deftest anvil-pkg-info-test-installed-survives-search-failure ()
+(ert-deftest nelix-core-info-test-installed-survives-search-failure ()
   "pkg-info still returns installed data when `pkg-search' fails."
-  (anvil-pkg-info-test--with-mock
+  (nelix-core-info-test--with-mock
       (lambda (args)
         (cond
          ((member "list" args)
@@ -93,9 +93,9 @@
       (should (equal '("/nix/store/abc-ripgrep-14.1.1")
                      (plist-get info :store-paths))))))
 
-(ert-deftest anvil-pkg-info-test-searchable-not-installed ()
+(ert-deftest nelix-core-info-test-searchable-not-installed ()
   "pkg-info returns search metadata when the package is not installed."
-  (anvil-pkg-info-test--with-mock
+  (nelix-core-info-test--with-mock
       (lambda (args)
         (cond
          ((member "list" args)
@@ -128,9 +128,9 @@
       (should (null (plist-get info :original-url)))
       (should (null (plist-get info :store-paths))))))
 
-(ert-deftest anvil-pkg-info-test-missing-package-returns-nil ()
+(ert-deftest nelix-core-info-test-missing-package-returns-nil ()
   "pkg-info returns nil when neither list nor search finds NAME."
-  (anvil-pkg-info-test--with-mock
+  (nelix-core-info-test--with-mock
       (lambda (args)
         (cond
          ((member "list" args)
@@ -142,9 +142,9 @@
          (t (ert-fail (format "unexpected nix args: %S" args)))))
     (should (null (pkg-info "does-not-exist")))))
 
-(ert-deftest anvil-pkg-info-test-symbol-coercion-works ()
+(ert-deftest nelix-core-info-test-symbol-coercion-works ()
   "pkg-info accepts a symbol NAME and coerces it to a string."
-  (anvil-pkg-info-test--with-mock
+  (nelix-core-info-test--with-mock
       (lambda (args)
         (cond
          ((member "list" args)
@@ -167,18 +167,18 @@
       (should (equal "ripgrep" (plist-get info :name)))
       (should (equal "14.1.1" (plist-get info :version))))))
 
-(ert-deftest anvil-pkg-info-test-bad-arguments-signal-error ()
-  "pkg-info signals `anvil-pkg-error' for invalid NAME values."
-  (anvil-pkg-info-test--with-mock
+(ert-deftest nelix-core-info-test-bad-arguments-signal-error ()
+  "pkg-info signals `nelix-error' for invalid NAME values."
+  (nelix-core-info-test--with-mock
       (lambda (_args)
         (ert-fail "mock backend should not be called"))
-    (let ((err (should-error (pkg-info 42) :type 'anvil-pkg-error)))
+    (let ((err (should-error (pkg-info 42) :type 'nelix-error)))
       (should (string-match-p "pkg-info: NAME must be string or symbol"
                               (cadr err))))))
 
-(ert-deftest anvil-pkg-info-test-tool-wrapper-found-shape ()
+(ert-deftest nelix-core-info-test-tool-wrapper-found-shape ()
   "The MCP wrapper adds :found for both hit and miss results."
-  (anvil-pkg-info-test--with-mock
+  (nelix-core-info-test--with-mock
       (lambda (args)
         (cond
          ((member "list" args)
@@ -201,8 +201,8 @@
             (list :exit 0 :stdout "{}" :stderr ""))
            (t (ert-fail (format "unexpected search args: %S" args)))))
          (t (ert-fail (format "unexpected nix args: %S" args)))))
-    (let ((found (anvil-pkg--tool-info "found-pkg"))
-          (missing (anvil-pkg--tool-info 'missing-pkg)))
+    (let ((found (nelix-core--tool-info "found-pkg"))
+          (missing (nelix-core--tool-info 'missing-pkg)))
       (should (eq t (plist-get found :found)))
       (should (equal "found-pkg" (plist-get found :name)))
       (should (equal "1.0.0" (plist-get found :version)))
@@ -210,5 +210,5 @@
       (should (null (plist-get missing :found)))
       (should (equal "missing-pkg" (plist-get missing :name))))))
 
-(provide 'anvil-pkg-info-test)
-;;; anvil-pkg-info-test.el ends here
+(provide 'nelix-core-info-test)
+;;; nelix-core-info-test.el ends here

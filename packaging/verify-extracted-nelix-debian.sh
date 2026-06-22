@@ -29,8 +29,8 @@ for file in \
   "$nelix_bin" \
   "$elpa_src_dir/nelix-cli.el" \
   "$elpa_src_dir/nelix-aot-manifest-engine.el" \
-  "$elpa_src_dir/anvil-pkg-nelisp-smoke.el" \
-  "$elpa_src_dir/anvil-pkg-nelisp-ert-shim.el" \
+  "$elpa_src_dir/nelix-nelisp-smoke.el" \
+  "$elpa_src_dir/nelix-nelisp-ert-shim.el" \
   "$packaging_dir/verify-nelix-aot-cache-gate.sh" \
   "$packaging_dir/verify-nelix-native-cli-gate.sh" \
   "$packaging_dir/verify-publication-urls.sh"
@@ -44,19 +44,19 @@ done
 check_forms='
 (require (quote nelix))
 (require (quote nelix-dsl))
-(require (quote anvil-pkg))
+(require (quote nelix-core))
 (unless (fboundp (quote nelix-install))
   (error "nelix-install missing"))
 (unless (macrop (symbol-function (quote nelix-define)))
   (error "nelix-define missing"))
-(unless (string= (expand-file-name anvil-pkg-profile-dir)
+(unless (string= (expand-file-name nelix-core-profile-dir)
                  (expand-file-name (getenv "NELIX_EXPECTED_PROFILE")))
-  (error "unexpected profile: %S" anvil-pkg-profile-dir))
-(unless (string= (anvil-pkg--nix-install-subcommand) "install")
+  (error "unexpected profile: %S" nelix-core-profile-dir))
+(unless (string= (nelix-core--nix-install-subcommand) "install")
   (error "unexpected nix profile subcommand"))
 (princ (format "nelix extracted Debian load ok: version=%s profile=%s\n"
                (or (getenv "NELIX_EXTRACTED_VERSION") "unknown")
-               anvil-pkg-profile-dir))
+               nelix-core-profile-dir))
 '
 
 export NELIX_EXPECTED_PROFILE="$expected_profile"

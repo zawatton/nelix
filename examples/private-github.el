@@ -16,7 +16,7 @@
 ;;   $ emacs -Q -l examples/private-github.el
 ;;   M-: (pkg-install 'my-private-tool)
 ;;
-;; What anvil-pkg does on your behalf when GITHUB_TOKEN is set:
+;; What nelix-core does on your behalf when GITHUB_TOKEN is set:
 ;;
 ;;   1. L18 deps pre-fetch — `Authorization: Bearer $TOKEN' header is
 ;;      added to the raw.githubusercontent.com scrape (same path that
@@ -34,18 +34,18 @@
 ;; *Where the token is and is not visible:*
 ;;
 ;;   - Stored in your shell environment only (no on-disk persistence).
-;;   - Never written to `anvil-pkg-state' (state.json), worklog
-;;     entries, or any of anvil-pkg's own log lines (those run through
-;;     `anvil-pkg-compat-mask-credentials').
+;;   - Never written to `nelix-state' (state.json), worklog
+;;     entries, or any of nelix-core's own log lines (those run through
+;;     `nelix-compat-mask-credentials').
 ;;   - VISIBLE to `ps aux' for the duration of the `nix' / `git'
 ;;     subprocess — both tools accept the credential on the CLI and
-;;     anvil-pkg cannot hide that.  Document this in your threat
+;;     nelix-core cannot hide that.  Document this in your threat
 ;;     model; on a single-user machine it is rarely an issue, on a
 ;;     shared host consider a Nix daemon `access-tokens.conf' or a
 ;;     `GIT_ASKPASS' shim instead.
 ;;
 ;; *Default credential alist* (see
-;; `anvil-pkg-compat-credential-env-alist'):
+;; `nelix-compat-credential-env-alist'):
 ;;
 ;;   github.com / raw.githubusercontent.com / api.github.com /
 ;;   codeload.github.com / objects.githubusercontent.com   ← GITHUB_TOKEN, GH_TOKEN
@@ -55,12 +55,12 @@
 ;; Add custom hosts (corporate GitHub Enterprise etc.) by extending
 ;; the alist before invoking `pkg-install':
 ;;
-;;   (add-to-list 'anvil-pkg-compat-credential-env-alist
+;;   (add-to-list 'nelix-compat-credential-env-alist
 ;;                '("ghe.example.com" . ("GHE_TOKEN")))
 
 ;;; Code:
 
-(require 'anvil-pkg-dsl)
+(require 'nelix-dsl)
 
 ;; Example 1: a private GitHub repo via github-fetch.  Replace owner /
 ;; repo / rev / sha256 with your real values.  The SHA256 for a
@@ -78,7 +78,7 @@
   (license mit))
 
 ;; Example 2: a private repo via git-fetch over HTTPS.  Same pattern;
-;; anvil-pkg auto-injects `-c http.https://github.com/.extraheader=...'
+;; nelix-core auto-injects `-c http.https://github.com/.extraheader=...'
 ;; when GITHUB_TOKEN is set.
 (pkg-define my-private-helper
   (version "1.2.3")
@@ -111,12 +111,12 @@
 ;; If GITHUB_TOKEN is unset, you will see the public-repo error
 ;; message ("Repository not found") — that is the loud failure mode.
 ;;
-;; To inspect what anvil-pkg would forward to git / nix without
+;; To inspect what nelix-core would forward to git / nix without
 ;; leaking the token:
-;;   M-: (anvil-pkg-compat-mask-credentials
+;;   M-: (nelix-compat-mask-credentials
 ;;        (mapconcat #'identity
 ;;                   (cons "git"
-;;                         (anvil-pkg-emacs--git-credential-args
+;;                         (nelix-emacs--git-credential-args
 ;;                          "https://github.com/your-org/private-tool"))
 ;;                   " "))
 ;;   ⇒ "git -c http.https://github.com/.extraheader=Authorization: Bearer ***"

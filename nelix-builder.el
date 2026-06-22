@@ -12,15 +12,15 @@
 ;;; Code:
 
 (require 'cl-lib)
-(require 'anvil-pkg)
-(require 'anvil-pkg-compat)
+(require 'nelix-core)
+(require 'nelix-compat)
 (require 'nelix-fetch)
 (require 'nelix-store)
 (require 'nelix-registry)
 
 (defgroup nelix-builder nil
   "Nelix native builders."
-  :group 'anvil-pkg
+  :group 'nelix-core
   :prefix "nelix-builder-")
 
 (defcustom nelix-builder-default-profile "default"
@@ -49,9 +49,9 @@
        (t 'tar))))
 
 (defun nelix-builder--run (program args)
-  "Run PROGRAM with ARGS or signal `anvil-pkg-error'."
-  (unless (anvil-pkg-compat-executable-find program)
-    (signal 'anvil-pkg-error
+  "Run PROGRAM with ARGS or signal `nelix-error'."
+  (unless (nelix-compat-executable-find program)
+    (signal 'nelix-error
             (list (format "nelix-builder: required program not found: %s"
                           program))))
   (let ((res (if (fboundp 'call-process)
@@ -65,12 +65,12 @@
                      (list :exit exit
                            :stdout (buffer-string)
                            :stderr "")))
-               (anvil-pkg-compat-call-process program args))))
+               (nelix-compat-call-process program args))))
     (unless (eq 0 (plist-get res :exit))
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-builder: %s failed: %s"
                             program
-                            (anvil-pkg-compat-string-trim
+                            (nelix-compat-string-trim
                              (or (plist-get res :stderr) ""))))))
     res))
 
@@ -94,7 +94,7 @@
 
 (defun nelix-builder--extract-archive (archive dest source install)
   "Extract ARCHIVE into DEST according to SOURCE and INSTALL."
-  (anvil-pkg-compat-make-directory dest t)
+  (nelix-compat-make-directory dest t)
   (pcase (nelix-builder--archive-format source archive)
     ('tar
      (let ((args (append (list "-xf" (expand-file-name archive)
@@ -122,7 +122,7 @@
                              (list "-q" (expand-file-name archive)
                                    "-d" (expand-file-name dest))))))
     (format
-     (signal 'anvil-pkg-error
+     (signal 'nelix-error
              (list (format "nelix-builder: unsupported archive format %S"
                            format))))))
 
@@ -132,7 +132,7 @@
              (fboundp 'set-file-modes))
     (dolist (bin (plist-get install :bin))
       (let ((path (expand-file-name bin store-path)))
-        (when (anvil-pkg-compat-file-exists-p path)
+        (when (nelix-compat-file-exists-p path)
           (set-file-modes path #o755))))))
 
 (defun nelix-builder--windows-system-p (system)
@@ -141,15 +141,15 @@
 
 (defun nelix-builder--copy-path (source dest)
   "Copy SOURCE into DEST, creating parent directories."
-  (anvil-pkg-compat-make-directory (file-name-directory dest) t)
+  (nelix-compat-make-directory (file-name-directory dest) t)
   (cond
    ((and (fboundp 'file-directory-p)
          (file-directory-p source))
     (copy-directory source dest t t t))
-   ((anvil-pkg-compat-file-exists-p source)
+   ((nelix-compat-file-exists-p source)
     (copy-file source dest t))
    (t
-    (signal 'anvil-pkg-error
+    (signal 'nelix-error
             (list (format "nelix-builder: copy source missing: %s"
                           source))))))
 
@@ -176,7 +176,7 @@
     (cons (plist-get spec :from)
           (plist-get spec :to)))
    (t
-    (signal 'anvil-pkg-error
+    (signal 'nelix-error
             (list (format "nelix-builder: invalid copy file spec %S"
                           spec))))))
 
@@ -238,11 +238,11 @@
                      (plist-get install :name))))
     (cond
      ((and (stringp command)
-           (> (length (anvil-pkg-compat-string-trim command)) 0))
-      (anvil-pkg-compat-string-trim command))
+           (> (length (nelix-compat-string-trim command)) 0))
+      (nelix-compat-string-trim command))
      ((symbolp command) (symbol-name command))
      (t
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-builder: script-shim requires :command, got %S"
                             install)))))))
 
@@ -253,11 +253,11 @@
                     (plist-get install :command))))
     (cond
      ((and (stringp target)
-           (> (length (anvil-pkg-compat-string-trim target)) 0))
-      (anvil-pkg-compat-string-trim target))
+           (> (length (nelix-compat-string-trim target)) 0))
+      (nelix-compat-string-trim target))
      ((symbolp target) (symbol-name target))
      (t
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-builder: script-shim requires :target, got %S"
                             install)))))))
 
@@ -265,17 +265,17 @@
   "Return non-nil when script shim TARGET is currently executable."
   (cond
    ((file-name-absolute-p target)
-    (and (anvil-pkg-compat-file-exists-p target)
+    (and (nelix-compat-file-exists-p target)
          (or (not (fboundp 'file-executable-p))
              (file-executable-p target))))
    (t
-    (anvil-pkg-compat-executable-find target))))
+    (nelix-compat-executable-find target))))
 
 (defun nelix-builder--require-script-shim-target (install target)
   "Signal when INSTALL requires TARGET and TARGET is unavailable."
   (when (and (plist-get install :require-target)
              (not (nelix-builder--script-shim-target-available-p target)))
-    (signal 'anvil-pkg-error
+    (signal 'nelix-error
             (list (format "nelix-builder: script-shim target not found: %s"
                           target)))))
 
@@ -315,8 +315,8 @@
                       (nelix-builder-render-windows-shim command target)
                     (nelix-builder-render-posix-shim command target))))
     (nelix-builder--require-script-shim-target install target)
-    (anvil-pkg-compat-make-directory (file-name-directory path) t)
-    (anvil-pkg-compat-write-file path content)
+    (nelix-compat-make-directory (file-name-directory path) t)
+    (nelix-compat-write-file path content)
     (when (and (not (nelix-builder--windows-system-p system))
                (fboundp 'set-file-modes))
       (set-file-modes path #o755))
@@ -413,7 +413,7 @@ cons cell.")
 
 (defun nelix-builder--finish-install (recipe system source install profile-name)
   "Fetch SOURCE, extract into store for RECIPE, and create PROFILE-NAME."
-  (let* ((archive (anvil-pkg-compat-make-temp-file "nelix-source-"))
+  (let* ((archive (nelix-compat-make-temp-file "nelix-source-"))
          (fetch-report (nelix-fetch-source source archive))
          (entry (nelix-builder--store-entry
                  recipe system source install fetch-report))
@@ -441,7 +441,7 @@ cons cell.")
                   :store-path store-path
                   :profile profile
                   :fetch fetch-report)))
-      (anvil-pkg-compat-delete-file-quietly archive)
+      (nelix-compat-delete-file-quietly archive)
       (nelix-store--delete-directory-quietly build-path))))
 
 (defun nelix-builder--finish-copy-install (recipe system source install profile-name)
@@ -535,7 +535,7 @@ cons cell.")
          (plist-get dependency :name))
     (nelix-builder--dependency-name (plist-get dependency :name)))
    (t
-    (signal 'anvil-pkg-error
+    (signal 'nelix-error
             (list (format "nelix-native-install-recipe: invalid dependency %S"
                           dependency))))))
 
@@ -555,13 +555,13 @@ cons cell.")
              (recipe (nelix-registry-get name)))
         (cond
          ((member name nelix-builder--install-stack)
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list (format "nelix-native-install-recipe: dependency cycle at %s"
                                 name))))
          ((nelix-builder--profile-has-entry-p profile-name name)
           nil)
          ((null recipe)
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list (format "nelix-native-install-recipe: missing dependency recipe %s"
                                 name))))
          (t
@@ -599,13 +599,13 @@ cons cell.")
              (package (nelix-builder--lock-package-by-name lock-packages name)))
         (cond
          ((member name nelix-builder--install-stack)
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list (format "nelix-native-install-lock-package: dependency cycle at %s"
                                 name))))
          ((nelix-builder--profile-has-entry-p profile-name name)
           nil)
          ((null package)
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list (format "nelix-native-install-lock-package: missing dependency lock row %s"
                                 name))))
          (t
@@ -622,23 +622,23 @@ cons cell.")
         (install (plist-get package :recipe-install))
         (dependencies (plist-get package :recipe-dependencies)))
     (unless name
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list "nelix-native-install-lock-package: package row has no :name")))
     (unless version
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-native-install-lock-package: %s has no :recipe-version"
                             name))))
     (unless class
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-native-install-lock-package: %s has no :recipe-class"
                             name))))
     (unless install
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-native-install-lock-package: %s has no :recipe-install"
                             name))))
     (unless (or source
                 (eq (plist-get install :type) 'script-shim))
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-native-install-lock-package: %s has no :recipe-source"
                             name))))
     (list :name name
@@ -670,7 +670,7 @@ lock set before PACKAGE is installed."
          (locked-system (plist-get package :system)))
     (when (and locked-system
                (not (eq locked-system system*)))
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-native-install-lock-package: system drift, lock=%S current=%S"
                             locked-system system*))))
     (let* ((recipe (nelix-builder--lock-package-recipe package system*))
@@ -707,16 +707,16 @@ lock set before PACKAGE is installed."
          (dependencies (plist-get system-entry :dependencies))
          (kind (plist-get install :type)))
     (when (member name nelix-builder--install-stack)
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-native-install-recipe: dependency cycle at %s"
                             name))))
     (unless system-entry
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-native-install-recipe: %s has no recipe for %S"
                             name system*))))
     (unless (or source
                 (eq kind 'script-shim))
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-native-install-recipe: %s has no :source for %S"
                             name system*))))
     (let* ((nelix-builder--install-stack
@@ -739,7 +739,7 @@ lock set before PACKAGE is installed."
                (nelix-builder--install-script-shim
                 recipe system* install profile-name*))
               (_
-               (signal 'anvil-pkg-error
+               (signal 'nelix-error
                        (list (format "nelix-native-install-recipe: unsupported install type %S"
                                      kind)))))))
       (if dependency-reports
@@ -751,7 +751,7 @@ lock set before PACKAGE is installed."
   "Install package NAME from the local registry into native store."
   (let ((recipe (nelix-registry-get name)))
     (unless recipe
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-native-install: no registry recipe for %S"
                             name))))
     (nelix-native-install-recipe recipe profile-name system)))

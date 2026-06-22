@@ -1,4 +1,4 @@
-;;; stdenv-hello.el --- Minimal stdenv example for anvil-pkg -*- lexical-binding: t; -*-
+;;; stdenv-hello.el --- Minimal stdenv example for nelix-core -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026 zawatton
 ;; SPDX-License-Identifier: GPL-3.0-or-later
@@ -13,7 +13,7 @@
 ;; build system actually works" sanity check.
 ;;
 ;; Usage:
-;;   M-: (load-file "/path/to/anvil-pkg/examples/stdenv-hello.el")
+;;   M-: (load-file "/path/to/nelix-core/examples/stdenv-hello.el")
 ;;   M-: (pkg-install 'gnu-hello)
 ;;
 ;; Phase 4-H: hashes below are *real*, prefetched 2026-05-06 against
@@ -22,7 +22,7 @@
 
 ;;; Code:
 
-(require 'anvil-pkg-dsl)
+(require 'nelix-dsl)
 
 (pkg-define gnu-hello
   (version "2.12.1")

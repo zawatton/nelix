@@ -74,7 +74,7 @@ extra-access-tokens= paths.
     with Nix 2.34.7 on 2026-06-08.  An empty, malformed, or stale
     smoke-build pair list is treated as an error before invoking Nix.
   - =make smoke-nelisp= (local-only) loads
-    =anvil-pkg-compat.el= under a real standalone NeLisp binary and
+    =nelix-compat.el= under a real standalone NeLisp binary and
     checks the narrow pure fallback surface that the current CLI can
     exercise.  When local NeLisp package sources are discoverable, it
     also loads the real =nelisp-json.el= package and verifies compat
@@ -134,8 +134,8 @@ Public Elisp API uses the short =pkg-= prefix:
   =anvil-pkg-import-async-installer= migration utility — Phase 4-B
 - =:no-auto-deps= keyword on =pkg-install= (opt-out of pre-fetch),
   =pkg-list-generations= / =pkg-rollback= / =pkg-history= — Phase 4-C
-- =anvil-pkg-compat-make-process-async= /
-  =anvil-pkg-compat-http-get= portability primitives (Emacs path
+- =nelix-compat-make-process-async= /
+  =nelix-compat-http-get= portability primitives (Emacs path
   shipped; Phase 5 NeLisp hooks / auto-detect groundwork landed) —
   Phase 4-C / Phase 5 groundwork
 - =anvil-pkg-state= namespaced KV with TTL (deps cache + Nix-version
@@ -292,7 +292,7 @@ Public Elisp API uses the short =pkg-= prefix:
   Emacs loadability after install.  =make fedora-public-url-smoke
   FEDORA_PUBLIC_URL=https://...= installs from a published dnf
   repository URL on a Fedora host or disposable Fedora container.
-- Phase 5 groundwork: =anvil-pkg-compat= exposes NeLisp backend
+- Phase 5 groundwork: =nelix-compat= exposes NeLisp backend
   hooks for synchronous process calls, async process spawn, text HTTP
   GET, binary HTTP GET, env lookup, and PATH lookup
   so the real NeLisp runtime can plug in native implementations
@@ -329,7 +329,7 @@ Public Elisp API uses the short =pkg-= prefix:
   layer loads under a real NeLisp standalone binary and that explicit
   sync process / async / HTTP hooks dispatch there.
 - =anvil-pkg-state= serializes through
-  =anvil-pkg-compat-json-serialize=, so the persistent JSON cache no
+  =nelix-compat-json-serialize=, so the persistent JSON cache no
   longer depends directly on Emacs-only =json-serialize= when running
   on NeLisp.
 
@@ -337,7 +337,7 @@ Long-form aliases (=anvil-pkg-install= etc.) are provided via
 =defalias= for Emacs-prefix purists.
 
 Phase 5 focuses on the NeLisp async backend that makes
-=anvil-pkg-compat-make-process-async= work outside Emacs and a
+=nelix-compat-make-process-async= work outside Emacs and a
 NeLisp-native HTTP backend.  The compat layer already probes and
 auto-detects NeLisp process / text HTTP / binary HTTP primitives and
 uses =curl= as the HTTP fallback when no native text / binary backend
@@ -703,7 +703,7 @@ There is no DSL =:auth= keyword and *no* on-disk credential
 storage — anvil-pkg never writes tokens to =anvil-pkg-state= or
 to any of its own log lines.
 
-- Default credential map (=anvil-pkg-compat-credential-env-alist=):
+- Default credential map (=nelix-compat-credential-env-alist=):
 
   | Host                                                | Env vars (first non-empty wins) |
   |-----------------------------------------------------+---------------------------------|
@@ -712,7 +712,7 @@ to any of its own log lines.
   | codeberg.org                                        | =CODEBERG_TOKEN=                |
 
 - Add custom hosts (e.g. corporate GitHub Enterprise) by
-  =add-to-list='ing into =anvil-pkg-compat-credential-env-alist=
+  =add-to-list='ing into =nelix-compat-credential-env-alist=
   before invoking =pkg-install=.
 - Tokens *are* visible to =ps aux= for the duration of =nix= /
   =git= subprocesses — both tools accept the credential on the
@@ -720,7 +720,7 @@ to any of its own log lines.
   machine this is rarely an issue; on a shared host consider
   Nix daemon =access-tokens.conf= or a =GIT_ASKPASS= shim
   instead (out of scope for this phase).
-- Logging through =anvil-pkg-compat-mask-credentials= replaces
+- Logging through =nelix-compat-mask-credentials= replaces
   =Bearer .*=, =extra-access-tokens "host=tok"=, and
   =x-access-token:tok@= patterns with =***= before any
   =message= / =lwarn= / debug-print call.

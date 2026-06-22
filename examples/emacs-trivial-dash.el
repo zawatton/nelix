@@ -12,21 +12,21 @@
 ;;     (the simpler of the two builders; for single-root .el
 ;;     packages without a MELPA recipe / dir / .info)
 ;;   - the Phase 4-A :require keyword on pkg-install — after the
-;;     Nix store path lands, anvil-pkg adds it to load-path and
+;;     Nix store path lands, nelix-core adds it to load-path and
 ;;     calls (require 'dash).
 ;;   - automatic :depends-on derivation (Phase 4-C/4-D L18) — the
 ;;     Package-Requires header is read from raw.githubusercontent.com
-;;     at install time and cached in anvil-pkg-state.
+;;     at install time and cached in nelix-state.
 ;;
 ;; dash.el is a single-file functional library with no further deps.
 ;;
 ;; Usage:
-;;   M-: (load-file "/path/to/anvil-pkg/examples/emacs-trivial-dash.el")
+;;   M-: (load-file "/path/to/nelix-core/examples/emacs-trivial-dash.el")
 ;;   M-: (pkg-install 'dash :require t)
 
 ;;; Code:
 
-(require 'anvil-pkg-dsl)
+(require 'nelix-dsl)
 
 (pkg-define dash
   (version "2.20.0")

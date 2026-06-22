@@ -6,7 +6,7 @@
 ;;; Commentary:
 
 ;; Many users want to declare a bundle of packages in one place
-;; (the "Brewfile" / "Packages.dhall" pattern).  anvil-pkg supports
+;; (the "Brewfile" / "Packages.dhall" pattern).  nelix-core supports
 ;; this directly with Phase 4-F's multi-install dispatch:
 ;;
 ;;   (pkg-install '(ripgrep fd hyperfine))
@@ -24,12 +24,12 @@
 ;; `(pkg-rollback-package 'fd)' (Phase 4-D).
 ;;
 ;; Usage:
-;;   M-: (load-file "/path/to/anvil-pkg/examples/multi-install.el")
+;;   M-: (load-file "/path/to/nelix-core/examples/multi-install.el")
 ;;   M-: (pkg-install '(ripgrep fd hyperfine))
 
 ;;; Code:
 
-(require 'anvil-pkg-dsl)
+(require 'nelix-dsl)
 
 ;; Cross-language bundle: rust CLI tools that share a common upstream
 ;; layout (single-binary, no deps beyond rustc / cargo).

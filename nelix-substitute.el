@@ -15,15 +15,15 @@
 
 (require 'cl-lib)
 (require 'subr-x)
-(require 'anvil-pkg)
-(require 'anvil-pkg-compat)
+(require 'nelix-core)
+(require 'nelix-compat)
 (require 'nelix-store)
 (require 'nelix-fetch)
 (require 'nelix-builder)
 
 (defgroup nelix-substitute nil
   "Nelix native substitute metadata."
-  :group 'anvil-pkg
+  :group 'nelix-core
   :prefix "nelix-substitute-")
 
 (defcustom nelix-substitute-root nil
@@ -93,11 +93,11 @@ Individual descriptors can also set `:require-signature' to non-nil."
   (let ((value (plist-get plist key)))
     (cond
      ((and (stringp value)
-           (> (length (anvil-pkg-compat-string-trim value)) 0))
-      (anvil-pkg-compat-string-trim value))
+           (> (length (nelix-compat-string-trim value)) 0))
+      (nelix-compat-string-trim value))
      ((symbolp value) (symbol-name value))
      (t
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "%s: %S must be a non-empty string or symbol, got %S"
                             caller key value)))))))
 
@@ -107,7 +107,7 @@ Individual descriptors can also set `:require-signature' to non-nil."
         keys)
     (while rest
       (unless (and (consp rest) (consp (cdr rest)))
-        (signal 'anvil-pkg-error
+        (signal 'nelix-error
                 (list (format "nelix-substitute: malformed plist %S" plist))))
       (push (car rest) keys)
       (setq rest (cddr rest)))
@@ -155,7 +155,7 @@ Individual descriptors can also set `:require-signature' to non-nil."
         out)
     (while rest
       (unless (and (consp rest) (consp (cdr rest)))
-        (signal 'anvil-pkg-error
+        (signal 'nelix-error
                 (list (format "nelix-substitute: malformed plist %S" plist))))
       (unless (memq (car rest) keys)
         (push (car rest) out)
@@ -211,11 +211,11 @@ stable before and after a descriptor is signed."
   "Register FUNCTION as cryptographic verifier for ALGORITHM.
 FUNCTION is called with MESSAGE, SIGNATURE, KEY-ENTRY, and ALGORITHM."
   (unless (symbolp algorithm)
-    (signal 'anvil-pkg-error
+    (signal 'nelix-error
             (list (format "nelix-substitute: verifier algorithm must be a symbol, got %S"
                           algorithm))))
   (unless (functionp function)
-    (signal 'anvil-pkg-error
+    (signal 'nelix-error
             (list (format "nelix-substitute: verifier must be callable, got %S"
                           function))))
   (setq nelix-substitute-crypto-verifiers
@@ -231,13 +231,13 @@ FUNCTION is called with MESSAGE, SIGNATURE, KEY-ENTRY, and ALGORITHM."
 
 (defun nelix-substitute--write-binary-file (file bytes)
   "Write BYTES to FILE preserving binary content when possible."
-  (anvil-pkg-compat-make-directory (file-name-directory file) t)
+  (nelix-compat-make-directory (file-name-directory file) t)
   (if (fboundp 'with-temp-file)
       (let ((coding-system-for-write 'binary))
         (with-temp-file file
           (set-buffer-multibyte nil)
           (insert bytes)))
-    (anvil-pkg-compat-write-file file bytes))
+    (nelix-compat-write-file file bytes))
   file)
 
 (defun nelix-substitute--hex-to-bytes (hex)
@@ -246,7 +246,7 @@ FUNCTION is called with MESSAGE, SIGNATURE, KEY-ENTRY, and ALGORITHM."
         (len (length hex))
         (bytes ""))
     (unless (zerop (% len 2))
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-substitute: odd hex string length: %S"
                             hex))))
     (setq bytes (make-string (/ len 2) 0))
@@ -287,7 +287,7 @@ enforced by the signature key and `nelix-substitute-trusted-signers'."
 (defun nelix-substitute--base64-key-material (encoded)
   "Return base64 key material from ENCODED Nix key string."
   (let ((trimmed (and (stringp encoded)
-                      (anvil-pkg-compat-string-trim encoded))))
+                      (nelix-compat-string-trim encoded))))
     (cond
      ((not trimmed) nil)
      ((string-match "\\`[^:]+:\\(.+\\)\\'" trimmed)
@@ -298,13 +298,13 @@ enforced by the signature key and `nelix-substitute-trusted-signers'."
   "Return PROGRAM path using the host runtime when possible."
   (or (and (fboundp 'executable-find)
            (executable-find program))
-      (anvil-pkg-compat-executable-find program)))
+      (nelix-compat-executable-find program)))
 
 (defun nelix-substitute--call-process (program args)
   "Run PROGRAM with ARGS and return `(:exit :stdout :stderr)'."
   (if (fboundp 'call-process)
       (let ((stdout (generate-new-buffer " *nelix-substitute-stdout*"))
-            (stderr-file (anvil-pkg-compat-make-temp-file
+            (stderr-file (nelix-compat-make-temp-file
                           "nelix-substitute-stderr-")))
         (unwind-protect
             (let* ((exit (apply #'call-process
@@ -326,8 +326,8 @@ enforced by the signature key and `nelix-substitute-trusted-signers'."
                     :stdout stdout-text
                     :stderr stderr-text))
           (kill-buffer stdout)
-          (anvil-pkg-compat-delete-file-quietly stderr-file)))
-    (anvil-pkg-compat-call-process program args)))
+          (nelix-compat-delete-file-quietly stderr-file)))
+    (nelix-compat-call-process program args)))
 
 (defun nelix-substitute--openssl-rsa-sha256-verify (message signature key-entry)
   "Verify SIGNATURE over MESSAGE with OpenSSL RSA-SHA256 KEY-ENTRY."
@@ -335,8 +335,8 @@ enforced by the signature key and `nelix-substitute-trusted-signers'."
       (list :verified nil
             :blocked :verifier-unavailable
             :message "openssl command not found")
-    (let ((message-file (anvil-pkg-compat-make-temp-file "nelix-signature-message-"))
-          (signature-file (anvil-pkg-compat-make-temp-file "nelix-signature-"))
+    (let ((message-file (nelix-compat-make-temp-file "nelix-signature-message-"))
+          (signature-file (nelix-compat-make-temp-file "nelix-signature-"))
           (public-key-file nil)
           (temp-public-key-file nil)
           decoded
@@ -351,14 +351,14 @@ enforced by the signature key and `nelix-substitute-trusted-signers'."
                       (or (plist-get key-entry :public-key-file)
                           (when (plist-get key-entry :public-key)
                             (setq temp-public-key-file
-                                  (anvil-pkg-compat-make-temp-file
+                                  (nelix-compat-make-temp-file
                                    "nelix-public-key-"))
-                            (anvil-pkg-compat-write-file
+                            (nelix-compat-write-file
                              temp-public-key-file
                              (plist-get key-entry :public-key))
                             temp-public-key-file)))
                 (unless public-key-file
-                  (signal 'anvil-pkg-error
+                  (signal 'nelix-error
                           (list "nelix-substitute: public key entry has no :public-key-file or :public-key")))
                 (setq res
                       (nelix-substitute--call-process
@@ -375,7 +375,7 @@ enforced by the signature key and `nelix-substitute-trusted-signers'."
                         :backend 'openssl
                         :algorithm 'openssl-rsa-sha256
                         :blocked :cryptographic-signature-invalid
-                        :stderr (anvil-pkg-compat-string-trim
+                        :stderr (nelix-compat-string-trim
                                  (or (plist-get res :stderr) "")))))
             (error
              (list :verified nil
@@ -383,10 +383,10 @@ enforced by the signature key and `nelix-substitute-trusted-signers'."
                    :algorithm 'openssl-rsa-sha256
                    :blocked :cryptographic-signature-error
                    :message (error-message-string err))))
-        (anvil-pkg-compat-delete-file-quietly message-file)
-        (anvil-pkg-compat-delete-file-quietly signature-file)
+        (nelix-compat-delete-file-quietly message-file)
+        (nelix-compat-delete-file-quietly signature-file)
         (when temp-public-key-file
-          (anvil-pkg-compat-delete-file-quietly temp-public-key-file))))))
+          (nelix-compat-delete-file-quietly temp-public-key-file))))))
 
 (defun nelix-substitute--nix-ed25519-public-key-der (key-entry)
   "Return DER SubjectPublicKeyInfo bytes for Nix Ed25519 KEY-ENTRY."
@@ -398,10 +398,10 @@ enforced by the signature key and `nelix-substitute-trusted-signers'."
          (prefix (nelix-substitute--hex-to-bytes
                   "302a300506032b6570032100")))
     (unless raw
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list "nelix-substitute: Nix Ed25519 key entry has no :public-key")))
     (unless (= (length raw) 32)
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-substitute: Nix Ed25519 public key must decode to 32 bytes, got %s"
                             (length raw)))))
     (concat prefix raw)))
@@ -414,9 +414,9 @@ enforced by the signature key and `nelix-substitute-trusted-signers'."
             :algorithm 'nix-ed25519
             :blocked :verifier-unavailable
             :message "openssl command not found")
-    (let ((message-file (anvil-pkg-compat-make-temp-file "nelix-nix-ed25519-message-"))
-          (signature-file (anvil-pkg-compat-make-temp-file "nelix-nix-ed25519-signature-"))
-          (public-key-file (anvil-pkg-compat-make-temp-file "nelix-nix-ed25519-public-key-"))
+    (let ((message-file (nelix-compat-make-temp-file "nelix-nix-ed25519-message-"))
+          (signature-file (nelix-compat-make-temp-file "nelix-nix-ed25519-signature-"))
+          (public-key-file (nelix-compat-make-temp-file "nelix-nix-ed25519-public-key-"))
           decoded
           res)
       (unwind-protect
@@ -424,7 +424,7 @@ enforced by the signature key and `nelix-substitute-trusted-signers'."
               (progn
                 (setq decoded (base64-decode-string signature))
                 (unless (= (length decoded) 64)
-                  (signal 'anvil-pkg-error
+                  (signal 'nelix-error
                           (list (format "nelix-substitute: Nix Ed25519 signature must decode to 64 bytes, got %s"
                                         (length decoded)))))
                 (nelix-substitute--write-binary-file message-file message)
@@ -451,7 +451,7 @@ enforced by the signature key and `nelix-substitute-trusted-signers'."
                         :backend 'openssl
                         :algorithm 'nix-ed25519
                         :blocked :cryptographic-signature-invalid
-                        :stderr (anvil-pkg-compat-string-trim
+                        :stderr (nelix-compat-string-trim
                                  (or (plist-get res :stderr) "")))))
             (error
              (list :verified nil
@@ -459,9 +459,9 @@ enforced by the signature key and `nelix-substitute-trusted-signers'."
                    :algorithm 'nix-ed25519
                    :blocked :cryptographic-signature-error
                    :message (error-message-string err))))
-        (anvil-pkg-compat-delete-file-quietly message-file)
-        (anvil-pkg-compat-delete-file-quietly signature-file)
-        (anvil-pkg-compat-delete-file-quietly public-key-file)))))
+        (nelix-compat-delete-file-quietly message-file)
+        (nelix-compat-delete-file-quietly signature-file)
+        (nelix-compat-delete-file-quietly public-key-file)))))
 
 (defun nelix-substitute--cryptographic-signature-report
     (substitute signature &optional public-keys)
@@ -560,7 +560,7 @@ enforced by the signature key and `nelix-substitute-trusted-signers'."
       direct)
      ((and (stringp direct)
            (or (file-name-absolute-p direct)
-               (anvil-pkg-compat-file-exists-p direct)))
+               (nelix-compat-file-exists-p direct)))
       direct)
      ((and (stringp cache) (stringp direct))
       (nelix-substitute--join-url cache direct))
@@ -577,7 +577,7 @@ enforced by the signature key and `nelix-substitute-trusted-signers'."
   (if (and (stringp value)
            (string-match-p "\\`[0-9]+\\'" value))
       (string-to-number value)
-    (signal 'anvil-pkg-error
+    (signal 'nelix-error
             (list (format "nelix-substitute-parse-narinfo: invalid %s: %S"
                           field value)))))
 
@@ -610,7 +610,7 @@ References, Deriver, repeated Sig fields, and CA."
     (dolist (line lines)
       (unless (string-empty-p line)
         (unless (string-match "\\`\\([^:]+\\):[ \t]*\\(.*\\)\\'" line)
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list (format "nelix-substitute-parse-narinfo: malformed line %S"
                                 line))))
         (let ((field (match-string 1 line))
@@ -634,11 +634,11 @@ References, Deriver, repeated Sig fields, and CA."
             ("CA" (setq plist (plist-put plist :content-address value)))))))
     (dolist (key '(:store-path :nar-url :nar-hash :nar-size))
       (unless (plist-get plist key)
-        (signal 'anvil-pkg-error
+        (signal 'nelix-error
                 (list (format "nelix-substitute-parse-narinfo: missing %S"
                               key)))))
     (when (zerop (plist-get plist :nar-size))
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list "nelix-substitute-parse-narinfo: NarSize missing or zero")))
     (setq plist (plist-put plist :compression
                            (or (plist-get plist :compression) "bzip2")))
@@ -672,7 +672,7 @@ Nix valid path fingerprints:
   "Return a fetch source plist for SUBSTITUTE."
   (let ((url (nelix-substitute--payload-url substitute)))
     (unless url
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list "nelix-substitute-materialize: substitute has no :nar-url, :url, :file, or :archive-file")))
     (list :type 'url
           :url url
@@ -699,13 +699,13 @@ Nix valid path fingerprints:
 
 (defun nelix-substitute--restore-nar (payload store-path)
   "Restore NAR PAYLOAD into STORE-PATH using nix-store."
-  (unless (anvil-pkg-compat-executable-find "nix-store")
-    (signal 'anvil-pkg-error
+  (unless (nelix-compat-executable-find "nix-store")
+    (signal 'nelix-error
             (list "nelix-substitute-materialize: nix-store is required to restore NAR payloads")))
-  (unless (anvil-pkg-compat-executable-find "sh")
-    (signal 'anvil-pkg-error
+  (unless (nelix-compat-executable-find "sh")
+    (signal 'nelix-error
             (list "nelix-substitute-materialize: sh is required to stream NAR payloads")))
-  (let ((res (anvil-pkg-compat-call-process
+  (let ((res (nelix-compat-call-process
               "sh"
               (list "-c"
                     "nix-store --restore \"$1\" < \"$2\""
@@ -713,15 +713,15 @@ Nix valid path fingerprints:
                     (expand-file-name store-path)
                     (expand-file-name payload)))))
     (unless (eq 0 (plist-get res :exit))
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-substitute-materialize: nix-store --restore failed: %s"
-                            (anvil-pkg-compat-string-trim
+                            (nelix-compat-string-trim
                              (or (plist-get res :stderr) ""))))))))
 
 (defun nelix-substitute--unpack-payload (payload store-path substitute)
   "Unpack PAYLOAD into STORE-PATH according to SUBSTITUTE."
   (let ((format (nelix-substitute--payload-format substitute)))
-    (anvil-pkg-compat-make-directory (file-name-directory store-path) t)
+    (nelix-compat-make-directory (file-name-directory store-path) t)
     (pcase format
       ('nar
        (nelix-substitute--restore-nar payload store-path))
@@ -733,7 +733,7 @@ Nix valid path fingerprints:
         (or (plist-get substitute :install)
             (list :type 'substitute))))
       (_
-       (signal 'anvil-pkg-error
+       (signal 'nelix-error
                (list (format "nelix-substitute-materialize: unsupported payload format %S"
                              format)))))))
 
@@ -775,7 +775,7 @@ substitute payload or local fixture file represented by the
 descriptor."
   (dolist (key '(:name :version :system :source :sha256))
     (unless (memq key (nelix-substitute--plist-keys plist))
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-substitute: missing %S" key)))))
   (let* ((name (nelix-substitute--required-string
                 "nelix-substitute" plist :name))
@@ -787,17 +787,17 @@ descriptor."
          (source (plist-get plist :source))
          (substitute (copy-sequence plist)))
     (unless (symbolp system)
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-substitute: :system must be symbol, got %S"
                             system))))
     (unless (symbolp source)
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-substitute: :source must be symbol, got %S"
                             source))))
     (when (eq source 'nix-cache)
       (dolist (key '(:cache :store-path :nar-hash))
         (unless (memq key (nelix-substitute--plist-keys plist))
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list (format "nelix-substitute: nix-cache source missing %S"
                                 key))))))
     (setq substitute (plist-put substitute :name name))
@@ -878,8 +878,8 @@ provided by METADATA."
   "Write SUBSTITUTE metadata and return its file path."
   (let* ((normalized (apply #'nelix-substitute substitute))
          (file (nelix-substitute--file normalized)))
-    (anvil-pkg-compat-make-directory (file-name-directory file) t)
-    (anvil-pkg-compat-write-file
+    (nelix-compat-make-directory (file-name-directory file) t)
+    (nelix-compat-write-file
      file
      (concat ";;; substitute.el --- generated Nelix substitute metadata -*- lexical-binding: t; -*-\n\n"
              "(require 'nelix-substitute)\n\n"
@@ -890,8 +890,8 @@ provided by METADATA."
 (defun nelix-substitute-read (file)
   "Read substitute metadata from FILE."
   (let ((nelix-substitute-last nil))
-    (unless (anvil-pkg-compat-file-exists-p file)
-      (signal 'anvil-pkg-error
+    (unless (nelix-compat-file-exists-p file)
+      (signal 'nelix-error
               (list (format "nelix-substitute-read: missing file %s" file))))
     (load (expand-file-name file) nil nil t)
     nelix-substitute-last))
@@ -982,7 +982,7 @@ declared cryptographic verifier also succeeds."
             (plist-get substitute :require-signature))
     (let ((report (nelix-substitute-verify-trust substitute)))
       (unless (plist-get report :ok)
-        (signal 'anvil-pkg-error
+        (signal 'nelix-error
                 (list (format "nelix-substitute-materialize: untrusted substitute signature: %S"
                               (plist-get (plist-get report :signature)
                                          :blocked))
@@ -999,7 +999,7 @@ substitute archives and local tests."
   (let* ((normalized (apply #'nelix-substitute substitute))
          (entry (nelix-substitute--store-entry normalized))
          (store-path (nelix-store-entry-path entry))
-         (payload (anvil-pkg-compat-make-temp-file "nelix-substitute-"))
+         (payload (nelix-compat-make-temp-file "nelix-substitute-"))
          fetch-report)
     (nelix-substitute--maybe-verify-materialize-trust normalized)
     (unwind-protect
@@ -1008,7 +1008,7 @@ substitute archives and local tests."
                 (nelix-fetch-source
                  (nelix-substitute--payload-source normalized)
                  payload))
-          (anvil-pkg-compat-make-directory store-path t)
+          (nelix-compat-make-directory store-path t)
           (nelix-substitute--unpack-payload payload store-path normalized)
           (nelix-store-write-entry entry)
           (list :status 'ok
@@ -1021,7 +1021,7 @@ substitute archives and local tests."
                 :substitute normalized
                 :fetch fetch-report
                 :entry entry))
-      (anvil-pkg-compat-delete-file-quietly payload))))
+      (nelix-compat-delete-file-quietly payload))))
 
 ;;;###autoload
 (defun nelix-substitute-install (substitute &optional profile-name system)

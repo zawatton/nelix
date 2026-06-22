@@ -179,7 +179,7 @@
             (insert " (package vertico :backend elpa :pin t)\n")
             (insert " (linux-package fd :backend nix :pin t)\n")
             (insert " (version-pin git \"2.0\"))\n"))
-          (cl-letf (((symbol-function 'anvil-pkg-compat--standalone-nelisp-p)
+          (cl-letf (((symbol-function 'nelix-compat--standalone-nelisp-p)
                      (lambda () t))
                     ((symbol-function 'nelix-validate)
                      (lambda (_manifest)
@@ -238,7 +238,7 @@
             (insert " (package vertico :backend elpa :pin t)\n")
             (insert " (linux-package fd :backend nix :pin t)\n")
             (insert " (version-pin git \"2.0\"))\n"))
-          (cl-letf (((symbol-function 'anvil-pkg-compat--standalone-nelisp-p)
+          (cl-letf (((symbol-function 'nelix-compat--standalone-nelisp-p)
                      (lambda () t))
                     ((symbol-function 'nelix-manifest-load)
                      (lambda (&rest _)
@@ -283,7 +283,7 @@
             (insert " (linux-packages fixture-linux-packages)\n")
             (insert " (package vertico :backend elpa :pin t)\n")
             (insert " (linux-package fd :backend nix :pin t))\n"))
-          (cl-letf (((symbol-function 'anvil-pkg-compat--standalone-nelisp-p)
+          (cl-letf (((symbol-function 'nelix-compat--standalone-nelisp-p)
                      (lambda () t))
                     ((symbol-function 'nelix-manifest-load)
                      (lambda (&rest _)
@@ -326,14 +326,14 @@
             (insert " (name \"fixture\")\n")
             (insert " (name \"duplicate\")\n")
             (insert " (linux-packages \"ripgrep\"))\n"))
-          (cl-letf (((symbol-function 'anvil-pkg-compat--standalone-nelisp-p)
+          (cl-letf (((symbol-function 'nelix-compat--standalone-nelisp-p)
                      (lambda () t)))
             (let ((err (should-error
                         (nelix-cli-dispatch
                          (list :command "validate"
                                :args (list manifest)
                                :json t))
-                        :type 'anvil-pkg-error)))
+                        :type 'nelix-error)))
               (should (string-match-p "duplicate DSL form name"
                             (cadr err))))))
       (delete-directory dir t))))
@@ -349,14 +349,14 @@
             (insert " (name \"fixture\")\n")
             (insert " (package magit :pin yes :version 1)\n")
             (insert " (linux-packages \"ripgrep\"))\n"))
-          (cl-letf (((symbol-function 'anvil-pkg-compat--standalone-nelisp-p)
+          (cl-letf (((symbol-function 'nelix-compat--standalone-nelisp-p)
                      (lambda () t)))
             (let ((err (should-error
                         (nelix-cli-dispatch
                          (list :command "validate"
                                :args (list manifest)
                                :json t))
-                        :type 'anvil-pkg-error)))
+                        :type 'nelix-error)))
               (should (string-match-p ":pin must be t or nil"
                                       (cadr err))))))
       (delete-directory dir t))))
@@ -372,7 +372,7 @@
                      (list :status 'ok
                            :manifest "m.el"
                            :args '(:prune t)
-                           :profile-root anvil-pkg-profile-dir)))
+                           :profile-root nelix-core-profile-dir)))
       (should (equal called '("m.el" :prune t))))))
 
 (ert-deftest nelix-cli-test-dispatch-apply-and-sync-parse-locked ()
@@ -400,9 +400,9 @@
                        '("m.el" :prune t :locked t
                          :allow-remove-count 2)))
         (should (equal (plist-get apply-result :profile-root)
-                       anvil-pkg-profile-dir))
+                       nelix-core-profile-dir))
         (should (equal (plist-get sync-result :profile-root)
-                       anvil-pkg-profile-dir))))))
+                       nelix-core-profile-dir))))))
 
 (ert-deftest nelix-cli-test-dispatch-apply-parses-dry-run ()
   (let (called)
@@ -418,7 +418,7 @@
                        '("m.el" :dry-run t :locked t
                          :allow-remove t :rollback-on-error nil)))
         (should (equal (plist-get result :profile-root)
-                       anvil-pkg-profile-dir))))))
+                       nelix-core-profile-dir))))))
 
 (ert-deftest nelix-cli-test-dispatch-plan-is-read-only-api ()
   (let (called)
@@ -435,7 +435,7 @@
       (should (equal called "m.el")))))
 
 (ert-deftest nelix-cli-test-mutating-command-adds-profile-root ()
-  (let ((anvil-pkg-profile-dir "/tmp/nelix-profile"))
+  (let ((nelix-core-profile-dir "/tmp/nelix-profile"))
     (cl-letf (((symbol-function 'nelix-lock-write)
                (lambda (_manifest)
                  (list :status 'ok :lock "m.el.nelix-lock"))))
@@ -483,7 +483,7 @@
 
 (ert-deftest nelix-cli-test-dispatch-lock-migrate-adds-profile-root ()
   "lock migrate without --dry-run is a lockfile mutation command."
-  (let ((anvil-pkg-profile-dir "/tmp/nelix-profile")
+  (let ((nelix-core-profile-dir "/tmp/nelix-profile")
         called)
     (cl-letf (((symbol-function 'nelix-lock-migrate)
                (lambda (manifest &rest args)
@@ -500,7 +500,7 @@
 (ert-deftest nelix-cli-test-dispatch-lock-check-is-read-only-api ()
   "lock-check exposes the public lock checker without profile mutation metadata."
   (let (called)
-    (cl-letf (((symbol-function 'anvil-pkg-compat--standalone-nelisp-p)
+    (cl-letf (((symbol-function 'nelix-compat--standalone-nelisp-p)
                (lambda () nil))
               ((symbol-function 'nelix-lock-check)
                (lambda (manifest)
@@ -514,7 +514,7 @@
 (ert-deftest nelix-cli-test-dispatch-lock-check-uses-nelisp-fast-reader ()
   "Standalone NeLisp lock-check uses the non-eval lock reader."
   (let (called)
-    (cl-letf (((symbol-function 'anvil-pkg-compat--standalone-nelisp-p)
+    (cl-letf (((symbol-function 'nelix-compat--standalone-nelisp-p)
                (lambda () t))
               ((symbol-function 'nelix-lock-check--nelisp)
                (lambda (manifest)
@@ -527,7 +527,7 @@
 
 (ert-deftest nelix-cli-test-lock-json-includes-versioned-schema ()
   "JSON lock output exposes stable schema metadata for other runtimes."
-  (let ((anvil-pkg-profile-dir "/tmp/nelix-profile"))
+  (let ((nelix-core-profile-dir "/tmp/nelix-profile"))
     (cl-letf (((symbol-function 'nelix-lock-write)
                (lambda (_manifest)
                  (list :schema "nelix-lock"
@@ -911,7 +911,7 @@
 
 (ert-deftest nelix-cli-test-lock-json-round-trips-schema ()
   "Lock JSON can be parsed back by standard JSON consumers."
-  (let ((anvil-pkg-profile-dir "/tmp/nelix-profile"))
+  (let ((nelix-core-profile-dir "/tmp/nelix-profile"))
     (cl-letf (((symbol-function 'nelix-lock-write)
                (lambda (_manifest)
                  (list :schema "nelix-lock"
@@ -948,10 +948,10 @@
                      (lambda ()
                        (list (list :name "ripgrep"
                                    :attr-path "legacyPackages.x86_64-linux.ripgrep"))))
-                    ((symbol-function 'anvil-pkg-compat-executable-find)
+                    ((symbol-function 'nelix-compat-executable-find)
                      (lambda (program)
                        (and (equal program "nix") "/usr/bin/nix")))
-                    ((symbol-function 'anvil-pkg--detect-nix-version)
+                    ((symbol-function 'nelix-core--detect-nix-version)
                      (lambda () "2.34.7")))
             (let* ((json (nelix-cli-format-result
                           (nelix-cli-dispatch
@@ -983,10 +983,10 @@
                      (lambda ()
                        (list (list :name "ripgrep"
                                    :attr-path "legacyPackages.x86_64-linux.ripgrep"))))
-                    ((symbol-function 'anvil-pkg-compat-executable-find)
+                    ((symbol-function 'nelix-compat-executable-find)
                      (lambda (program)
                        (and (equal program "nix") "/usr/bin/nix")))
-                    ((symbol-function 'anvil-pkg--detect-nix-version)
+                    ((symbol-function 'nelix-core--detect-nix-version)
                      (lambda () "2.34.7")))
             (let* ((schema (nelix-cli-test--schema
                             "nelix-lock-v2.schema.json"))
@@ -1061,7 +1061,7 @@
                     " :backend-policy '(nelix-native))\n"))
           (cl-letf (((symbol-function 'nelix-list)
                      (lambda () nil))
-                    ((symbol-function 'anvil-pkg--detect-nix-version)
+                    ((symbol-function 'nelix-core--detect-nix-version)
                      (lambda () nil)))
             (let* ((json (nelix-cli-format-result
                           (nelix-cli-dispatch
@@ -1184,7 +1184,7 @@
 
 (ert-deftest nelix-cli-test-list-uses-nelisp-fast-path ()
   "Standalone NeLisp list dispatch returns name-only fast data."
-  (cl-letf (((symbol-function 'anvil-pkg-compat--standalone-nelisp-p)
+  (cl-letf (((symbol-function 'nelix-compat--standalone-nelisp-p)
              (lambda () t))
             ((symbol-function 'nelix-fast-list)
              (lambda () '("magit" "ripgrep")))
@@ -1265,12 +1265,12 @@
           (should-error
            (nelix-cli-dispatch
             '(:command "transaction" :args ("recover" "apply-alpha")))
-           :type 'anvil-pkg-error)
+           :type 'nelix-error)
           (should-error
            (nelix-cli-dispatch
             '(:command "transaction"
               :args ("recover" "apply-alpha" "--dry-run" "--execute")))
-           :type 'anvil-pkg-error))
+           :type 'nelix-error))
       (delete-directory dir t))))
 
 (ert-deftest nelix-cli-test-transaction-recover-execute-rolls-back ()
@@ -1317,7 +1317,7 @@
              (nelix-cli-dispatch
               '(:command "transaction"
                 :args ("recover" "apply-alpha" "--execute")))
-             :type 'anvil-pkg-error)))
+             :type 'nelix-error)))
       (delete-directory dir t))))
 
 (ert-deftest nelix-cli-test-transaction-recover-rejects-unavailable-rollback ()
@@ -1340,7 +1340,7 @@
                       (nelix-cli-dispatch
                        '(:command "transaction"
                          :args ("recover" "apply-no-rollback" "--dry-run")))
-                      :type 'anvil-pkg-error)))
+                      :type 'nelix-error)))
             (should (string-match-p "rollback unavailable"
                                     (cadr err)))
             (should (string-match-p "rollback-disabled"
@@ -1369,7 +1369,7 @@
 (ert-deftest nelix-cli-test-outdated-rejects-missing-backend-value ()
   (should-error
    (nelix-cli-dispatch '(:command "outdated" :args ("--backend")))
-   :type 'anvil-pkg-error))
+   :type 'nelix-error))
 
 (ert-deftest nelix-cli-test-upgrade-manifest-delegates-to-nelix-upgrade ()
   (let ((manifest (make-temp-file "nelix-cli-test-" nil ".el")))
@@ -1386,7 +1386,7 @@
             (should (eq (plist-get result :status) 'ok))
             (should (equal '("ripgrep") (plist-get result :upgraded)))
             (should (equal (plist-get result :profile-root)
-                           anvil-pkg-profile-dir))))
+                           nelix-core-profile-dir))))
       (delete-file manifest))))
 
 (ert-deftest nelix-cli-test-json-normalize-converts-plists-and-symbols ()
@@ -1481,10 +1481,10 @@
   "The native/AOT line protocol keeps tab/newline escaping out of hot paths."
   (should-error
    (nelix-fast--aot-line "installed" "bad\tname")
-   :type 'anvil-pkg-error)
+   :type 'nelix-error)
   (should-error
    (nelix-fast--aot-line "installed" "bad\nname")
-   :type 'anvil-pkg-error))
+   :type 'nelix-error))
 
 (ert-deftest nelix-cli-test-aot-engine-audit-uses-line-protocol ()
   "Portable AOT audit consumes `nelix-fast-aot-input' without manifest plists."
@@ -1964,14 +1964,14 @@
           (cl-letf (((symbol-function 'nelix-fast-profile-names)
                      (lambda (&optional _profile)
                        '("magit" "bat")))
-                    ((symbol-function 'anvil-pkg-compat--standalone-nelisp-p)
+                    ((symbol-function 'nelix-compat--standalone-nelisp-p)
                      (lambda () nil)))
             (should-not (nelix-fast-audit-json manifest))
             (should-not (nelix-fast-upgrade-plan-json manifest)))
           (cl-letf (((symbol-function 'nelix-fast-profile-names)
                      (lambda (&optional _profile)
                        '("magit" "bat")))
-                    ((symbol-function 'anvil-pkg-compat--standalone-nelisp-p)
+                    ((symbol-function 'nelix-compat--standalone-nelisp-p)
                      (lambda () t)))
             (let ((audit (nelix-fast-audit-json manifest))
                   (plan (nelix-fast-upgrade-plan-json manifest)))
@@ -2181,9 +2181,9 @@
         (let* ((manifest (expand-file-name "manifest.el" dir))
                (cache (expand-file-name "targets.cache" dir))
                (fake-nix (expand-file-name "nix" dir))
-               (anvil-pkg-nix-program fake-nix)
-               (anvil-pkg-profile-dir (expand-file-name "profile" dir))
-               (anvil-pkg-compat--nelisp-runtime-p nil))
+               (nelix-core-nix-program fake-nix)
+               (nelix-core-profile-dir (expand-file-name "profile" dir))
+               (nelix-compat--nelisp-runtime-p nil))
           (with-temp-file manifest
             (insert "(require 'nelix-manifest)\n"
                     "(nelix-manifest :name \"default\""
@@ -2361,7 +2361,7 @@
 (ert-deftest nelix-cli-test-registry-rejects-missing-search-query ()
   (should-error
    (nelix-cli-dispatch '(:command "registry" :args ("search")))
-   :type 'anvil-pkg-error))
+   :type 'nelix-error))
 
 (ert-deftest nelix-cli-test-dispatch-native-install ()
   "CLI native install refreshes registry and dispatches native backend install."
@@ -2541,7 +2541,7 @@
 (ert-deftest nelix-cli-test-native-install-rejects-missing-name ()
   (should-error
    (nelix-cli-dispatch '(:command "native" :args ("install")))
-   :type 'anvil-pkg-error))
+   :type 'nelix-error))
 
 (ert-deftest nelix-cli-test-rollback-generation-parses-integer ()
   (let (called)
@@ -2558,7 +2558,7 @@
 (ert-deftest nelix-cli-test-unknown-command-errors ()
   (should-error
    (nelix-cli-dispatch '(:command "nope" :args nil))
-   :type 'anvil-pkg-error))
+   :type 'nelix-error))
 
 (provide 'nelix-cli-test)
 ;;; nelix-cli-test.el ends here

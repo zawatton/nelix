@@ -1,19 +1,19 @@
-;;; anvil-pkg-state.el --- Cross-session KV store for anvil-pkg caches  -*- lexical-binding: t; -*-
+;;; nelix-state.el --- Cross-session KV store for nelix-core caches  -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026  Wakaba Tono
 
 ;; Author: zawatton
 ;; Maintainer: zawatton
-;; URL: https://github.com/zawatton/anvil-pkg
+;; URL: https://github.com/zawatton/nelix-core
 ;; Keywords: tools
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 ;;
 ;; Phase 4-D L26 — namespaced KV with optional TTL, persisted to disk so
-;; anvil-pkg caches survive Emacs restarts.
+;; nelix-core caches survive Emacs restarts.
 ;;
-;; Backend: JSON file under `anvil-pkg-state-file' (default
+;; Backend: JSON file under `nelix-state-file' (default
 ;; ~/.local/state/nelix/state.json).  The file is loaded lazily on the
 ;; first read / write and re-saved after every put / delete.  Layout:
 ;;
@@ -25,51 +25,51 @@
 ;;
 ;; Values are stored as `prin1-to-string' / `read' round-tripped Lisp text
 ;; rather than mapped onto JSON primitives.  This trades a tiny CPU cost
-;; for the ability to round-trip arbitrary anvil-pkg shapes — keywords
+;; for the ability to round-trip arbitrary nelix-core shapes — keywords
 ;; (`:hit-pkg-el'), nested plists, and quoted symbols — without
 ;; lossy JSON conversion (`feedback_emacs_json_false_encoding' notes
 ;; that bare keywords like `:hit' are not JSON values).
 ;;
-;; Hard-isolation point: every IO goes through `anvil-pkg--call-state-fn'
-;; (defined in anvil-pkg.el and bound at module load time to
-;; `anvil-pkg-state--default-call').  Tests `cl-letf' that fluid to mock the
+;; Hard-isolation point: every IO goes through `nelix-core--call-state-fn'
+;; (defined in nelix-core.el and bound at module load time to
+;; `nelix-state--default-call').  Tests `cl-letf' that fluid to mock the
 ;; whole storage layer without touching the disk.
 ;;
 ;; API:
-;;   (anvil-pkg-state-get NS KEY)      → value or nil (expired entries
+;;   (nelix-state-get NS KEY)      → value or nil (expired entries
 ;;                                       transparently dropped)
-;;   (anvil-pkg-state-put NS KEY VAL &optional TTL-SECONDS)
+;;   (nelix-state-put NS KEY VAL &optional TTL-SECONDS)
 ;;                                     → VAL
-;;   (anvil-pkg-state-delete NS KEY)   → t
-;;   (anvil-pkg-state-clear NS)        → t  (drops one namespace)
-;;   (anvil-pkg-state-clear-all)       → t  (drops every namespace)
-;;   (anvil-pkg-state-keys NS)         → list of strings
+;;   (nelix-state-delete NS KEY)   → t
+;;   (nelix-state-clear NS)        → t  (drops one namespace)
+;;   (nelix-state-clear-all)       → t  (drops every namespace)
+;;   (nelix-state-keys NS)         → list of strings
 ;;
 ;; OQ15 (design 07-phase4d.org): NeLisp does not yet expose sqlite-*; the
-;; JSON backend is uniform across runtimes and adequate for anvil-pkg's
+;; JSON backend is uniform across runtimes and adequate for nelix-core's
 ;; tiny caches (< 1k entries total).  A SQLite backend is a Phase 5+
 ;; concern.
 
 ;;; Code:
 
-(require 'anvil-pkg-compat)
+(require 'nelix-compat)
 
-(defgroup anvil-pkg-state nil
-  "Cross-session KV store for anvil-pkg caches."
-  :group 'anvil-pkg
-  :prefix "anvil-pkg-state-")
+(defgroup nelix-state nil
+  "Cross-session KV store for nelix-core caches."
+  :group 'nelix-core
+  :prefix "nelix-state-")
 
-(defcustom anvil-pkg-state-file
+(defcustom nelix-state-file
   (expand-file-name
    "nelix/state.json"
-   (or (anvil-pkg-compat-getenv "XDG_STATE_HOME")
+   (or (nelix-compat-getenv "XDG_STATE_HOME")
        (expand-file-name ".local/state"
-                         (or (anvil-pkg-compat-getenv "HOME") "~"))))
+                         (or (nelix-compat-getenv "HOME") "~"))))
   "Path to the Nelix JSON state file."
   :type 'file
-  :group 'anvil-pkg-state)
+  :group 'nelix-state)
 
-(defvar anvil-pkg-state--cache 'unloaded
+(defvar nelix-state--cache 'unloaded
   "In-process snapshot of the on-disk JSON state.
 
 Alist of NAMESPACE → alist of KEY → plist (:value V :expires-at T-OR-NIL).
@@ -79,60 +79,60 @@ means an intentionally empty store (after `clear-all').  This
 distinction is required so writes don't accidentally re-read stale
 content via ensure-loaded.")
 
-(defvar anvil-pkg-state--loaded-from nil
-  "Path the cache in `anvil-pkg-state--cache' was last loaded from, or nil.")
+(defvar nelix-state--loaded-from nil
+  "Path the cache in `nelix-state--cache' was last loaded from, or nil.")
 
 ;;;; --- low-level cache <-> disk -----------------------------------------------
 
-(defun anvil-pkg-state--ensure-loaded ()
-  "Populate `anvil-pkg-state--cache' from disk if not yet loaded.
+(defun nelix-state--ensure-loaded ()
+  "Populate `nelix-state--cache' from disk if not yet loaded.
 
-Re-reads when `anvil-pkg-state-file' has changed since last load (the
+Re-reads when `nelix-state-file' has changed since last load (the
 common test pattern of binding the file path to a tmp value).  An
 empty cache for the current path is left alone so writes do not get
 silently overwritten by stale on-disk content."
-  (when (or (eq anvil-pkg-state--cache 'unloaded)
-            (not (equal anvil-pkg-state--loaded-from anvil-pkg-state-file)))
-    (setq anvil-pkg-state--cache
-          (anvil-pkg-state--read-disk anvil-pkg-state-file)
-          anvil-pkg-state--loaded-from anvil-pkg-state-file)))
+  (when (or (eq nelix-state--cache 'unloaded)
+            (not (equal nelix-state--loaded-from nelix-state-file)))
+    (setq nelix-state--cache
+          (nelix-state--read-disk nelix-state-file)
+          nelix-state--loaded-from nelix-state-file)))
 
-(defun anvil-pkg-state--read-disk (path)
+(defun nelix-state--read-disk (path)
   "Read PATH and return its parsed alist, or empty alist if missing.
 
 Parse failures degrade silently to an empty store + a warning so a
-corrupt file never crashes anvil-pkg."
+corrupt file never crashes nelix-core."
   (cond
-   ((not (anvil-pkg-compat-file-exists-p path)) nil)
+   ((not (nelix-compat-file-exists-p path)) nil)
    (t
     (condition-case err
-        (let* ((raw (anvil-pkg-compat-read-file path))
+        (let* ((raw (nelix-compat-read-file path))
                (parsed (and raw (> (length raw) 0)
-                            (anvil-pkg-compat-json-parse raw))))
-          (anvil-pkg-state--normalize parsed))
+                            (nelix-compat-json-parse raw))))
+          (nelix-state--normalize parsed))
       (error
-       (lwarn 'anvil-pkg :warning
-              "anvil-pkg-state: failed to parse %s (%S); starting empty"
+       (lwarn 'nelix-core :warning
+              "nelix-state: failed to parse %s (%S); starting empty"
               path err)
        nil)))))
 
-(defun anvil-pkg-state--normalize (parsed)
+(defun nelix-state--normalize (parsed)
   "Coerce PARSED JSON output into the canonical alist-of-alists shape.
 
 Values stored as prin1 strings on disk are read back into native
 Lisp objects; corrupted entries (`read' fails) are dropped with a
 warning so a single bad row never poisons the whole namespace."
   (let (out)
-    (dolist (ns-pair (anvil-pkg-state--as-alist parsed))
-      (let* ((ns (anvil-pkg-state--key->string (car ns-pair)))
-             (entries (anvil-pkg-state--as-alist (cdr ns-pair)))
+    (dolist (ns-pair (nelix-state--as-alist parsed))
+      (let* ((ns (nelix-state--key->string (car ns-pair)))
+             (entries (nelix-state--as-alist (cdr ns-pair)))
              (cleaned
               (delq nil
                     (mapcar
                      (lambda (kv)
-                       (let* ((k (anvil-pkg-state--key->string (car kv)))
+                       (let* ((k (nelix-state--key->string (car kv)))
                               (v (cdr kv))
-                              (alist (anvil-pkg-state--as-alist v))
+                              (alist (nelix-state--as-alist v))
                               (raw-value (cdr (or (assoc "value" alist)
                                                   (assoc 'value alist))))
                               (exp (cdr (or (assoc "expires-at" alist)
@@ -148,11 +148,11 @@ warning so a single bad row never poisons the whole namespace."
                                     ;; their value is the raw object.
                                     (t raw-value))
                                  (error
-                                  (lwarn 'anvil-pkg :warning
-                                         "anvil-pkg-state: dropping unreadable value for %s/%s: %S"
+                                  (lwarn 'nelix-core :warning
+                                         "nelix-state: dropping unreadable value for %s/%s: %S"
                                          ns k err)
-                                  'anvil-pkg-state--unreadable))))
-                         (when (and k (not (eq value 'anvil-pkg-state--unreadable)))
+                                  'nelix-state--unreadable))))
+                         (when (and k (not (eq value 'nelix-state--unreadable)))
                            (cons k (list :value value
                                          :expires-at
                                          (cond
@@ -166,7 +166,7 @@ warning so a single bad row never poisons the whole namespace."
         (when ns (push (cons ns cleaned) out))))
     (nreverse out)))
 
-(defun anvil-pkg-state--as-alist (obj)
+(defun nelix-state--as-alist (obj)
   "Best-effort coerce OBJ (alist / hash-table / plist / nil) to an alist."
   (cond
    ((null obj) nil)
@@ -184,7 +184,7 @@ warning so a single bad row never poisons the whole namespace."
       (nreverse acc)))
    (t nil)))
 
-(defun anvil-pkg-state--key->string (k)
+(defun nelix-state--key->string (k)
   "Coerce a JSON-derived key K (string / symbol / keyword) to string."
   (cond
    ((stringp k) k)
@@ -192,16 +192,16 @@ warning so a single bad row never poisons the whole namespace."
    ((symbolp k) (symbol-name k))
    (t nil)))
 
-(defun anvil-pkg-state--write-disk ()
-  "Serialise `anvil-pkg-state--cache' back to `anvil-pkg-state-file'."
-  (anvil-pkg-state--ensure-loaded)
-  (anvil-pkg-compat-make-directory
-   (file-name-directory anvil-pkg-state-file) t)
+(defun nelix-state--write-disk ()
+  "Serialise `nelix-state--cache' back to `nelix-state-file'."
+  (nelix-state--ensure-loaded)
+  (nelix-compat-make-directory
+   (file-name-directory nelix-state-file) t)
   (let ((json
-         (anvil-pkg-state--encode anvil-pkg-state--cache)))
-    (anvil-pkg-compat-write-file anvil-pkg-state-file json)))
+         (nelix-state--encode nelix-state--cache)))
+    (nelix-compat-write-file nelix-state-file json)))
 
-(defun anvil-pkg-state--encode (cache)
+(defun nelix-state--encode (cache)
   "Convert CACHE alist-of-alists to a JSON string via hash-tables.
 
 Each value plist is serialised as
@@ -209,7 +209,7 @@ Each value plist is serialised as
 round-trip keywords / nested plists / symbols without lossy JSON
 mapping.  Uses hash-tables (per `feedback_emacs_json_empty_object_encoding'
 — empty alists serialize to `null') so
-`anvil-pkg-compat-json-serialize' emits real JSON objects even for
+`nelix-compat-json-serialize' emits real JSON objects even for
 empty namespaces."
   (let ((outer (make-hash-table :test 'equal)))
     (dolist (ns-pair cache)
@@ -227,31 +227,31 @@ empty namespaces."
                      entry)
             (puthash k entry inner)))
         (puthash ns-key inner outer)))
-    (anvil-pkg-compat-json-serialize outer)))
+    (nelix-compat-json-serialize outer)))
 
 ;;;; --- pure cache mutators ---------------------------------------------------
 
-(defun anvil-pkg-state--cache-get (ns key)
+(defun nelix-state--cache-get (ns key)
   "Return the entry plist for NS / KEY, dropping it if expired.
 
 Returns nil when missing, when expired (and as a side effect removes
 the expired entry from the cache), or when the namespace does not
 exist."
-  (let* ((ns-pair (assoc ns anvil-pkg-state--cache))
+  (let* ((ns-pair (assoc ns nelix-state--cache))
          (entries (cdr ns-pair))
          (entry (cdr (assoc key entries))))
     (cond
      ((null entry) nil)
-     ((anvil-pkg-state--expired-p entry)
-      (anvil-pkg-state--cache-delete ns key)
+     ((nelix-state--expired-p entry)
+      (nelix-state--cache-delete ns key)
       nil)
      (t entry))))
 
-(defun anvil-pkg-state--cache-put (ns key value ttl-seconds)
+(defun nelix-state--cache-put (ns key value ttl-seconds)
   "Insert / replace (NS, KEY) → VALUE in the cache; honour TTL-SECONDS.
 
 When TTL-SECONDS is nil the entry never expires."
-  (let* ((ns-pair (assoc ns anvil-pkg-state--cache))
+  (let* ((ns-pair (assoc ns nelix-state--cache))
          (entries (cdr ns-pair))
          (entry (list :value value
                       :expires-at
@@ -263,20 +263,20 @@ When TTL-SECONDS is nil the entry never expires."
      (ns-pair
       (setcdr ns-pair entries))
      (t
-      (push (cons ns entries) anvil-pkg-state--cache)))))
+      (push (cons ns entries) nelix-state--cache)))))
 
-(defun anvil-pkg-state--cache-delete (ns key)
+(defun nelix-state--cache-delete (ns key)
   "Remove (NS, KEY) from the cache.  No-op when absent."
-  (let* ((ns-pair (assoc ns anvil-pkg-state--cache)))
+  (let* ((ns-pair (assoc ns nelix-state--cache)))
     (when ns-pair
       (setcdr ns-pair (assoc-delete-all key (cdr ns-pair))))))
 
-(defun anvil-pkg-state--cache-clear (ns)
+(defun nelix-state--cache-clear (ns)
   "Drop every entry under NS."
-  (setq anvil-pkg-state--cache
-        (assoc-delete-all ns anvil-pkg-state--cache)))
+  (setq nelix-state--cache
+        (assoc-delete-all ns nelix-state--cache)))
 
-(defun anvil-pkg-state--expired-p (entry)
+(defun nelix-state--expired-p (entry)
   "Non-nil when the ENTRY plist has an expires-at strictly in the past."
   (let ((exp (plist-get entry :expires-at)))
     (and (numberp exp)
@@ -284,82 +284,82 @@ When TTL-SECONDS is nil the entry never expires."
 
 ;;;; --- backend dispatch ------------------------------------------------------
 
-(defvar anvil-pkg-state--default-call-fn
+(defvar nelix-state--default-call-fn
   (lambda (op &rest args)
     "Default storage backend; OP ∈ (:get :put :delete :clear :clear-all :keys)."
-    (anvil-pkg-state--ensure-loaded)
+    (nelix-state--ensure-loaded)
     (pcase op
       (:get
-       (let ((entry (anvil-pkg-state--cache-get (nth 0 args) (nth 1 args))))
+       (let ((entry (nelix-state--cache-get (nth 0 args) (nth 1 args))))
          (and entry (plist-get entry :value))))
       (:put
-       (anvil-pkg-state--cache-put
+       (nelix-state--cache-put
         (nth 0 args) (nth 1 args) (nth 2 args) (nth 3 args))
-       (anvil-pkg-state--write-disk)
+       (nelix-state--write-disk)
        (nth 2 args))
       (:delete
-       (anvil-pkg-state--cache-delete (nth 0 args) (nth 1 args))
-       (anvil-pkg-state--write-disk)
+       (nelix-state--cache-delete (nth 0 args) (nth 1 args))
+       (nelix-state--write-disk)
        t)
       (:clear
-       (anvil-pkg-state--cache-clear (nth 0 args))
-       (anvil-pkg-state--write-disk)
+       (nelix-state--cache-clear (nth 0 args))
+       (nelix-state--write-disk)
        t)
       (:clear-all
-       (setq anvil-pkg-state--cache nil)
-       (anvil-pkg-state--write-disk)
+       (setq nelix-state--cache nil)
+       (nelix-state--write-disk)
        t)
       (:keys
-       (let ((entries (cdr (assoc (nth 0 args) anvil-pkg-state--cache))))
+       (let ((entries (cdr (assoc (nth 0 args) nelix-state--cache))))
          ;; Drop expired entries lazily so callers never see them.
          (delq nil
                (mapcar (lambda (kv)
-                         (unless (anvil-pkg-state--expired-p (cdr kv))
+                         (unless (nelix-state--expired-p (cdr kv))
                            (car kv)))
                        entries))))
-      (_ (error "Unknown anvil-pkg-state op: %S" op))))
+      (_ (error "Unknown nelix-state op: %S" op))))
   "Default storage backend lambda.
 
 Bound at module init.  Tests `cl-letf' the dispatch fluid
-`anvil-pkg--call-state-fn' below to inject a mock; this default
-never touches the network and only writes to `anvil-pkg-state-file'.")
+`nelix-core--call-state-fn' below to inject a mock; this default
+never touches the network and only writes to `nelix-state-file'.")
 
-(defvar anvil-pkg--call-state-fn
+(defvar nelix-core--call-state-fn
   (lambda (op &rest args)
-    (apply anvil-pkg-state--default-call-fn op args))
+    (apply nelix-state--default-call-fn op args))
   "Indirection for state backend calls.
 
-Default thunk forwards to `anvil-pkg-state--default-call-fn'.  Tests
+Default thunk forwards to `nelix-state--default-call-fn'.  Tests
 rebind via `cl-letf' to mock the persistent layer without touching
-`anvil-pkg-state-file'.")
+`nelix-state-file'.")
 
 ;;;; --- public API ------------------------------------------------------------
 
-(defun anvil-pkg-state-get (namespace key)
+(defun nelix-state-get (namespace key)
   "Return the value stored under NAMESPACE + KEY, or nil."
-  (funcall anvil-pkg--call-state-fn :get namespace key))
+  (funcall nelix-core--call-state-fn :get namespace key))
 
-(defun anvil-pkg-state-put (namespace key value &optional ttl-seconds)
+(defun nelix-state-put (namespace key value &optional ttl-seconds)
   "Store VALUE under NAMESPACE + KEY; optional TTL-SECONDS expiry.
 
 Returns VALUE."
-  (funcall anvil-pkg--call-state-fn :put namespace key value ttl-seconds))
+  (funcall nelix-core--call-state-fn :put namespace key value ttl-seconds))
 
-(defun anvil-pkg-state-delete (namespace key)
+(defun nelix-state-delete (namespace key)
   "Remove KEY from NAMESPACE.  Returns t."
-  (funcall anvil-pkg--call-state-fn :delete namespace key))
+  (funcall nelix-core--call-state-fn :delete namespace key))
 
-(defun anvil-pkg-state-clear (namespace)
+(defun nelix-state-clear (namespace)
   "Drop every entry in NAMESPACE.  Returns t."
-  (funcall anvil-pkg--call-state-fn :clear namespace))
+  (funcall nelix-core--call-state-fn :clear namespace))
 
-(defun anvil-pkg-state-clear-all ()
+(defun nelix-state-clear-all ()
   "Drop every namespace.  Returns t."
-  (funcall anvil-pkg--call-state-fn :clear-all))
+  (funcall nelix-core--call-state-fn :clear-all))
 
-(defun anvil-pkg-state-keys (namespace)
+(defun nelix-state-keys (namespace)
   "Return the list of non-expired keys in NAMESPACE."
-  (funcall anvil-pkg--call-state-fn :keys namespace))
+  (funcall nelix-core--call-state-fn :keys namespace))
 
-(provide 'anvil-pkg-state)
-;;; anvil-pkg-state.el ends here
+(provide 'nelix-state)
+;;; nelix-state.el ends here

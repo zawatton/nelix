@@ -9,26 +9,26 @@ commit_a=(
   .gitignore
   Makefile
   README.org
-  anvil-pkg-compat.el
-  anvil-pkg-dsl.el
-  anvil-pkg-emacs.el
-  anvil-pkg-state.el
-  anvil-pkg.el
+  nelix-compat.el
+  nelix-dsl.el
+  nelix-emacs.el
+  nelix-state.el
+  nelix-core.el
   docs/design/01-overview.org
   docs/design/07-phase4d.org
   docs/design/13-phase5.org
   docs/smoke-test.org
   examples/README.org
-  scripts/anvil-pkg-nelisp-ert-shim.el
-  scripts/anvil-pkg-nelisp-smoke.el
-  test/anvil-pkg-compat-test.el
-  test/anvil-pkg-doctor-test.el
-  test/anvil-pkg-dsl-test.el
-  test/anvil-pkg-emacs-test.el
-  test/anvil-pkg-state-test.el
-  test/anvil-pkg-test.el
-  test/anvil-pkg-uninstall-test.el
-  test/anvil-pkg-upgrade-test.el
+  scripts/nelix-nelisp-ert-shim.el
+  scripts/nelix-nelisp-smoke.el
+  test/nelix-compat-test.el
+  test/nelix-core-doctor-test.el
+  test/nelix-dsl-test.el
+  test/nelix-emacs-test.el
+  test/nelix-state-test.el
+  test/nelix-core-test.el
+  test/nelix-core-uninstall-test.el
+  test/nelix-core-upgrade-test.el
 )
 
 commit_b=(

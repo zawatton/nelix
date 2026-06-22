@@ -12,7 +12,7 @@
 
 (require 'cl-lib)
 (require 'nelix)
-(require 'anvil-pkg-compat)
+(require 'nelix-compat)
 
 (defconst nelix-cli-version "0.1.0"
   "Version string reported by the Nelix CLI wrapper.")
@@ -118,7 +118,7 @@ Commands:
 (defun nelix-cli--arg-or-error (command args)
   "Return the first member of ARGS or signal a COMMAND usage error."
   (or (car args)
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix %s: missing required MANIFEST"
                             command)))))
 
@@ -126,7 +126,7 @@ Commands:
   "Return ARG parsed as an integer for COMMAND."
   (when arg
     (unless (string-match-p "\\`[0-9]+\\'" arg)
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix %s: GENERATION must be an integer, got %S"
                             command arg))))
     (string-to-number arg)))
@@ -134,7 +134,7 @@ Commands:
 (defun nelix-cli--profile-path ()
   "Return the current Nelix profile path."
   (cond
-   ((boundp 'anvil-pkg-profile-dir) anvil-pkg-profile-dir)
+   ((boundp 'nelix-core-profile-dir) nelix-core-profile-dir)
    (t nil)))
 
 (defun nelix-cli--plist-has-key-p (plist key)
@@ -179,17 +179,17 @@ Commands:
          ((equal arg "--allow-remove-count")
           (setq args (cdr args))
           (unless args
-            (signal 'anvil-pkg-error
+            (signal 'nelix-error
                     (list "nelix apply: --allow-remove-count requires a value")))
           (setq allow-remove-count
                 (nelix-cli--numeric-arg "apply" (car args))))
          ((null manifest) (setq manifest arg))
-         (t (signal 'anvil-pkg-error
+         (t (signal 'nelix-error
                     (list (format "nelix apply: unexpected argument %S"
                                   arg))))))
       (setq args (cdr args)))
     (unless manifest
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list "nelix apply: missing required MANIFEST")))
     (apply #'nelix-apply
            manifest
@@ -217,17 +217,17 @@ Commands:
          ((equal arg "--allow-remove-count")
           (setq args (cdr args))
           (unless args
-            (signal 'anvil-pkg-error
+            (signal 'nelix-error
                     (list "nelix sync: --allow-remove-count requires a value")))
           (setq allow-remove-count
                 (nelix-cli--numeric-arg "sync" (car args))))
          ((null manifest) (setq manifest arg))
-         (t (signal 'anvil-pkg-error
+         (t (signal 'nelix-error
                     (list (format "nelix sync: unexpected argument %S"
                                   arg))))))
       (setq args (cdr args)))
     (unless manifest
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list "nelix sync: missing required MANIFEST")))
     (apply #'nelix-sync
            manifest
@@ -248,19 +248,19 @@ read-only and already returns the dry-run convergence report."
         (cond
          ((equal arg "--dry-run"))
          ((null manifest) (setq manifest arg))
-         (t (signal 'anvil-pkg-error
+         (t (signal 'nelix-error
                     (list (format "nelix plan: unexpected argument %S"
                                   arg))))))
       (setq args (cdr args)))
     (unless manifest
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list "nelix plan: missing required MANIFEST")))
     (nelix-plan manifest)))
 
 (defun nelix-cli--dispatch-schema (args)
   "Dispatch `nelix schema' with ARGS."
   (when (cdr args)
-    (signal 'anvil-pkg-error
+    (signal 'nelix-error
             (list (format "nelix schema: unexpected argument %S"
                           (cadr args)))))
   (nelix-schema (car args)))
@@ -269,10 +269,10 @@ read-only and already returns the dry-run convergence report."
   "Dispatch `nelix lock-check' with ARGS."
   (let ((manifest (nelix-cli--arg-or-error "lock-check" args)))
     (when (cdr args)
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix lock-check: unexpected argument %S"
                             (cadr args)))))
-    (if (anvil-pkg-compat--standalone-nelisp-p)
+    (if (nelix-compat--standalone-nelisp-p)
         (nelix-lock-check--nelisp manifest)
       (nelix-lock-check manifest))))
 
@@ -284,14 +284,14 @@ read-only and already returns the dry-run convergence report."
      ((equal subcommand "validate")
       (let ((manifest (nelix-cli--arg-or-error "lock validate" rest)))
         (when (cdr rest)
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list (format "nelix lock validate: unexpected argument %S"
                                 (cadr rest)))))
         (nelix-lock-validate manifest)))
      ((equal subcommand "diff")
       (let ((manifest (nelix-cli--arg-or-error "lock diff" rest)))
         (when (cdr rest)
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list (format "nelix lock diff: unexpected argument %S"
                                 (cadr rest)))))
         (nelix-lock-diff manifest)))
@@ -306,12 +306,12 @@ read-only and already returns the dry-run convergence report."
              ((null manifest)
               (setq manifest arg))
              (t
-              (signal 'anvil-pkg-error
+              (signal 'nelix-error
                       (list (format "nelix lock migrate: unexpected argument %S"
                                     arg))))))
           (setq rest (cdr rest)))
         (unless manifest
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list "nelix lock migrate: missing required MANIFEST")))
         (let ((result (nelix-lock-migrate manifest :dry-run dry-run)))
           (if dry-run
@@ -334,13 +334,13 @@ read-only and already returns the dry-run convergence report."
              ((equal arg "--limit")
               (setq rest (cdr rest))
               (unless rest
-                (signal 'anvil-pkg-error
+                (signal 'nelix-error
                         (list "nelix transaction list: --limit requires a value")))
               (setq limit
                     (nelix-cli--numeric-arg "transaction list"
                                             (car rest))))
              (t
-              (signal 'anvil-pkg-error
+              (signal 'nelix-error
                       (list (format "nelix transaction list: unexpected argument %S"
                                     arg))))))
           (setq rest (cdr rest)))
@@ -348,10 +348,10 @@ read-only and already returns the dry-run convergence report."
      ((equal subcommand "show")
       (let ((id-or-file (car rest)))
         (unless id-or-file
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list "nelix transaction show: missing required ID|FILE")))
         (when (cdr rest)
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list (format "nelix transaction show: unexpected argument %S"
                                 (cadr rest)))))
         (nelix-transaction-show id-or-file)))
@@ -360,7 +360,7 @@ read-only and already returns the dry-run convergence report."
             (dry-run nil)
             (execute nil))
         (unless id-or-file
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list "nelix transaction recover: missing required ID|FILE")))
         (setq rest (cdr rest))
         (while rest
@@ -371,7 +371,7 @@ read-only and already returns the dry-run convergence report."
              ((equal arg "--execute")
               (setq execute t))
              (t
-              (signal 'anvil-pkg-error
+              (signal 'nelix-error
                       (list (format "nelix transaction recover: unexpected argument %S"
                                     arg))))))
           (setq rest (cdr rest)))
@@ -379,10 +379,10 @@ read-only and already returns the dry-run convergence report."
                                    :dry-run dry-run
                                    :execute execute)))
      ((null subcommand)
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list "nelix transaction: missing subcommand")))
      (t
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix transaction: unknown subcommand %S"
                             subcommand)))))))
 
@@ -396,13 +396,13 @@ read-only and already returns the dry-run convergence report."
          ((equal arg "--backend")
           (setq args (cdr args))
           (unless args
-            (signal 'anvil-pkg-error
+            (signal 'nelix-error
                     (list "nelix outdated: --backend requires a value")))
           (setq backend (car args)))
          ((null target)
           (setq target arg))
          (t
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list (format "nelix outdated: unexpected argument %S"
                                arg))))))
       (setq args (cdr args)))
@@ -444,7 +444,7 @@ read-only and already returns the dry-run convergence report."
 (defun nelix-cli--symbol-arg (command option arg)
   "Return ARG interned as a symbol for COMMAND OPTION."
   (unless (and (stringp arg) (> (length arg) 0))
-    (signal 'anvil-pkg-error
+    (signal 'nelix-error
             (list (format "nelix %s: %s requires a non-empty value"
                           command option))))
   (intern arg))
@@ -452,7 +452,7 @@ read-only and already returns the dry-run convergence report."
 (defun nelix-cli--profile-option (command option arg)
   "Return ARG as a profile name for COMMAND OPTION."
   (unless (and (stringp arg) (> (length arg) 0))
-    (signal 'anvil-pkg-error
+    (signal 'nelix-error
             (list (format "nelix %s: %s requires a non-empty value"
                           command option))))
   arg)
@@ -471,12 +471,12 @@ ALLOWED may contain `profile', `system', `generation', and `dry-run'."
         (cond
          ((equal arg "--profile")
           (unless (memq 'profile allowed)
-            (signal 'anvil-pkg-error
+            (signal 'nelix-error
                     (list (format "nelix native %s: unexpected option --profile"
                                   command))))
           (setq args (cdr args))
           (unless args
-            (signal 'anvil-pkg-error
+            (signal 'nelix-error
                     (list (format "nelix native %s: --profile requires a value"
                                   command))))
           (setq profile
@@ -486,12 +486,12 @@ ALLOWED may contain `profile', `system', `generation', and `dry-run'."
                  (car args))))
          ((equal arg "--system")
           (unless (memq 'system allowed)
-            (signal 'anvil-pkg-error
+            (signal 'nelix-error
                     (list (format "nelix native %s: unexpected option --system"
                                   command))))
           (setq args (cdr args))
           (unless args
-            (signal 'anvil-pkg-error
+            (signal 'nelix-error
                     (list (format "nelix native %s: --system requires a value"
                                   command))))
           (setq system
@@ -501,12 +501,12 @@ ALLOWED may contain `profile', `system', `generation', and `dry-run'."
                  (car args))))
          ((equal arg "--generation")
           (unless (memq 'generation allowed)
-            (signal 'anvil-pkg-error
+            (signal 'nelix-error
                     (list (format "nelix native %s: unexpected option --generation"
                                   command))))
           (setq args (cdr args))
           (unless args
-            (signal 'anvil-pkg-error
+            (signal 'nelix-error
                     (list (format "nelix native %s: --generation requires a value"
                                   command))))
           (setq generation
@@ -515,12 +515,12 @@ ALLOWED may contain `profile', `system', `generation', and `dry-run'."
                  (car args))))
          ((equal arg "--dry-run")
           (unless (memq 'dry-run allowed)
-            (signal 'anvil-pkg-error
+            (signal 'nelix-error
                     (list (format "nelix native %s: unexpected option --dry-run"
                                   command))))
           (setq dry-run t))
          ((string-prefix-p "--" arg)
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list (format "nelix native %s: unexpected option %s"
                                 command arg))))
          (t
@@ -539,7 +539,7 @@ ALLOWED may contain `profile', `system', `generation', and `dry-run'."
     (cond
      ((equal subcommand "update")
       (when rest
-        (signal 'anvil-pkg-error
+        (signal 'nelix-error
                 (list (format "nelix registry update: unexpected argument %S"
                               (car rest)))))
       (append (list :operation 'registry-update)
@@ -548,13 +548,13 @@ ALLOWED may contain `profile', `system', `generation', and `dry-run'."
       (let ((root (car rest))
             (output (cadr rest)))
         (unless root
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list "nelix registry index: missing required ROOT")))
         (unless output
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list "nelix registry index: missing required OUTPUT")))
         (when (cddr rest)
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list (format "nelix registry index: unexpected argument %S"
                                 (caddr rest)))))
         (nelix-registry-write-index root output)))
@@ -566,14 +566,14 @@ ALLOWED may contain `profile', `system', `generation', and `dry-run'."
              ((equal arg "--system")
               (setq rest (cdr rest))
               (unless rest
-                (signal 'anvil-pkg-error
+                (signal 'nelix-error
                         (list "nelix registry list: --system requires a value")))
               (setq system
                     (nelix-cli--symbol-arg "registry list"
                                            "--system"
                                            (car rest))))
              (t
-              (signal 'anvil-pkg-error
+              (signal 'nelix-error
                       (list (format "nelix registry list: unexpected argument %S"
                                     arg))))))
           (setq rest (cdr rest)))
@@ -594,7 +594,7 @@ ALLOWED may contain `profile', `system', `generation', and `dry-run'."
              ((equal arg "--system")
               (setq rest (cdr rest))
               (unless rest
-                (signal 'anvil-pkg-error
+                (signal 'nelix-error
                         (list "nelix registry search: --system requires a value")))
               (setq system
                     (nelix-cli--symbol-arg "registry search"
@@ -603,12 +603,12 @@ ALLOWED may contain `profile', `system', `generation', and `dry-run'."
              ((null query)
               (setq query arg))
              (t
-              (signal 'anvil-pkg-error
+              (signal 'nelix-error
                       (list (format "nelix registry search: unexpected argument %S"
                                     arg))))))
           (setq rest (cdr rest)))
         (unless query
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list "nelix registry search: missing required QUERY")))
         (let* ((update (nelix-registry-update))
                (results (nelix-registry-search query system)))
@@ -622,16 +622,16 @@ ALLOWED may contain `profile', `system', `generation', and `dry-run'."
      ((equal subcommand "show")
       (let ((name (car rest)))
         (unless name
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list "nelix registry show: missing required NAME")))
         (when (cdr rest)
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list (format "nelix registry show: unexpected argument %S"
                                 (cadr rest)))))
         (let* ((update (nelix-registry-update))
                (recipe (nelix-registry-get name)))
           (unless recipe
-            (signal 'anvil-pkg-error
+            (signal 'nelix-error
                     (list (format "nelix registry show: package not found: %s"
                                   name))))
           (list :status 'ok
@@ -640,10 +640,10 @@ ALLOWED may contain `profile', `system', `generation', and `dry-run'."
                 :update update
                 :recipe recipe))))
      ((null subcommand)
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list "nelix registry: missing subcommand")))
      (t
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix registry: unknown subcommand %S"
                             subcommand)))))))
 
@@ -654,7 +654,7 @@ ALLOWED may contain `profile', `system', `generation', and `dry-run'."
     (cond
      ((equal subcommand "audit")
       (when rest
-        (signal 'anvil-pkg-error
+        (signal 'nelix-error
                 (list (format "nelix native audit: unexpected argument %S"
                               (car rest)))))
       (append (list :operation 'native-audit)
@@ -664,7 +664,7 @@ ALLOWED may contain `profile', `system', `generation', and `dry-run'."
                     "install" rest '(profile system)))
              (names (plist-get opts :positionals)))
         (unless names
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list "nelix native install: missing required NAME")))
         (let* ((update (nelix-registry-update))
                (reports (nelix-backend-install
@@ -688,7 +688,7 @@ ALLOWED may contain `profile', `system', `generation', and `dry-run'."
                     "remove" rest '(profile system)))
              (names (plist-get opts :positionals)))
         (unless names
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list "nelix native remove: missing required NAME")))
         (let* ((profile-name (or (plist-get opts :profile)
                                  nelix-builder-default-profile))
@@ -711,7 +711,7 @@ ALLOWED may contain `profile', `system', `generation', and `dry-run'."
                 :profile-root (nelix-profile-root)))))
      ((equal subcommand "list")
       (when rest
-        (signal 'anvil-pkg-error
+        (signal 'nelix-error
                 (list (format "nelix native list: unexpected argument %S"
                               (car rest)))))
       (append (list :operation 'native-list
@@ -722,7 +722,7 @@ ALLOWED may contain `profile', `system', `generation', and `dry-run'."
                     "profile" rest '(profile generation)))
              (positionals (plist-get opts :positionals)))
         (when positionals
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list (format "nelix native profile: unexpected argument %S"
                                 (car positionals)))))
         (let* ((profile-name (or (plist-get opts :profile)
@@ -741,7 +741,7 @@ ALLOWED may contain `profile', `system', `generation', and `dry-run'."
                     "activate" rest '(profile generation)))
              (positionals (plist-get opts :positionals)))
         (when positionals
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list (format "nelix native activate: unexpected argument %S"
                                 (car positionals)))))
         (let* ((profile-name (or (plist-get opts :profile)
@@ -763,7 +763,7 @@ ALLOWED may contain `profile', `system', `generation', and `dry-run'."
                     "rollback" rest '(profile generation)))
              (positionals (plist-get opts :positionals)))
         (when positionals
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list (format "nelix native rollback: unexpected argument %S"
                                 (car positionals)))))
         (let* ((profile-name (or (plist-get opts :profile)
@@ -791,7 +791,7 @@ ALLOWED may contain `profile', `system', `generation', and `dry-run'."
                     "gc" rest '(profile dry-run)))
              (positionals (plist-get opts :positionals)))
         (when positionals
-          (signal 'anvil-pkg-error
+          (signal 'nelix-error
                   (list (format "nelix native gc: unexpected argument %S"
                                 (car positionals)))))
         (append (list :operation 'native-gc
@@ -800,10 +800,10 @@ ALLOWED may contain `profile', `system', `generation', and `dry-run'."
                 (nelix-store-gc :dry-run (plist-get opts :dry-run)
                                 :profile (plist-get opts :profile)))))
      ((null subcommand)
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list "nelix native: missing subcommand")))
      (t
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix native: unknown subcommand %S"
                             subcommand)))))))
 
@@ -862,7 +862,7 @@ ALLOWED may contain `profile', `system', `generation', and `dry-run'."
            ((equal command "native")
             (nelix-cli--dispatch-native args))
            ((equal command "list")
-            (if (and (anvil-pkg-compat--standalone-nelisp-p)
+            (if (and (nelix-compat--standalone-nelisp-p)
                      (fboundp 'nelix-fast-list))
                 (nelix-fast-list)
               (nelix-list)))
@@ -877,7 +877,7 @@ ALLOWED may contain `profile', `system', `generation', and `dry-run'."
            ((equal command "schema")
             (nelix-cli--dispatch-schema args))
            (t
-            (signal 'anvil-pkg-error
+            (signal 'nelix-error
                     (list (format "nelix: unknown command %S" command)))))))
     (nelix-cli--ensure-profile-path command result)))
 
@@ -1123,7 +1123,7 @@ results never contain)."
          (if json
              (princ
               (concat
-               (anvil-pkg-compat-json-serialize
+               (nelix-compat-json-serialize
                 (nelix-cli--json-normalize
                  (list :status 'error
                        :error message)))

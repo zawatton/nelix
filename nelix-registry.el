@@ -12,8 +12,8 @@
 ;;; Code:
 
 (require 'cl-lib)
-(require 'anvil-pkg)
-(require 'anvil-pkg-compat)
+(require 'nelix-core)
+(require 'nelix-compat)
 (require 'nelix-fetch)
 (require 'nelix-store)
 
@@ -24,7 +24,7 @@
 
 (defgroup nelix-registry nil
   "Native Nelix registry."
-  :group 'anvil-pkg
+  :group 'nelix-core
   :prefix "nelix-registry-")
 
 (defcustom nelix-registry-root nil
@@ -97,7 +97,7 @@ packaged recipes for isolated tests or fully private registries."
 
 (defun nelix-registry--packaged-enabled-p ()
   "Return non-nil when packaged registry roots should be loaded."
-  (let ((env (anvil-pkg-compat-getenv "NELIX_REGISTRY_INCLUDE_PACKAGED")))
+  (let ((env (nelix-compat-getenv "NELIX_REGISTRY_INCLUDE_PACKAGED")))
     (and nelix-registry-include-packaged-root
          (not (member env '("0" "false" "FALSE" "no" "NO"))))))
 
@@ -145,11 +145,11 @@ package name."
   (let ((value (plist-get plist key)))
     (cond
      ((and (stringp value)
-           (> (length (anvil-pkg-compat-string-trim value)) 0))
-      (anvil-pkg-compat-string-trim value))
+           (> (length (nelix-compat-string-trim value)) 0))
+      (nelix-compat-string-trim value))
      ((symbolp value) (symbol-name value))
      (t
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "%s: %S must be a non-empty string or symbol, got %S"
                             caller key value)))))))
 
@@ -159,7 +159,7 @@ package name."
         keys)
     (while rest
       (unless (and (consp rest) (consp (cdr rest)))
-        (signal 'anvil-pkg-error
+        (signal 'nelix-error
                 (list (format "nelix-package: malformed plist %S" plist))))
       (push (car rest) keys)
       (setq rest (cddr rest)))
@@ -170,7 +170,7 @@ package name."
   "Return normalized native Nelix package recipe PLIST."
   (dolist (key '(:name :version :class :systems))
     (unless (memq key (nelix-registry--plist-keys plist))
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-package: missing %S" key)))))
   (let* ((name (nelix-registry--required-string "nelix-package" plist :name))
          (version (nelix-registry--required-string "nelix-package" plist :version))
@@ -178,11 +178,11 @@ package name."
          (systems (plist-get plist :systems))
          (recipe (copy-sequence plist)))
     (unless (symbolp class)
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-package: :class must be symbol, got %S"
                             class))))
     (unless (listp systems)
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-package: :systems must be list, got %S"
                             systems))))
     (setq recipe (plist-put recipe :name name))
@@ -195,17 +195,17 @@ package name."
   "Return normalized static registry index PLIST."
   (dolist (key '(:version :packages))
     (unless (memq key (nelix-registry--plist-keys plist))
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-registry-index: missing %S" key)))))
   (let ((version (plist-get plist :version))
         (packages (plist-get plist :packages))
         (index (copy-sequence plist)))
     (unless (integerp version)
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-registry-index: :version must be integer, got %S"
                             version))))
     (unless (listp packages)
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-registry-index: :packages must be list, got %S"
                             packages))))
     (setq nelix-registry-index-last index)
@@ -240,7 +240,7 @@ package name."
             (push (read (current-buffer)) forms))
         (end-of-file nil)
         (invalid-read-syntax
-         (signal 'anvil-pkg-error
+         (signal 'nelix-error
                  (list (format "nelix-registry: invalid recipe syntax in %s: %s"
                                file
                                (error-message-string err)))))))
@@ -267,7 +267,7 @@ executed as Elisp programs."
         (symbolp form))
     form)
    (t
-    (signal 'anvil-pkg-error
+    (signal 'nelix-error
             (list (format "nelix-registry: non-literal form in %s: %S"
                           file
                           form))))))
@@ -297,18 +297,18 @@ executed as Elisp programs."
              (eq (car form) function))
         (push (cdr form) calls))
        (t
-        (signal 'anvil-pkg-error
+        (signal 'nelix-error
                 (list (format "nelix-registry: unsupported form in %s: %S"
                               file
                               form))))))
     (cond
      ((null calls)
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-registry: %s did not contain %S"
                             file
                             function))))
      ((cdr calls)
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-registry: %s contains multiple %S forms"
                             file
                             function))))
@@ -474,12 +474,12 @@ executed as Elisp programs."
              (nelix-registry--remote-trusted-signers remote)
              (nelix-registry--remote-public-keys remote)))))
     (when (and required (not signature))
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list "nelix-registry: remote registry index requires a signature"
                     :remote (nelix-registry--remote-name remote)
                     :signature report)))
     (when (and report (not (plist-get report :verified)))
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-registry: untrusted registry index signature for %s: %S"
                             (nelix-registry--remote-name remote)
                             (plist-get report :blocked))
@@ -554,13 +554,13 @@ executed as Elisp programs."
              (nelix-registry--row-trusted-signers row remote)
              (nelix-registry--row-public-keys row remote)))))
     (when (and required (not signature))
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list "nelix-registry: remote package recipe requires a signature"
                     :remote (nelix-registry--remote-name remote)
                     :row row
                     :signature report)))
     (when (and report (not (plist-get report :verified)))
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-registry: untrusted package recipe signature for %s: %S"
                             (plist-get recipe :name)
                             (plist-get report :blocked))
@@ -584,15 +584,15 @@ executed as Elisp programs."
                 (or path (file-name-nondirectory url))
                 cache-root)))
     (unless (and (stringp url)
-                 (> (length (anvil-pkg-compat-string-trim url)) 0))
-      (signal 'anvil-pkg-error
+                 (> (length (nelix-compat-string-trim url)) 0))
+      (signal 'nelix-error
               (list (format "nelix-registry: remote package row needs :path or :url: %S"
                             row))))
     (unless sha256
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-registry: remote package row needs :sha256: %S"
                             row))))
-    (anvil-pkg-compat-make-directory (file-name-directory dest) t)
+    (nelix-compat-make-directory (file-name-directory dest) t)
     (nelix-fetch-source
      (list :type 'url :url url :sha256 sha256)
      dest)
@@ -616,7 +616,7 @@ executed as Elisp programs."
          (index-file (expand-file-name "index.el" cache-root))
          (base-url (nelix-registry--url-directory url))
          index synced)
-    (anvil-pkg-compat-make-directory cache-root t)
+    (nelix-compat-make-directory cache-root t)
     (nelix-fetch-source
      (list :type 'url :url url :sha256 sha256)
      index-file)
@@ -676,7 +676,7 @@ they are included."
         rows)
     (unless (and (fboundp 'file-directory-p)
                  (file-directory-p root*))
-      (signal 'anvil-pkg-error
+      (signal 'nelix-error
               (list (format "nelix-registry-build-index: missing registry root %s"
                             root*))))
     (dolist (file (nelix-registry--recipe-files root*))
@@ -702,8 +702,8 @@ they are included."
   "Write a static registry index for ROOT to OUTPUT and return a report plist."
   (let* ((index (nelix-registry-build-index root version))
          (output* (expand-file-name output)))
-    (anvil-pkg-compat-make-directory (file-name-directory output*) t)
-    (anvil-pkg-compat-write-file
+    (nelix-compat-make-directory (file-name-directory output*) t)
+    (nelix-compat-write-file
      output*
      (concat ";;; index.el --- generated Nelix registry index -*- lexical-binding: t; -*-\n\n"
              "(require 'nelix-registry)\n\n"

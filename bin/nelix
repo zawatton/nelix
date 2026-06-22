@@ -156,7 +156,7 @@ nelix_emit_nelisp_suite_source_files() {
   cat <<EOF
 (setq anvil-pkg-nelisp-smoke-suite-source-files
       (list
-       $(nelix_quote_elisp_string "$lispdir/anvil-pkg-compat.el")
+       $(nelix_quote_elisp_string "$lispdir/nelix-compat.el")
        $(nelix_quote_elisp_string "$lispdir/anvil-pkg-state.el")
        $(nelix_quote_elisp_string "$lispdir/anvil-pkg.el")
        $(nelix_quote_elisp_string "$lispdir/anvil-pkg-dsl.el")
@@ -2297,23 +2297,23 @@ EOF
     cat <<'EOF'
 (defun nelix-cli--direct-call-process (program args)
   (let ((stdout-file (make-temp-file "nelix-direct-stdout-"))
-        (resolved (or (anvil-pkg-compat-executable-find program) program)))
+        (resolved (or (nelix-compat-executable-find program) program)))
     (unwind-protect
         (let ((exit (apply #'nelisp-process-call-process
                            resolved nil stdout-file nil args)))
           (list :exit (if (numberp exit) exit -1)
-                :stdout (anvil-pkg-compat-read-file stdout-file)
+                :stdout (nelix-compat-read-file stdout-file)
                 :stderr ""))
-      (anvil-pkg-compat-delete-file-quietly stdout-file))))
+      (nelix-compat-delete-file-quietly stdout-file))))
 
 (when (fboundp 'nelisp-process-call-process)
-  (setq anvil-pkg-compat-nelisp-call-process-function
+  (setq nelix-compat-nelisp-call-process-function
         #'nelix-cli--direct-call-process))
 
 ;; NeLisp `getenv' cannot read the process environment, so resolve env vars
 ;; the native store/profile path needs from the alist bin/nelix injected.
 (when (and (boundp 'nelix-cli--direct-env) nelix-cli--direct-env)
-  (setq anvil-pkg-compat-nelisp-getenv-function
+  (setq nelix-compat-nelisp-getenv-function
         (lambda (nelix--getenv-var)
           (cdr (assoc nelix--getenv-var nelix-cli--direct-env)))))
 

@@ -18,7 +18,7 @@
 ;;     synthesises a recipes/<pname> entry inside postUnpack so the
 ;;     repo doesn't need a recipes file checked in.
 ;;   - Phase 4-E L27 opt-in upstream MELPA recipe lookup — when
-;;     `anvil-pkg-emacs-melpa-upstream-fetch' is non-nil, anvil-pkg
+;;     `nelix-emacs-melpa-upstream-fetch' is non-nil, nelix-core
 ;;     consults raw.githubusercontent.com/melpa/melpa first; on hit
 ;;     the canonical curated recipe wins over the local synth.
 ;;   - Phase 4-E L28 default :files spec — covers lisp/, *.info,
@@ -30,14 +30,14 @@
 ;;
 ;; Usage:
 ;;   ;; opt-in to canonical MELPA recipe lookup (Phase 4-E):
-;;   (setq anvil-pkg-emacs-melpa-upstream-fetch t)
+;;   (setq nelix-emacs-melpa-upstream-fetch t)
 ;;
-;;   M-: (load-file "/path/to/anvil-pkg/examples/emacs-melpa-magit.el")
+;;   M-: (load-file "/path/to/nelix-core/examples/emacs-melpa-magit.el")
 ;;   M-: (pkg-install 'magit :require t)
 
 ;;; Code:
 
-(require 'anvil-pkg-dsl)
+(require 'nelix-dsl)
 
 (pkg-define magit
   (version "3.3.0")
@@ -53,7 +53,7 @@
   (license gpl3))
 
 ;; Variant with explicit verbatim recipe — useful when you don't
-;; want anvil-pkg to consult upstream MELPA at all and the synth's
+;; want nelix-core to consult upstream MELPA at all and the synth's
 ;; defaults aren't right for your repo layout:
 ;;
 ;; (pkg-define my-fork
