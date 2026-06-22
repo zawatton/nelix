@@ -23,8 +23,8 @@ Profile/default smoke test:
 
   emacs --batch \
     --eval "(require 'nelix)" \
-    --eval "(require 'anvil-pkg)" \
-    --eval "(princ anvil-pkg-profile-dir)"
+    --eval "(require 'nelix-core)" \
+    --eval "(princ nelix-core-profile-dir)"
 
 The path should end with:
 

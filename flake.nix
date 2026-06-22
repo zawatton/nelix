@@ -1,5 +1,5 @@
 {
-  description = "anvil-pkg development environment and local checks";
+  description = "nelix development environment and local checks";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -22,7 +22,7 @@
         in
         {
           check = pkgs.stdenvNoCC.mkDerivation {
-            pname = "anvil-pkg-check";
+            pname = "nelix-check";
             version = "0.1.0";
             src = self;
 

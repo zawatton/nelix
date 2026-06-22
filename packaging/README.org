@@ -37,9 +37,9 @@ Installed Elisp files:
 - =nelix-emacs.el=
 - =nelix-import.el=
 - the compatibility implementation files currently named
-  =anvil-pkg*.el=
+  =nelix*.el=
 
-The =anvil-pkg*.el= files remain part of the runtime package while
+The =nelix*.el= files remain part of the runtime package while
 the public name migrates to Nelix.  New user configuration should load
 =nelix= and =nelix-dsl=.
 
@@ -182,7 +182,7 @@ The verifier checks:
 - =elpa-nelix= is installed at version =0.1.0-5= or newer
 - normal Debian Emacs startup can =(require 'nelix)=
 - =emacs -Q= can load from the installed ELPA source directory
-- =anvil-pkg-profile-dir= resolves to =~/.local/state/nelix/profile=
+- =nelix-core-profile-dir= resolves to =~/.local/state/nelix/profile=
 - the Nix profile install subcommand is =install=
 
 Before installing, =make deb-local-gate= also runs
@@ -683,7 +683,6 @@ the final hosted URL.
 
 * Current compatibility stance
 
-The short =pkg-*= API remains the stable DSL surface, and the old
-=anvil-pkg-*= aliases remain available.  Public documentation should
+The short =pkg-*= API remains the stable DSL surface.  Public documentation should
 lead with =nelix-*=: =nelix-install=, =nelix-search=, =nelix-list=,
 and =nelix-doctor=.

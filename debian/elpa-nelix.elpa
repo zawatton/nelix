@@ -1,7 +1,6 @@
-anvil-pkg*.el
 nelix*.el
-scripts/anvil-pkg-nelisp-ert-shim.el
-scripts/anvil-pkg-nelisp-smoke.el
+scripts/nelix-nelisp-ert-shim.el
+scripts/nelix-nelisp-smoke.el
 scripts/nelix-aot-manifest-engine.el
 scripts/nelix-aot-native-cli-proof.el
 scripts/nelix-aot-native-subset.el

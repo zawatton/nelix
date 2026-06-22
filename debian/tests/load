@@ -7,8 +7,8 @@ for file in \
   /usr/bin/nelix \
   "$elpa_src_dir/nelix-cli.el" \
   "$elpa_src_dir/nelix-aot-manifest-engine.el" \
-  "$elpa_src_dir/anvil-pkg-nelisp-smoke.el" \
-  "$elpa_src_dir/anvil-pkg-nelisp-ert-shim.el"
+  "$elpa_src_dir/nelix-nelisp-smoke.el" \
+  "$elpa_src_dir/nelix-nelisp-ert-shim.el"
 do
   if [ ! -f "$file" ]; then
     echo "expected Debian payload file is missing: $file" >&2
@@ -19,22 +19,22 @@ done
 emacs --batch \
   --eval "(require 'nelix)" \
   --eval "(require 'nelix-dsl)" \
-  --eval "(require 'anvil-pkg)" \
+  --eval "(require 'nelix-core)" \
   --eval "(unless (fboundp 'nelix-install) (error \"nelix-install missing\"))" \
   --eval "(unless (macrop (symbol-function 'nelix-define)) (error \"nelix-define missing\"))" \
-  --eval "(unless (string= (expand-file-name anvil-pkg-profile-dir) (expand-file-name \"~/.local/state/nelix/profile\")) (error \"unexpected profile: %S\" anvil-pkg-profile-dir))" \
-  --eval "(unless (string= (anvil-pkg--nix-install-subcommand) \"install\") (error \"unexpected nix profile subcommand\"))" \
+  --eval "(unless (string= (expand-file-name nelix-core-profile-dir) (expand-file-name \"~/.local/state/nelix/profile\")) (error \"unexpected profile: %S\" nelix-core-profile-dir))" \
+  --eval "(unless (string= (nelix-core--nix-install-subcommand) \"install\") (error \"unexpected nix profile subcommand\"))" \
   --eval "(message \"nelix Debian load smoke ok\")"
 
 emacs -Q --batch \
   -L "$elpa_src_dir" \
   --eval "(require 'nelix)" \
   --eval "(require 'nelix-dsl)" \
-  --eval "(require 'anvil-pkg)" \
+  --eval "(require 'nelix-core)" \
   --eval "(unless (fboundp 'nelix-install) (error \"nelix-install missing\"))" \
   --eval "(unless (macrop (symbol-function 'nelix-define)) (error \"nelix-define missing\"))" \
-  --eval "(unless (string= (expand-file-name anvil-pkg-profile-dir) (expand-file-name \"~/.local/state/nelix/profile\")) (error \"unexpected profile: %S\" anvil-pkg-profile-dir))" \
-  --eval "(unless (string= (anvil-pkg--nix-install-subcommand) \"install\") (error \"unexpected nix profile subcommand\"))" \
+  --eval "(unless (string= (expand-file-name nelix-core-profile-dir) (expand-file-name \"~/.local/state/nelix/profile\")) (error \"unexpected profile: %S\" nelix-core-profile-dir))" \
+  --eval "(unless (string= (nelix-core--nix-install-subcommand) \"install\") (error \"unexpected nix profile subcommand\"))" \
   --eval "(message \"nelix Debian -Q load smoke ok\")"
 
 /usr/bin/nelix --help >/dev/null

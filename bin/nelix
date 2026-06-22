@@ -95,8 +95,8 @@ nelix_nelisp_root() {
 nelix_nelisp_direct_available() {
   nelisp_bin=$(nelix_find_nelisp) || return 1
   nelisp_root=$(nelix_nelisp_root "$nelisp_bin") || return 1
-  smoke_file=$(nelix_lisp_file anvil-pkg-nelisp-smoke.el) || return 1
-  ert_shim=$(nelix_lisp_file anvil-pkg-nelisp-ert-shim.el) || return 1
+  smoke_file=$(nelix_lisp_file nelix-nelisp-smoke.el) || return 1
+  ert_shim=$(nelix_lisp_file nelix-nelisp-ert-shim.el) || return 1
   test -f "$smoke_file" || return 1
   test -f "$ert_shim" || return 1
   test -f "${NELISP_STDLIB_EVAL_SPECIAL_SRC:-$nelisp_root/lisp/nelisp-stdlib-eval-special.el}" || return 1
@@ -154,14 +154,14 @@ nelix_abs_path() {
 
 nelix_emit_nelisp_suite_source_files() {
   cat <<EOF
-(setq anvil-pkg-nelisp-smoke-suite-source-files
+(setq nelix-nelisp-smoke-suite-source-files
       (list
        $(nelix_quote_elisp_string "$lispdir/nelix-compat.el")
-       $(nelix_quote_elisp_string "$lispdir/anvil-pkg-state.el")
-       $(nelix_quote_elisp_string "$lispdir/anvil-pkg.el")
-       $(nelix_quote_elisp_string "$lispdir/anvil-pkg-dsl.el")
-       $(nelix_quote_elisp_string "$lispdir/anvil-pkg-import.el")
-       $(nelix_quote_elisp_string "$lispdir/anvil-pkg-emacs.el")
+       $(nelix_quote_elisp_string "$lispdir/nelix-state.el")
+       $(nelix_quote_elisp_string "$lispdir/nelix-core.el")
+       $(nelix_quote_elisp_string "$lispdir/nelix-dsl.el")
+       $(nelix_quote_elisp_string "$lispdir/nelix-import.el")
+       $(nelix_quote_elisp_string "$lispdir/nelix-emacs.el")
        $(nelix_quote_elisp_string "$lispdir/nelix-store.el")
        $(nelix_quote_elisp_string "$lispdir/nelix-registry.el")
        $(nelix_quote_elisp_string "$lispdir/nelix-fetch.el")
@@ -174,7 +174,7 @@ nelix_emit_nelisp_suite_source_files() {
        $(nelix_quote_elisp_string "$lispdir/nelix-import.el")
        $(nelix_quote_elisp_string "$lispdir/nelix-emacs.el")
        $(nelix_quote_elisp_string "$lispdir/nelix.el")
-       $(nelix_quote_elisp_string "$lispdir/scripts/anvil-pkg-render.el")))
+       $(nelix_quote_elisp_string "$lispdir/scripts/nelix-core-render.el")))
 EOF
 }
 
@@ -2091,18 +2091,18 @@ nelix_run_nelisp_image() {
 (when (and (boundp 'nelix-cli--direct-home)
            (stringp nelix-cli--direct-home)
            (> (length nelix-cli--direct-home) 0))
-  (when (and (boundp 'anvil-pkg-profile-dir)
-             (stringp anvil-pkg-profile-dir)
-             (string-prefix-p "~/" anvil-pkg-profile-dir))
-    (setq anvil-pkg-profile-dir
+  (when (and (boundp 'nelix-core-profile-dir)
+             (stringp nelix-core-profile-dir)
+             (string-prefix-p "~/" nelix-core-profile-dir))
+    (setq nelix-core-profile-dir
           (concat nelix-cli--direct-home
-                  (substring anvil-pkg-profile-dir 1))))
-  (when (and (boundp 'anvil-pkg-state-file)
-             (stringp anvil-pkg-state-file)
-             (string-prefix-p "~/" anvil-pkg-state-file))
-    (setq anvil-pkg-state-file
+                  (substring nelix-core-profile-dir 1))))
+  (when (and (boundp 'nelix-state-file)
+             (stringp nelix-state-file)
+             (string-prefix-p "~/" nelix-state-file))
+    (setq nelix-state-file
           (concat nelix-cli--direct-home
-                  (substring anvil-pkg-state-file 1)))))
+                  (substring nelix-state-file 1)))))
 (defun nelix-cli--direct-write-result (marker text)
   (nelisp-process-call-process
    "/usr/bin/printf"
@@ -2202,12 +2202,12 @@ nelix_run_nelisp_direct() {
     exit 127
   }
 
-  smoke_file=$(nelix_lisp_file anvil-pkg-nelisp-smoke.el) || {
-    echo "nelix: nelisp runtime missing bootstrap file: anvil-pkg-nelisp-smoke.el" >&2
+  smoke_file=$(nelix_lisp_file nelix-nelisp-smoke.el) || {
+    echo "nelix: nelisp runtime missing bootstrap file: nelix-nelisp-smoke.el" >&2
     exit 127
   }
-  default_ert_shim=$(nelix_lisp_file anvil-pkg-nelisp-ert-shim.el) || {
-    echo "nelix: nelisp runtime missing bootstrap file: anvil-pkg-nelisp-ert-shim.el" >&2
+  default_ert_shim=$(nelix_lisp_file nelix-nelisp-ert-shim.el) || {
+    echo "nelix: nelisp runtime missing bootstrap file: nelix-nelisp-ert-shim.el" >&2
     exit 127
   }
   ert_shim=${NELISP_ERT_SHIM_SRC:-$default_ert_shim}
@@ -2243,12 +2243,12 @@ nelix_run_nelisp_direct() {
   runner=$(mktemp "${TMPDIR:-/tmp}/nelix-cli.XXXXXX.el")
   trap 'rm -f "$runner"' EXIT HUP INT TERM
   {
-    printf '(setq anvil-pkg-nelisp-smoke-stdlib-eval-special-source %s)\n' "$(nelix_quote_elisp_string "$stdlib_eval")"
-    printf '(setq anvil-pkg-nelisp-smoke-cl-macros-source %s)\n' "$(nelix_quote_elisp_string "$cl_macros")"
-    printf '(setq anvil-pkg-nelisp-smoke-json-source %s)\n' "$(nelix_quote_elisp_string "$json_src")"
-    printf '(setq anvil-pkg-nelisp-smoke-ert-shim-source %s)\n' "$(nelix_quote_elisp_string "$ert_shim")"
-    printf '(setq anvil-pkg-nelisp-smoke-actor-source %s)\n' "$(nelix_quote_elisp_string "$actor_src")"
-    printf '(setq anvil-pkg-nelisp-smoke-process-source %s)\n' "$(nelix_quote_elisp_string "$process_src")"
+    printf '(setq nelix-nelisp-smoke-stdlib-eval-special-source %s)\n' "$(nelix_quote_elisp_string "$stdlib_eval")"
+    printf '(setq nelix-nelisp-smoke-cl-macros-source %s)\n' "$(nelix_quote_elisp_string "$cl_macros")"
+    printf '(setq nelix-nelisp-smoke-json-source %s)\n' "$(nelix_quote_elisp_string "$json_src")"
+    printf '(setq nelix-nelisp-smoke-ert-shim-source %s)\n' "$(nelix_quote_elisp_string "$ert_shim")"
+    printf '(setq nelix-nelisp-smoke-actor-source %s)\n' "$(nelix_quote_elisp_string "$actor_src")"
+    printf '(setq nelix-nelisp-smoke-process-source %s)\n' "$(nelix_quote_elisp_string "$process_src")"
     printf '(setq nelix-cli--direct-home %s)\n' "$(nelix_quote_elisp_string "${HOME:-}")"
     # NeLisp `getenv' does not read the process environment, so pass the env
     # vars the native store/profile resolver needs as an alist the compat
@@ -2290,7 +2290,7 @@ nelix_run_nelisp_direct() {
 (nelix-cli--direct-stats "after-smoke")
 EOF
     nelix_emit_nelisp_suite_source_files
-    printf '(anvil-pkg-nelisp-smoke-preload-suite-runtime)\n'
+    printf '(nelix-nelisp-smoke-preload-suite-runtime)\n'
     printf '(nelix-cli--direct-stats "after-preload")\n'
     printf '(load %s)\n' "$(nelix_quote_elisp_string "$clifile")"
     printf '(nelix-cli--direct-stats "after-cli-load")\n'
@@ -2320,18 +2320,18 @@ EOF
 (when (and (boundp 'nelix-cli--direct-home)
            (stringp nelix-cli--direct-home)
            (> (length nelix-cli--direct-home) 0))
-  (when (and (boundp 'anvil-pkg-profile-dir)
-             (stringp anvil-pkg-profile-dir)
-             (string-prefix-p "~/" anvil-pkg-profile-dir))
-    (setq anvil-pkg-profile-dir
+  (when (and (boundp 'nelix-core-profile-dir)
+             (stringp nelix-core-profile-dir)
+             (string-prefix-p "~/" nelix-core-profile-dir))
+    (setq nelix-core-profile-dir
           (concat nelix-cli--direct-home
-                  (substring anvil-pkg-profile-dir 1))))
-  (when (and (boundp 'anvil-pkg-state-file)
-             (stringp anvil-pkg-state-file)
-             (string-prefix-p "~/" anvil-pkg-state-file))
-    (setq anvil-pkg-state-file
+                  (substring nelix-core-profile-dir 1))))
+  (when (and (boundp 'nelix-state-file)
+             (stringp nelix-state-file)
+             (string-prefix-p "~/" nelix-state-file))
+    (setq nelix-state-file
           (concat nelix-cli--direct-home
-                  (substring anvil-pkg-state-file 1)))))
+                  (substring nelix-state-file 1)))))
 (condition-case err
     (let* ((parsed (progn
                      (nelix-cli--direct-stats "before-parse")

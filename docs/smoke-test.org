@@ -1,4 +1,4 @@
-#+title: anvil-pkg — Smoke test guide for first real-world install
+#+title: nelix — Smoke test guide for first real-world install
 #+author: zawatton
 #+date: 2026-04-27
 
@@ -17,10 +17,10 @@ anything unexpected as a GitHub issue once the repo has a remote.
 
 | Requirement      | Why                                          | How to install                                              |
 |------------------+----------------------------------------------+-------------------------------------------------------------|
-| Emacs 29+        | anvil-pkg runtime                             | distro-package or build from source                         |
+| Emacs 29+        | nelix runtime                             | distro-package or build from source                         |
 | Nix 2.18+        | =pkg-install= backend                         | =sh <(curl -L https://nixos.org/nix/install)= (Determinate) |
 | flakes enabled   | =nix profile install nixpkgs#NAME= relies on it | =/etc/nix/nix.conf= or =~/.config/nix/nix.conf=            |
-| anvil-pkg cloned | source on load-path                           | =git clone <repo> ~/anvil-pkg=                              |
+| nelix cloned | source on load-path                           | =git clone <repo> ~/nelix=                              |
 
 ** Verify Nix install + flakes
 
@@ -40,7 +40,7 @@ echo 'experimental-features = nix-command flakes' >> ~/.config/nix/nix.conf
 If you used the Determinate-style installer (=sh <(curl -L
 https://nixos.org/nix/install)=), flakes are enabled by default.
 
-** Verify nix profile dispatch works (sanity check independent of anvil-pkg)
+** Verify nix profile dispatch works (sanity check independent of nelix)
 
 #+begin_src shell
 nix profile install nixpkgs#hello
@@ -51,24 +51,24 @@ nix profile remove hello
 # cleanup so the rest of the test starts clean
 #+end_src
 
-If the above fails, the issue is in your Nix install, not anvil-pkg.
+If the above fails, the issue is in your Nix install, not nelix.
 Fix that first.
 
-* Step 1 — load anvil-pkg in Emacs
+* Step 1 — load nelix in Emacs
 
 In your =init.el= (or temporary scratch buffer):
 
 #+begin_src elisp
-(add-to-list 'load-path "~/anvil-pkg")
-(require 'anvil-pkg)
-(require 'anvil-pkg-dsl)              ; Phase 2 + 3 forms
+(add-to-list 'load-path "~/nelix")
+(require 'nelix-core)
+(require 'nelix-dsl)              ; Phase 2 + 3 forms
 #+end_src
 
 Pass criterion: no error.  =M-x describe-function pkg-install= shows
 the docstring.
 
 Failure modes:
-- "Cannot open load file: anvil-pkg" — load-path is wrong.  Fix the
+- "Cannot open load file: nelix-core" — load-path is wrong.  Fix the
   path or use absolute path.
 - byte-compile warnings on require — should not happen; if it does,
   open an issue with the warning text.
@@ -98,10 +98,10 @@ Failure modes:
 
 | Failure                                               | Likely cause                                            | Recovery                                                                  |
 |-------------------------------------------------------+---------------------------------------------------------+---------------------------------------------------------------------------|
-| =anvil-pkg-nix-not-found=                             | =nix= not on PATH from inside Emacs                     | Set =anvil-pkg-nix-program= to absolute path (e.g. =/nix/var/nix/profiles/default/bin/nix=) |
-| =anvil-pkg-nix-failed= "experimental feature flakes"  | flakes not enabled                                      | See "Verify Nix install + flakes" above                                  |
-| =anvil-pkg-nix-failed= "permission denied" on profile | profile dir conflict with another nix profile           | =rm -rf ~/.local/state/nelix= and retry                                  |
-| =pkg-list= returns nil after a successful install     | profile path mismatch between commands                   | check =anvil-pkg-profile-dir= matches what =nix profile list= sees       |
+| =nelix-nix-not-found=                             | =nix= not on PATH from inside Emacs                     | Set =nelix-core-nix-program= to absolute path (e.g. =/nix/var/nix/profiles/default/bin/nix=) |
+| =nelix-nix-failed= "experimental feature flakes"  | flakes not enabled                                      | See "Verify Nix install + flakes" above                                  |
+| =nelix-nix-failed= "permission denied" on profile | profile dir conflict with another nix profile           | =rm -rf ~/.local/state/nelix= and retry                                  |
+| =pkg-list= returns nil after a successful install     | profile path mismatch between commands                   | check =nelix-core-profile-dir= matches what =nix profile list= sees       |
 
 * Step 3 — search
 
@@ -115,7 +115,7 @@ Pass criterion: list non-empty, includes a row whose =:name= is
 "ripgrep".
 
 Failure modes:
-- =anvil-pkg-nix-failed= with empty stderr — you may be hitting the
+- =nelix-nix-failed= with empty stderr — you may be hitting the
   first-time channel evaluation cost (>10s).  Re-run; should be fast
   the second time.
 - Empty result for a name you /know/ exists in nixpkgs — try a
@@ -137,11 +137,11 @@ This exercises the flake.nix generation + symbol install dispatch.
   (source (url-fetch "https://ftp.gnu.org/gnu/hello/hello-2.12.1.tar.gz"
                      :sha256 "sha256-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx="))
   (build-system stdenv)
-  (description "GNU Hello — sanity test for anvil-pkg DSL"))
+  (description "GNU Hello — sanity test for nelix DSL"))
 
 (condition-case err
     (pkg-install 'my-hello-test)
-  (anvil-pkg-nix-failed
+  (nelix-nix-failed
     (message "Got expected nix failure: %s"
              (cadr err))))
 ;; expect: "Got expected nix failure: nix profile install ... hash mismatch"
@@ -160,9 +160,9 @@ cat ~/.local/state/nelix/flake.nix
 #+end_src
 
 Failure modes:
-- =flake.nix= absent → =anvil-pkg--write-flake-default= did not run;
-  check =M-: anvil-pkg--write-flake-fn= equals =anvil-pkg--write-flake-default=.
-- =anvil-pkg-dsl-error "render: unsupported source type"= → DSL parse
+- =flake.nix= absent → =nelix-core--write-flake-default= did not run;
+  check =M-: nelix-core--write-flake-fn= equals =nelix-core--write-flake-default=.
+- =nelix-dsl-error "render: unsupported source type"= → DSL parse
   succeeded but emitter failed; this should not happen for url-fetch
   — open an issue with the IR plist (=M-:= the registry).
 - nix complains about flake schema → the generated flake violates
@@ -197,7 +197,7 @@ correct value to perform a real build:
 
 (condition-case err
     (pkg-install 'my-rg-test)
-  (anvil-pkg-nix-failed
+  (nelix-nix-failed
     (message "Phase 3 dispatch reached nix: %s" (cadr err))))
 #+end_src
 
@@ -212,8 +212,8 @@ This proves the Phase 3 work end-to-end without needing real hashes.
 If you have anvil.el loaded and your MCP server running:
 
 #+begin_src elisp
-(anvil-pkg-enable)
-;; expect: "anvil-pkg: enabled (3 MCP tools, profile = ...)"
+(nelix-core-enable)
+;; expect: "nelix: enabled (3 MCP tools, profile = ...)"
 #+end_src
 
 From a Claude Code session connected to that MCP server, you should
@@ -269,8 +269,8 @@ Anything in the above that fails for a reason /not/ already in the
 
 1. Step number that failed.
 2. Full error message including stack trace.
-3. =M-:= output for any anvil-pkg internal var the failure reference
-   (=anvil-pkg-profile-dir=, =anvil-pkg-nix-channel=, the registry
+3. =M-:= output for any nelix internal var the failure reference
+   (=nelix-core-profile-dir=, =nelix-core-nix-channel=, the registry
    contents, etc.).
 4. Output of =nix --version= and =nix flake metadata nixpkgs= for
    the env baseline.
