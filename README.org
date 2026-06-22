@@ -2,15 +2,16 @@
 #+author: zawatton
 #+date: 2026-04-27
 
-[[https://github.com/zawatton/anvil-pkg/actions/workflows/test.yml][file:https://github.com/zawatton/anvil-pkg/actions/workflows/test.yml/badge.svg]]
-[[https://github.com/zawatton/anvil-pkg/actions/workflows/smoke.yml][file:https://github.com/zawatton/anvil-pkg/actions/workflows/smoke.yml/badge.svg]]
+[[https://github.com/zawatton/nelix/actions/workflows/test.yml][file:https://github.com/zawatton/nelix/actions/workflows/test.yml/badge.svg]]
+[[https://github.com/zawatton/nelix/actions/workflows/smoke.yml][file:https://github.com/zawatton/nelix/actions/workflows/smoke.yml/badge.svg]]
 
 * What is Nelix?
 
 *Nelix* is a package manager you configure in /Emacs Lisp/, backed by
-the Nix store.  It began as =anvil-pkg=; the old feature names and
-=anvil-pkg-*= aliases remain available during the compatibility
-transition, but new configuration should use =nelix= entry points.
+the Nix store.  It began as =anvil-pkg=; in 2026-06 it was fully
+renamed to =nelix= — the old =anvil-pkg-*= feature and symbol names
+were removed (no compatibility aliases).  The public =pkg-*= API and
+the =nelix-*= entry points are the supported surface.
 
 #+begin_quote
 The same idea as GNU Guix (Scheme over the Nix store) — but in Emacs
@@ -36,7 +37,7 @@ build-system support, an =emacs-package= backend that round-trips
 Elisp libraries through =trivialBuild= / =melpaBuild= with optional
 =:native-comp=, an opt-in =:async= install path, automatic
 =:depends-on= derivation from =Package-Requires= for github / tarball /
-git sources with cross-session caching in =anvil-pkg-state=, profile
+git sources with cross-session caching in =nelix-state=, profile
 generation rollback (=pkg-list-generations= / =pkg-rollback= /
 =pkg-rollback-package= / =pkg-history=), portable
 =nix profile install= dispatch, MELPA recipe auto-synthesis via =postUnpack= with optional
@@ -100,7 +101,7 @@ extra-access-tokens= paths.
     =:native-async-lower-primitive t= /
     =:native-text-http-lower-primitive t=.
   - =make smoke-nelisp-suite-readiness= (local-only) audits whether
-    the standalone image is ready to run the full anvil-pkg ERT suite.
+    the standalone image is ready to run the full nelix ERT suite.
     The current local image reports =:suite-ready t= with no blockers.
   - =make smoke-nelisp-suite-loadability= (local-only) loads the
     runtime sources and each ERT file in a fresh standalone NeLisp
@@ -131,22 +132,22 @@ Public Elisp API uses the short =pkg-= prefix:
 - =:format= ("trivial" / "melpa") + =:native-comp= toggle on
   =emacs-package=, =:async= keyword on =pkg-install= with
   =:on-success= / =:on-error= callbacks, and
-  =anvil-pkg-import-async-installer= migration utility — Phase 4-B
+  =nelix-import-async-installer= migration utility — Phase 4-B
 - =:no-auto-deps= keyword on =pkg-install= (opt-out of pre-fetch),
   =pkg-list-generations= / =pkg-rollback= / =pkg-history= — Phase 4-C
 - =nelix-compat-make-process-async= /
   =nelix-compat-http-get= portability primitives (Emacs path
   shipped; Phase 5 NeLisp hooks / auto-detect groundwork landed) —
   Phase 4-C / Phase 5 groundwork
-- =anvil-pkg-state= namespaced KV with TTL (deps cache + Nix-version
+- =nelix-state= namespaced KV with TTL (deps cache + Nix-version
   cache + generations mirror persist across Emacs sessions),
   =pkg-clear-cache= scope arg, =:melpa-synth= / =:melpa-recipe= /
   =:melpa-files= keywords on =emacs-package=, L18 pre-fetch
   extended to =url-fetch= (tarball header scrape) and =git-fetch=
   (shallow clone scrape), =pkg-rollback-package= per-package
   rollback — Phase 4-D
-- =anvil-pkg-emacs-fetch-melpa-recipe= public helper +
-  =anvil-pkg-emacs-melpa-upstream-fetch= defcustom for opt-in
+- =nelix-emacs-fetch-melpa-recipe= public helper +
+  =nelix-emacs-melpa-upstream-fetch= defcustom for opt-in
   upstream MELPA recipe lookup (canonical recipe wins over local
   synth when the defcustom is non-nil and a recipe exists at
   =melpa/melpa@master/recipes/<pname>=); upgraded =:melpa-files=
@@ -166,7 +167,7 @@ Public Elisp API uses the short =pkg-= prefix:
   matcher or a single element), and =pkg-info= (read-only merged
   installed-profile + =nix search= metadata) — Phase 6
 - =pkg-pin= / =pkg-unpin= / =pkg-list-pins= (hold packages back from a
-  bulk =pkg-upgrade=, pins persisted in =anvil-pkg-state=; a pinned name
+  bulk =pkg-upgrade=, pins persisted in =nelix-state=; a pinned name
   passed explicitly to =pkg-upgrade= errors until unpinned),
   =pkg-doctor= (read-only environment health report: nix version,
   profile dir, installed count, anvil-server, state file), and the
@@ -310,7 +311,7 @@ Public Elisp API uses the short =pkg-= prefix:
   preserved.  File / env / PATH helpers also lazy-require
   =nelisp-runtime=, =nelisp-emacs-compat=, and
   =nelisp-emacs-compat-fileio= so package-split NeLisp images can
-  load state and helper I/O backends after =anvil-pkg= itself.
+  load state and helper I/O backends after =nelix= itself.
   Text HTTP can use either the low-level =nelisp-http-get= backend or
   the higher-level =nelisp-http-fetch= package, then falls back through
   the same =curl= adapter used by binary HTTP when neither native text
@@ -318,7 +319,7 @@ Public Elisp API uses the short =pkg-= prefix:
   loadable but return status 0 because their lower runtime primitives
   are absent also retry through =curl= when that fallback is available.
   Explicit backend hook returns are validated against their documented
-  plist shapes before anvil-pkg consumes them.
+  plist shapes before nelix consumes them.
   Async process metadata, status, and exit-code access now go through
   compat wrappers so future NeLisp process wraps do not have to mimic
   Emacs =process-get= / =process-put= directly.
@@ -328,13 +329,14 @@ Public Elisp API uses the short =pkg-= prefix:
   A local =make smoke-nelisp= target now verifies that the compat
   layer loads under a real NeLisp standalone binary and that explicit
   sync process / async / HTTP hooks dispatch there.
-- =anvil-pkg-state= serializes through
+- =nelix-state= serializes through
   =nelix-compat-json-serialize=, so the persistent JSON cache no
   longer depends directly on Emacs-only =json-serialize= when running
   on NeLisp.
 
-Long-form aliases (=anvil-pkg-install= etc.) are provided via
-=defalias= for Emacs-prefix purists.
+The public Elisp API is the short =pkg-*= surface (plus the =nelix-*=
+facade entry points); the historical =anvil-pkg-*= names were removed
+in the 2026-06 rename and are not aliased.
 
 Phase 5 focuses on the NeLisp async backend that makes
 =nelix-compat-make-process-async= work outside Emacs and a
@@ -344,7 +346,7 @@ uses =curl= as the HTTP fallback when no native text / binary backend
 is installed and a process backend can run =curl=.
 
 The remaining Phase 5 completion blockers are NeLisp runtime /
-Layer-2 ownership, not anvil-pkg DSL ownership.  anvil-pkg owns the
+Layer-2 ownership, not nelix DSL ownership.  nelix owns the
 compat contracts, hook variables, auto-detection, fallback behavior,
 and readiness tests.  NeLisp owns the executable lower primitives:
 subprocess spawn / wait / pipe semantics for process backends, and a
@@ -355,7 +357,7 @@ standalone URL / HTTP transport for text HTTP backends.
 ** AI agents need a single DSL for tool installation
 
 Claude Code (and similar agents) already speak anvil's MCP tools
-fluently.  Adding =anvil-pkg-install= to that surface means an agent can
+fluently.  Adding =pkg-install= to that surface means an agent can
 provision its own dependencies — install =ripgrep=, =jq=, language
 servers, anything in nixpkgs — by emitting one Elisp form, without
 shelling out to a different package manager per OS.
@@ -363,10 +365,10 @@ shelling out to a different package manager per OS.
 ** Nix solves the hard problems; we add the DSL
 
 Nix already handles dependency closures, content-addressed storage,
-sandboxed builds, and binary caches.  =anvil-pkg= does *not* re-implement
+sandboxed builds, and binary caches.  =nelix= does *not* re-implement
 any of that.  It provides:
 
-1. An Elisp DSL (=anvil-pkg-define=, =anvil-pkg-install=, ...)  that
+1. An Elisp DSL (=pkg-define=, =pkg-install=, ...)  that
    feels native to Emacs / NeLisp users.
 2. A wrapper that translates that DSL to Nix expressions / =nix profile=
    commands.
@@ -375,8 +377,8 @@ any of that.  It provides:
 
 ** Plain Elisp, no macro DSL forced on you
 
-Like async-installer, =anvil-pkg= prefers =setq= / =defun= /
-=anvil-pkg-define= over a baroque =use-package=-style macro.  Reading
+Like async-installer, =nelix= prefers =setq= / =defun= /
+=pkg-define= over a baroque =use-package=-style macro.  Reading
 your config should not require learning a new macro language.
 
 * Design overview
@@ -384,16 +386,16 @@ your config should not require learning a new macro language.
 #+begin_src text
    ┌─────────────────────────────────────────────────────────────┐
    │  Elisp DSL                                                   │
-   │  (anvil-pkg-install "ripgrep")                               │
-   │  (anvil-pkg-define my-tool :src (github "...") :build ...)   │
+   │  (pkg-install "ripgrep")                               │
+   │  (pkg-define my-tool :src (github "...") :build ...)   │
    └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
    ┌─────────────────────────────────────────────────────────────┐
-   │  anvil-pkg core (this repo)                                  │
+   │  nelix core (this repo)                                  │
    │   - DSL parser / form → backend dispatch                     │
    │   - manifest / generation tracking                           │
-   │   - MCP tool surface: anvil_pkg_install / search / list ...  │
+   │   - MCP tool surface: pkg-install / search / list ...  │
    └─────────────────────────────────────────────────────────────┘
                   │                         │
                   ▼                         ▼
@@ -437,17 +439,17 @@ See =docs/design/01-overview.org= for the full Phase 1 contract.
 * Install
 
 #+begin_src shell
-git clone https://github.com/zawatton/anvil-pkg ~/anvil-pkg
+git clone https://github.com/zawatton/nelix ~/nelix
 #+end_src
 
 In your Emacs init:
 
 #+begin_src elisp
-(add-to-list 'load-path "~/anvil-pkg")
-(require 'anvil-pkg)
-(require 'anvil-pkg-dsl)        ; Phase 2 — pkg-define macro
+(add-to-list 'load-path "~/nelix")
+(require 'nelix)
+(require 'nelix-dsl)        ; Phase 2 — pkg-define macro
 ;; To register pkg-* MCP tools (requires anvil.el loaded):
-(anvil-pkg-enable)
+(nelix-core-enable)
 #+end_src
 
 Command-line wrapper from a checkout:
@@ -530,8 +532,8 @@ make install prefix=$HOME/.local
 ;;   status through your callback chain.
 
 ;; Phase 4-B — one-shot migration from async-installer-git-list
-(require 'anvil-pkg-import)
-(anvil-pkg-import-async-installer
+(require 'nelix-import)
+(nelix-import-async-installer
  :var 'async-installer-git-list
  :emit (expand-file-name "imported-pkgs.el" user-emacs-directory))
 ;; → writes pkg-define forms; load the file from your init when ready.
@@ -557,7 +559,7 @@ make install prefix=$HOME/.local
 (pkg-history 'magit)   ; → events for magit only
 
 ;; Phase 4-C — importer auto-populates depends-on from local clones
-(anvil-pkg-import-async-installer
+(nelix-import-async-installer
  :var 'async-installer-git-list
  :emit (expand-file-name "imported-pkgs.el" user-emacs-directory)
  :scrape-deps t)       ; default; reads ~/.emacs.d/external-packages/<pkg>
@@ -605,7 +607,7 @@ make install prefix=$HOME/.local
 ;;   `nix profile install'.  Other installed packages stay.
 
 ;; Phase 4-D — clear caches by scope (default = all)
-(pkg-clear-cache)              ; all anvil-pkg-state namespaces
+(pkg-clear-cache)              ; all nelix-state namespaces
 (pkg-clear-cache 'deps)        ; just the Package-Requires lookup cache
 (pkg-clear-cache 'nix-version) ; just the Nix-version detection cache
 (pkg-clear-cache 'generations) ; just the profile generations mirror
@@ -614,8 +616,8 @@ make install prefix=$HOME/.local
 ;; :melpa-synth 'auto first tries
 ;; raw.githubusercontent.com/melpa/melpa/master/recipes/<pname>;
 ;; on hit it emits the canonical recipe verbatim instead of the local
-;; synth fallback.  Cached per package for 7 days in anvil-pkg-state.
-(setq anvil-pkg-emacs-melpa-upstream-fetch t)
+;; synth fallback.  Cached per package for 7 days in nelix-state.
+(setq nelix-emacs-melpa-upstream-fetch t)
 (pkg-define magit
   (version "3.3.0")
   (source (github-fetch :owner "magit" :repo "magit"
@@ -647,7 +649,7 @@ make install prefix=$HOME/.local
                            (message "installed %S" (plist-get r :names))))
 ;; :require is rejected with a list (which symbol to require?):
 ;; (pkg-install '(magit dash) :require 'magit)
-;; → anvil-pkg-error
+;; → nelix-error
 
 ;; Phase 4-G — private repo support via env-var credentials.
 ;; Export a token before invoking pkg-install; the DSL form is
@@ -663,7 +665,7 @@ make install prefix=$HOME/.local
                         :sha256 "sha256-..."))
   (build-system (rust :cargo-sha256 "sha256-...")))
 (pkg-install 'my-private-tool)
-;; anvil-pkg auto-injects:
+;; nelix auto-injects:
 ;;   - L18 raw.githubusercontent.com Authorization: Bearer header
 ;;   - git -c http.<host>/.extraheader=Authorization: Bearer ...
 ;;   - nix --option extra-access-tokens "github.com=$TOKEN"
@@ -672,8 +674,9 @@ make install prefix=$HOME/.local
 ;; codeberg.org (CODEBERG_TOKEN).  See examples/private-github.el.
 #+end_src
 
-CLI sub-command (=anvil pkg install ...=) lands in =anvil.el= via a
-separate PR; until then call the Elisp API directly.
+Package install is the Elisp =pkg-install= API; the =bin/nelix= CLI
+covers the manifest workflow (=validate= / =apply= / =audit= / =sync= …).
+An =anvil.el=-side =anvil pkg ...= dispatch may also surface these.
 
 ** Examples directory
 
@@ -700,7 +703,7 @@ installing — see =examples/README.org= for the workflow.
 
 Private repository access is opt-in and entirely env-var-driven.
 There is no DSL =:auth= keyword and *no* on-disk credential
-storage — anvil-pkg never writes tokens to =anvil-pkg-state= or
+storage — nelix never writes tokens to =nelix-state= or
 to any of its own log lines.
 
 - Default credential map (=nelix-compat-credential-env-alist=):
@@ -716,7 +719,7 @@ to any of its own log lines.
   before invoking =pkg-install=.
 - Tokens *are* visible to =ps aux= for the duration of =nix= /
   =git= subprocesses — both tools accept the credential on the
-  CLI and anvil-pkg cannot suppress that.  On a single-user
+  CLI and nelix cannot suppress that.  On a single-user
   machine this is rarely an issue; on a shared host consider
   Nix daemon =access-tokens.conf= or a =GIT_ASKPASS= shim
   instead (out of scope for this phase).
@@ -764,13 +767,14 @@ nix-command flakes'= for the smoke targets.
 
 * Naming
 
-=anvil-pkg= follows the existing anvil sub-module pattern (=anvil-http=,
-=anvil-state=, =anvil-defs=, =anvil-org-index=, ...).  CLI is exposed as a
-=bin/anvil= sub-command (=anvil pkg install ...=) so the user only ever
-has one binary in =$PATH=.
-
-If the project later outgrows anvil's ecosystem, a standalone brand
-rename remains an option.  Phase 1-3 do not require it.
+=nelix= began inside anvil's sub-module pattern (=anvil-http=,
+=anvil-state=, =anvil-defs=, =anvil-org-index=, ...) as =anvil-pkg=, and
+in 2026-06 was promoted to the standalone =nelix= brand: modules
+=nelix-core= / =nelix-compat= / =nelix-state= / =nelix-import= /
+=nelix-emacs= / =nelix-dsl=, the =nelix-error= contract, and the
+=bin/nelix= CLI.  The public =pkg-*= Elisp API is unchanged.  An
+=anvil.el=-side =anvil pkg ...= dispatch can still surface the CLI so
+the user keeps one binary in =$PATH=.
 
 * License
 
