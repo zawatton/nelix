@@ -1,0 +1,420 @@
+#+title: nelix native source-build executor — Nix-free fine-grained builds (ldb-fed)
+#+author: zawatton
+#+date: 2026-06-23
+#+options: toc:2 num:t
+
+* Status
+:PROPERTIES:
+:STATE: DRAFT-2026-06-23 (hermeticity target LOCKED = Tier 0/1)
+:END:
+
+DRAFT.  Design for a *NeLisp-hosted, Nix-free build executor* that runs
+Lisp-defined build phases and deposits outputs into the existing
+=nelix-native= content store.  Fed at the front end by the
+=lisp-dialect-bridge= (ldb) Guix importer.
+
+*Signoff 2026-06-23:* hermeticity target = *Tier 0/1* (non-isolated plain
+build dir + env-scrub + rlimit + deterministic env; Linux/macOS).  *Tier 2
+(kernel isolation) is out of scope for this design*, deferred to a separate
+Linux-only project — so open decision §14.2 is moot.  Remaining open item:
+ldb phase-body translation breadth (§14.3, decided at M4).
+
+This is *cross-repo*; the work splits cleanly into three owners:
+- =nelix= — build-system orchestration (the executor + recipe schema).
+- =nelisp= — runtime OS-reach primitives, *pure-elisp only* (see §4 hard rule).
+- =lisp-dialect-bridge= — Guix =#:phases= front-end (capture the build logic).
+
+Grounded in three code audits (2026-06-23); file:line citations throughout
+are from those audits.
+
+* 1. Motivation
+
+Today nelix has a *front end* for Guix-style recipes but no Nix-free
+*build engine*:
+
+- =lisp-dialect-bridge= Phase 1 (SHIPPED) translates a Guix
+  =(define-public NAME (package ...))= into a nelix =pkg-define= form
+  (=ldb-guix-import-string/-file/-form=).  Recipe *authoring/migration*
+  in Lisp already works.
+- nelix's =pkg-define= =build-phase= / =install-phase= are stored as raw
+  strings and *lower to Nix* =buildPhase= / =installPhase= in a generated
+  =flake.nix= (=nelix-core--render-post-bs-fields=).  Execution = the Nix
+  daemon.
+- The =nelix-native= backend (the cross-platform, no-Nix path; first in
+  the default backend policy on every OS) is =build: nil= — it *fetches
+  and places* prebuilt artifacts (github-release / url / elpa / git) and
+  shims system commands.  It cannot run build phases.
+
+So "fine-grained build instructions in Lisp" exist only as *specification
+that lowers to Nix*.  The missing piece is an *executor* that runs those
+phases natively.  This doc designs that executor and the front-end
+extension that feeds it real Guix build logic.
+
+The store half already exists: =nelix-native= ships a content-addressed
+store + profiles + generations + rollback.  What is missing is the
+*phase executor* and a small set of *OS-reach primitives* in NeLisp.
+
+* 2. Goals / Non-goals
+
+** Goals
+- Execute Lisp-defined build phases (configure/build/check/install and
+  custom phases) from a fetched source tree, with no Nix in the loop.
+- Deposit build outputs into the existing =nelix-native= content store
+  and expose them through a profile generation (rollback-able).
+- Be fed by ldb: a Guix recipe's =arguments= / =#:phases= become a
+  nelix =:build-phases= recipe that the executor runs.
+- Keep the Rust core of =nelisp= *unchanged in size* (§4).
+
+** Non-goals (initial)
+- *Bit-for-bit reproducibility* (Guix/Nix grade).  Out of scope until a
+  later milestone; the MVP uses the host toolchain (§12).
+- *Replacing the Nix backend.*  Nix stays the primary for hermetic /
+  reproducible / nixpkgs-sourced builds; the native executor *coexists*
+  (it is already first in policy but falls through to Nix).
+- *Windows source builds.*  The NeLisp spawn path is unix-only (§6); the
+  native executor targets *Linux + macOS*.  Windows keeps the
+  fetch/place + scoop/winget backends.
+- *A Nix evaluator or a Guile interpreter in Elisp* (ldb's own non-goal).
+
+* 3. Architecture overview
+
+#+begin_src text
+  ┌───────────────────────────────────────────────────────────────┐
+  │ FRONT END  (lisp-dialect-bridge — §11)                         │
+  │   Guix (define-public NAME (package ... (arguments            │
+  │     '(#:phases (modify-phases %standard-phases ...)))))        │
+  │        └─ ldb-scheme-read → IR (phase-list) → ldb-emit         │
+  └───────────────┬───────────────────────────────────────────────┘
+                  ▼  pkg-define  /  registry recipe
+  ┌───────────────────────────────────────────────────────────────┐
+  │ RECIPE       :class 'source-build                              │
+  │   :systems ((x86_64-linux                                      │
+  │     :source  (:type git :url ... :rev ... :sha256 ...)         │
+  │     :install (:type build :build-system 'make                  │
+  │              :build-phases (...) :bin (...)                    │
+  │              :buildInputs (...) :nativeBuildInputs (...))))    │
+  └───────────────┬───────────────────────────────────────────────┘
+                  ▼  nelix-native-install-recipe  (pcase :type)
+  ┌───────────────────────────────────────────────────────────────┐
+  │ EXECUTOR    nelix-builder--install-build   (§9, NEW)           │
+  │   1 fetch    nelix-fetch-source → archive                     │
+  │   2 unpack   nelix-builder--extract-archive → build-dir       │
+  │   3 run      phases in build-dir  ── via NeLisp (§10) ──┐      │
+  │   4 deposit  outputs → store temp → commit             │      │
+  │   5 profile  nelix-builder--create-profile-generation  │      │
+  └───────────────────────────────────────────────────────┼───────┘
+                                                           ▼
+  ┌───────────────────────────────────────────────────────────────┐
+  │ RUNTIME     NeLisp standalone (nelisp — §10)                   │
+  │   fork/execve/pipe/wait (real) + chdir + per-call env          │
+  │   + copy-file/symlink/mkdtemp   ── all via dlsym, no Rust ──   │
+  │   outputs → nelix-native content store (exists)               │
+  └───────────────────────────────────────────────────────────────┘
+#+end_src
+
+The store, fetch, unpack, profile, generation and rollback machinery
+*already exist* (audit 1).  The two net-new pieces are the *executor*
+(=nelix-builder--install-build=, §9) and a handful of *NeLisp OS-reach
+primitives* (§10).  ldb gains a *phase-capture* extension (§11).
+
+* 4. Hard constraints (read before designing primitives)
+
+** 4.1 NeLisp Rust LOC must NOT increase (user hard rule, 2026-05-19)
+=nelisp='s reason for existing is pure-elisp-ification; *Rust reduction is
+the only evaluation axis* (memory =feedback_nelisp_rust_loc_never_increase=,
+=feedback_nelisp_minimize_rust=).  Therefore the missing OS primitives
+(=chdir=, per-call =envp=, =copy-file=, =symlink=, =mkdtemp=, and the
+Tier-2 isolation calls) *must NOT be added as new =nl_syscall_*= Rust
+wrappers*.
+
+They must be reached through the existing *dlsym extern-call bridge*
+(=nelisp-cc--dlsym-resolve= / =nelisp-cc-runtime-resolve-symbol-via-dlsym=,
+=src/nelisp-cc-runtime.el:96,4157=), which can resolve *any* libc symbol
+already linked into the static binary, subject to a *≤6 GP-argument*
+budget (=nelisp-cc-runtime.el:2174=).  Every primitive we need fits that
+budget: =chdir(1)=, =symlink(2)=, =mkdtemp(1)=, =execve(3)=, =unshare(1)=,
+=chroot(1)=.  So all of §10 is *pure-elisp wiring over libc via dlsym* —
+zero Rust delta.  This is the load-bearing constraint of the whole design.
+
+** 4.2 Platform
+The NeLisp spawn path (fork/execve/pipe2/waitpid) is *unix-only*; the
+non-unix errno path is a stub.  Native source builds target *Linux
+(first-class) + macOS (CI-gated)*.  Windows is explicitly out (§2).
+
+** 4.3 Bootstrap / toolchain
+Without Nix there is no managed stdenv / bootstrap seed.  The MVP uses
+the *host system's toolchain* (=cc=, =make=, =cmake=, =cargo=, … found on
+=PATH=).  This is non-hermetic and non-reproducible *by design* for the
+MVP (§12).  This is the honest cost of "no Nix".
+
+* 5. Feasibility ceiling (what NeLisp can/can't do today)
+
+From the runtime audit (2026-06-23).  "Reachable" = present as a wired
+builtin/elisp; "dlsym" = a linked libc symbol callable via the bridge
+but not yet wired.
+
+| Capability                         | Status today                         |
+|------------------------------------+--------------------------------------|
+| fork / execve / posix_spawn        | *real* (Linux/macOS)                 |
+| pipe2 / waitpid / dup2 / kill      | *real*                               |
+| call-process / make-process        | *real* (capture stdout/stderr, exit) |
+| child working dir (=chdir=)        | *missing* — no chdir between fork/exec |
+| child custom env (per-call =envp=) | *missing* — only startup-env snapshot |
+| mkdir / unlink / rename / stat     | *real*                               |
+| chmod                              | *real* (raw-syscall elisp)           |
+| copy-file                          | *missing* (composable read+write)    |
+| make-symbolic-link                 | *missing*                            |
+| mkdtemp / make-temp-file           | *missing*                            |
+| delete-directory (recursive)       | *missing*                            |
+| sha256 / sha1 / md5                | *real* (pure elisp)                  |
+| tar / gzip / unpack                | *missing native* — shell out to =tar= |
+| rlimit (cpu/mem/fd caps)           | *real*                               |
+| unshare / chroot / mount / seccomp | *missing* (not even compiled; dlsym-reachable if linked) |
+| setuid / setgid                    | *missing*                            |
+| dlsym extern-call to any libc sym  | *real* (≤6 GP args)                  |
+
+*Bottom line:* NeLisp can already *spawn and capture* a build.  The MVP
+is blocked only by *cwd*, *per-call env*, and the three FS helpers
+(=copy-file= / =symlink= / =mkdtemp=) — all small, all via dlsym, all
+zero-Rust.  *Kernel isolation does not exist at all* and is the line
+between Tier 0/1 and Tier 2 (§7).
+
+* 6. Hermeticity tiers (the central design axis)
+
+The executor is designed in tiers; each is shippable and strictly adds to
+the previous.  *LOCKED 2026-06-23: ship Tier 0, then Tier 1; Tier 2 is out
+of scope (separate Linux-only project).*
+
+** Tier 0 — plain build dir (MVP, non-isolated)
+- Build runs in a fresh =mkdtemp= dir, =chdir='d, phases via
+  =call-process= with a *controlled env* (built from the recipe's
+  =buildInputs= store paths + a minimal base) and a *pinned PATH*.
+- Host toolchain on PATH.  No kernel sandbox.  Network *not* blocked.
+- Needs §10.1 (chdir + per-call env) and §10.2 (copy/symlink/mkdtemp).
+- *Proves the whole loop*: a hand-written recipe builds a real C program
+  from source into the store, no Nix.
+
+** Tier 1 — env-scrub + resource caps (cheap hardening)
+- Scrub env to *only* declared inputs (drop ambient =$HOME=, etc.).
+- =setrlimit= caps (cpu time, address space, open files, file size) —
+  the one isolation-adjacent control that *already exists*.
+- Deterministic env knobs (=SOURCE_DATE_EPOCH=, =TZ=UTC=, =LC_ALL=C=).
+- Still no kernel sandbox; network still open.  Pure config over Tier 0.
+
+** Tier 2 — kernel isolation (Linux-only, net-new) — OUT OF SCOPE
+/Deferred to a separate project (signoff 2026-06-23); kept for reference./
+Two routes, pick one if/when taken up:
+1. *Wire libc isolation via dlsym* (zero Rust, §4.1): in the forked
+   child, =unshare(CLONE_NEWNS|NEWUSER|NEWNET)= → =chroot= a built
+   input-only root → bind-mount the store read-only → =chdir= →
+   =execve=.  Network off by NEWNET.  Linux-only.
+2. *Delegate to =bubblewrap= (=bwrap=)* via =call-process=: zero new
+   primitives, mature sandbox, but adds a runtime dep and inherits the
+   same cwd/env wiring.
+Tier 2 is where reproducibility becomes meaningful; it is intentionally
+*not* in the MVP critical path.
+
+* 7. Build phase model
+
+A *build phase* is =(NAME . THUNK)= where =NAME= is a symbol
+(=unpack/patch/configure/build/check/install/...=) and =THUNK= is Elisp
+run with =default-directory= = the build dir.  The executor holds an
+ordered *standard phase list* and applies =modify-phases= operations to
+it (=add-before= / =add-after= / =replace= / =delete=), mirroring Guix.
+
+Phase bodies call a small *build-primitive vocabulary* (the Nix/Guix
+=invoke= / =substitute*= analogues), each implemented in Elisp over §10:
+
+| Primitive            | Meaning                                            |
+|----------------------+----------------------------------------------------|
+| =(invoke PROG ARGS…)=  | run a program in the build dir, error on non-zero  |
+| =(substitute* FILE …)= | in-place regex edits (sed-like)                    |
+| =(copy-recursively A B)= / =(install-file F D)= | place outputs into =$out= |
+| =(setenv-build K V)=   | mutate the build env for later phases              |
+| =(make-flags …)= / =(configure-flags …)= | helper accessors                 |
+
+=$out= is the store temp dir handed to the install phase; the executor
+commits it after =install= succeeds.  This vocabulary is exactly what
+ldb must lower Guix phase bodies into (§11).
+
+* 8. Default build-systems (phase presets)
+
+A =:build-system= in the recipe selects a *preset standard-phase list*
+(all pure Elisp orchestrations of =invoke=):
+
+- =make= / =gnu= : =unpack patch configure build check install=,
+  configure = =./configure --prefix=$out= (skipped if absent),
+  build = =make=, install = =make install=.
+- =cmake= : configure = =cmake -B build -DCMAKE_INSTALL_PREFIX=$out=, …
+- =cargo= : build = =cargo build --release=, install = copy =target/release/<bin>=.
+- =trivial= : no standard phases; recipe supplies all phases.
+
+These map 1:1 onto Guix's =*-build-system= so ldb import is mechanical.
+
+* 9. nelix integration (audit 1 — exact surface)
+
+*Minimal, non-breaking.*  Four touch points:
+
+1. =nelix-builder.el= dispatch (=nelix-native-install-recipe=, the =pcase=
+   at ~L728-744): add one arm before the =_= catch-all:
+   =('build (nelix-builder--install-build recipe system* source install profile-name*))=.
+
+2. =nelix-builder.el= new =nelix-builder--install-build (recipe system
+   source install profile-name)=, following the existing transactional
+   pattern (=nelix-builder--finish-install=, L414-445):
+   - =nelix-fetch-source source ARCHIVE= (fetch + sha256 verify — exists)
+   - =nelix-builder--extract-archive ARCHIVE BUILD-DIR install= (exists)
+   - run phases in =BUILD-DIR= with =$out= = a store temp dir from
+     =nelix-store--entry-temp-dir entry=
+   - =nelix-store-write-entry-at entry $out= → =nelix-store--commit-entry-dir=
+   - =nelix-builder--create-profile-generation=
+   All store/profile calls already exist (audit 1, store API table).
+
+3. Registry recipes: =:class 'source-build= with
+   =:install (:type build :build-system 'make :build-phases (...) :bin
+   (...) :buildInputs (...) :nativeBuildInputs (...))=.  =:class= is a
+   *free symbol* and *extra =:install= keys are ignored by existing code*
+   → fully non-breaking.
+
+4. (Optional) =nelix-dsl.el= =nelix-core--known-build-systems=: only if
+   the *DSL/Nix* path should also express the new build-system.  The
+   native executor works entirely through the registry =:install :type=,
+   so this is *not required*.
+
+Note: do *not* reuse the DSL's string =build-phase= (that is Nix-only,
+lowered to =buildPhase ''…''=).  Native phases live as *Elisp forms* in
+the recipe =:install :build-phases=, run by the executor.
+
+* 10. NeLisp runtime work (audit 2 — all pure-elisp via dlsym, no Rust)
+
+Owner =nelisp=.  Each item = an Elisp wrapper that resolves a libc symbol
+through =nelisp-cc--dlsym-resolve= and calls it (≤6 GP args).  *No Rust.*
+
+** 10.1 child cwd + per-call env (Tier 0 blocker)
+- In the fork/exec child path (=nelisp-process--call-process-syscall=,
+  =nelisp-process.el:930=, between fork and =nelisp-sys-execve=), insert a
+  =chdir(BUILD-DIR)= via dlsym.
+- Build a *custom NULL-terminated =envp=* from a supplied alist (instead
+  of the fixed =nelisp-sys-startup-envp=, =nelisp-sys.el:210=) using the
+  existing mmap/write primitives, and pass it to =execve=.
+- Surface as new keys on =nelisp-make-process= / a =call-process= variant:
+  =:cwd= and =:env=.  (Today neither exists.)
+
+** 10.2 filesystem helpers (Tier 0 blocker)
+- =copy-file= — composable from existing read+write (no new syscall).
+- =make-symbolic-link= — dlsym =symlink(2)= (2 args).
+- =mkdtemp= — dlsym =mkdtemp(3)= (1 arg) for the build dir.
+- =delete-directory= recursive — elisp walk over =readdir= + =unlink= +
+  =rmdir= (rmdir via dlsym if not present).
+
+** 10.3 archives
+- No native tar; =invoke "tar" …= via the now-cwd/env-capable
+  =call-process=.  =tar=/=gzip= must be on the build PATH (host dep).
+
+** 10.4 Tier 2 isolation (deferred, Linux-only, still no Rust)
+- dlsym =unshare(2)= / =chroot(2)= / =mount(2)= in the child before
+  =execve=.  All ≤6 args.  Gated Linux; macOS path skips to Tier 1.
+
+* 11. ldb front-end work (audit 3 — capture Guix #:phases)
+
+Owner =lisp-dialect-bridge=.  Today the importer *rejects* the
+=arguments= field (the =modify-phases= catch-all signal,
+=ldb-guix-importer.el:124=).  Staged extension:
+
+** Phase 2A — reader
+- =ldb-scheme.el= preprocessor: handle gexp =#~= / =#$= (strip to inner
+  body; signal on =#$store-ref=).  Today these hit
+  =invalid-read-syntax= and are *silently swallowed* (latent bug) — make
+  it loud or strip.
+- =ldb-scheme-cvt.el=: add =lambda*= (Guile keyword lambda) → IR =lambda=
+  with =#:key= params in =:meta=.
+
+** Phase 2B — phase structure
+- =ldb--guix-form-to-ir=: add a =(modify-phases …)= arm → new IR node
+  (=phase-list= with =:base= + =:mutations ((OP ANCHOR NAME LAMBDA-IR)…)=).
+  The IR already has =lambda= / =call= / =let= / =cond= nodes (audit 3) —
+  enough for the structure and most bodies.
+- =ldb--guix-field-to-ir=: a dedicated =arguments= converter (its value
+  is =(list #:phases … #:tests? …)=).
+- =ldb-emit-pkg-define=: emit a new =:build-phases= subform.
+
+** Phase 2C — phase bodies (the hard half)
+- Map Guix build utilities to the §7 vocabulary: =invoke= (≈ as-is),
+  =substitute*= (Guix sed-macro → Elisp =substitute*= primitive),
+  =(assoc-ref outputs "out")= → =$out=, =copy-recursively=, etc.
+- *Gate*: first test whether Guile's =macroexpand= renders =substitute*=
+  to readable Scheme; if so the existing =ldb-scheme-macro.el= Guile
+  walker handles it without a dedicated converter.
+
+Honest scope note: capturing *structure* (modify-phases add/replace/…) is
+straightforward; capturing arbitrary *gexp'd shell bodies* is open-ended
+— we translate a *useful subset* and reject the rest loudly (ldb's
+standing policy).
+
+* 12. Bootstrap / toolchain (the honest limitation)
+
+The MVP builds with the *host* toolchain found on the (pinned) build
+=PATH=.  Consequences, stated plainly:
+- *Not reproducible* — output depends on the host =cc=/=make= versions.
+- *Not hermetic* (Tier 0/1) — phases can read the host FS / network.
+- *No dependency graph build-from-source* — =buildInputs= are resolved
+  from the =nelix-native= store (prebuilt) or the host; we do *not*
+  recursively source-build the whole graph (that is Guix/Nix territory).
+
+This is acceptable for the stated use case ("細かくビルド指示を Lisp で,
+Nix 無しで, single package from source") and is exactly where Nix remains
+the right tool for hermetic/reproducible graph builds.
+
+* 13. Milestones
+
+| M  | Deliverable                                                            | Repos        |
+|----+-----------------------------------------------------------------------+--------------|
+| M0 | §10.1 + §10.2 wired (chdir, :cwd/:env, copy/symlink/mkdtemp) via dlsym | nelisp       |
+| M1 | =nelix-builder--install-build= + =:type 'build= + a *hand-written*    | nelix        |
+|    | =:class 'source-build= recipe builds a real C prog from source (Tier 0)|              |
+| M2 | Tier 1 hardening (env-scrub, rlimit, deterministic env)               | nelix/nelisp |
+| M3 | ldb 2A+2B: import a real Guix recipe's =modify-phases= structure → run| ldb          |
+| M4 | ldb 2C: phase-body subset (=substitute*=/=invoke=/=assoc-ref=)        | ldb          |
+| M5 | Tier 2 isolation (Linux) — dlsym unshare/chroot *or* bwrap delegation | nelisp/nelix |
+
+M0+M1 = "Nix-free fine-grained build proven end-to-end".  M3+M4 = "Guix
+recipes' build logic actually runs".  *M5 (Tier 2 / hermetic) is out of
+scope for this design (signoff 2026-06-23) — deferred, Linux-only.*
+
+Acceptance for M1 (mirrors the existing =make smoke-build= Nix proof):
+a =make smoke-native-build= that source-builds a tiny C program with a
+hand-written Lisp phase list and asserts the binary runs from the
+profile — *with no =nix= on PATH*.
+
+* 14. Risks & open decisions (need user signoff)
+
+** Open decisions
+1. *Hermeticity target.*  *RESOLVED 2026-06-23 = Tier 0/1* (pragmatic,
+   cross-platform Linux/macOS, non-reproducible).  Tier 2 deferred.
+2. *Tier 2 route* — *moot* (Tier 2 out of scope; revisit only if Tier 2
+   is taken up later as a separate project).
+3. *ldb body-translation scope* (OPEN): how much of real-world Guix
+   =#:phases= to translate before rejecting loudly — to be decided at M4.
+
+** Risks
+- *Rust-rule pressure*: if any primitive turns out *not* linked into the
+  static binary, dlsym can't reach it and the only alternatives are a
+  Rust wrapper (forbidden) or a redesign.  Mitigation: verify each target
+  symbol is present in the binary's dynsym *before* committing to it.
+- *macOS divergence*: =prlimit= is =-ENOSYS=; Tier 2 namespaces are
+  Linux-only — macOS caps out at Tier 1.
+- *Toolchain drift / non-reproducibility* (§12) — accepted, documented.
+- *ldb gexp surface* is open-ended — bounded by "useful subset, reject
+  loudly".
+
+* 15. Summary
+
+The back end is *mostly assembly, not invention*: the store, fetch,
+unpack, profile and rollback layers exist (nelix); fork/execve/pipe/wait
+exist (nelisp); the IR can hold phase structure (ldb).  The genuinely new
+work is (a) ~5 small *pure-elisp/dlsym* OS primitives in nelisp
+(chdir, per-call env, copy/symlink/mkdtemp) — *zero Rust*, (b) one
+executor function + a recipe class in nelix, and (c) a staged ldb
+phase-capture extension.  Hermetic/reproducible builds remain Nix's job;
+this delivers *Nix-free, Lisp-specified, single-package source builds*,
+which is exactly the asked-for capability.
