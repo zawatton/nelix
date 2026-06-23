@@ -6,7 +6,8 @@
 ;;; Commentary:
 
 ;; Build-primitive vocabulary for *Lisp-native* build phases (design 31, the
-;; "phase as Elisp, not a shell string" refactor).
+;; "phase as Elisp, not a shell string" refactor).  Extended in the design-31
+;; phase-elisp follow-up with nelix-symlink and nelix-delete-directory.
 ;;
 ;; A native source-build recipe's :build-phases may use either form:
 ;;   (NAME . "shell command")  — legacy, run via `sh -c' (nelix-builder).
@@ -22,6 +23,21 @@
 ;; Bound by the executor during a phase eval (see nelix-builder--run-phase):
 ;;   `nelix-build--out' = $out (the store scratch dir); read via `(nelix-out)'.
 ;;   `nelix-build--dir' = the build directory (cwd).
+;;
+;; Primitives provided:
+;;   nelix-out              — return $out path
+;;   nelix-invoke           — run a subprocess with deterministic env
+;;   nelix-substitute*      — regex-replace file in place (pure Elisp)
+;;   nelix-with-directory   — macro: run body in a sub-directory
+;;   nelix-setenv           — set env var for subsequent nelix-invoke calls
+;;   nelix-mkdir-p          — create directory tree
+;;   nelix-install-file     — copy file into dir (creating dir)
+;;   nelix-copy-file        — copy file
+;;   nelix-copy-recursively — recursive directory copy
+;;   nelix-delete-file      — delete a single file if present
+;;   nelix-symlink          — create a symbolic link (ln -s analogue)
+;;   nelix-delete-directory — recursively delete a directory tree
+;;   nelix-rename           — rename/move a file
 ;;
 ;; Works on host Emacs and on the standalone NeLisp runtime (pure Elisp over
 ;; call-process + file ops; no Emacs-only buffer navigation).
@@ -155,6 +171,31 @@ slashes / shell metacharacters in patterns are never a problem."
   "Delete FILE if present."
   (let ((f (nelix-build--stringify file)))
     (when (file-exists-p f) (delete-file f))))
+
+;;;###autoload
+(defun nelix-symlink (target link)
+  "Create a symbolic link LINK pointing to TARGET.
+Prefers `make-symbolic-link' (host Emacs + NeLisp Phase 47+).
+Falls back to `ln -s' via `nelix-invoke' if `make-symbolic-link' is
+absent in the standalone runtime."
+  (let ((tgt (nelix-build--stringify target))
+        (lnk (nelix-build--stringify link)))
+    (if (fboundp 'make-symbolic-link)
+        (make-symbolic-link tgt lnk t)
+      (nelix-invoke "ln" "-s" tgt lnk))))
+
+;;;###autoload
+(defun nelix-delete-directory (dir)
+  "Recursively delete DIR if present.
+Uses `delete-directory' with RECURSIVE=t on host Emacs.
+Falls back to `rm -rf' via `nelix-invoke' if the recursive form is absent
+in the standalone runtime (NeLisp may lack the 2-arg `delete-directory')."
+  (let ((d (nelix-build--stringify dir)))
+    (when (file-exists-p d)
+      (condition-case nil
+          (delete-directory d t)
+        (wrong-number-of-arguments
+         (nelix-invoke "rm" "-rf" d))))))
 
 ;;;###autoload
 (defun nelix-rename (a b)
