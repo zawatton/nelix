@@ -133,8 +133,13 @@ They must be reached through the existing *dlsym extern-call bridge*
 already linked into the static binary, subject to a *≤6 GP-argument*
 budget (=nelisp-cc-runtime.el:2174=).  Every primitive we need fits that
 budget: =chdir(1)=, =symlink(2)=, =mkdtemp(1)=, =execve(3)=, =unshare(1)=,
-=chroot(1)=.  So all of §10 is *pure-elisp wiring over libc via dlsym* —
-zero Rust delta.  This is the load-bearing constraint of the whole design.
+=chroot(1)=.  So all of §10 is *pure-elisp, zero Rust delta* — the load-bearing
+constraint of the whole design.  *Verified 2026-06-23 (M0.1):* the cleanest
+route for path syscalls turned out to be not dlsym but the *existing reader
+builtins* =nelisp--syscall-path-int= / =nelisp--syscall-path= (the prelude's
+chmod/access/stat/unlink path); =chdir= / =rmdir= were wired through them
+with zero new code.  dlsym stays the fallback only for shapes those builtins
+miss (2-path =symlink=, buffer =getcwd=, custom-=envp= execve).  See §10.5.
 
 ** 4.2 Platform
 The NeLisp spawn path (fork/execve/pipe2/waitpid) is *unix-only*; the
@@ -314,6 +319,22 @@ through =nelisp-cc--dlsym-resolve= and calls it (≤6 GP args).  *No Rust.*
 ** 10.4 Tier 2 isolation (deferred, Linux-only, still no Rust)
 - dlsym =unshare(2)= / =chroot(2)= / =mount(2)= in the child before
   =execve=.  All ≤6 args.  Gated Linux; macOS path skips to Tier 1.
+
+** 10.5 Implementation status (live)
+- *M0.1 SHIPPED + standalone-verified* (2026-06-23, nelisp commit
+  =94cad639=): =nelisp-sys-chdir= / =nelisp-sys-rmdir= via
+  =nelisp--syscall-path-int=, =nelisp-sys-mkdtemp= via =make-directory= +
+  monotonic-counter retry.  Proven on =target/nelisp=: chdir 0/ENOENT,
+  rmdir 0/ENOENT/ENOTEMPTY, mkdtemp unique.  Host ERT 23/23.  Zero Rust.
+  Idiom corrected from "dlsym" to the existing path-syscall reader builtins
+  (§4.1).  Note: =current-time= / =random= / =emacs-pid= / getpid are all
+  *absent* on the standalone runtime — primitives must avoid them.
+- *M0.2 (next):* spawn-path =chdir= + custom per-call =envp= in the
+  fork/exec child (=nelisp-process--call-process-syscall=); =copy-file= /
+  =delete-directory= (recursive); and re-approach =symlink= (2-path) /
+  =getcwd= (buffer), which have no existing 1-shape builtin — needs either a
+  new path-syscall reader-builtin shape (check: addable in elisp/reader
+  without Rust?) or the dlsym bridge.
 
 * 11. ldb front-end work (audit 3 — capture Guix #:phases)
 
