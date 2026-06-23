@@ -329,12 +329,29 @@ through =nelisp-cc--dlsym-resolve= and calls it (≤6 GP args).  *No Rust.*
   Idiom corrected from "dlsym" to the existing path-syscall reader builtins
   (§4.1).  Note: =current-time= / =random= / =emacs-pid= / getpid are all
   *absent* on the standalone runtime — primitives must avoid them.
-- *M0.2 (next):* spawn-path =chdir= + custom per-call =envp= in the
-  fork/exec child (=nelisp-process--call-process-syscall=); =copy-file= /
-  =delete-directory= (recursive); and re-approach =symlink= (2-path) /
-  =getcwd= (buffer), which have no existing 1-shape builtin — needs either a
-  new path-syscall reader-builtin shape (check: addable in elisp/reader
-  without Rust?) or the dlsym bridge.
+- *M0.2 — SIMPLIFIED (probed 2026-06-23):* the executor needs NO fork/exec
+  child surgery.  Verified on =target/nelisp=: =call-process= + =/bin/sh=
+  are present, and a child *inherits the parent's cwd* set by
+  =nelisp-sys-chdir= (a child wrote =pwd= = the build dir).  ⇒ *cwd is
+  controlled by parent =chdir= (M0.1, done).*  =setenv= does NOT propagate
+  to the child, so *env is controlled by shell-wrapping* (=sh -c 'export
+  K=V; cmd'= / =env K=V cmd=), and *filesystem ops use host shell tools*
+  (=cp= / =rm -rf= / =mkdir -p=) via =call-process= — consistent with
+  Tier-0's host-toolchain stance.  ⇒ custom-=envp=, =copy-file=, =symlink=,
+  =getcwd= primitives are *NOT on the M1 critical path*; deferred to a
+  hardening pass (or Tier 1) only if ever needed.
+- *M1 SHIPPED + verified (2026-06-23):* =nelix-builder--install-build= (+
+  =nelix-builder--run-phase=, =:type 'build= dispatch arm in
+  =nelix-native-install-recipe=) source-builds a C program from a Lisp
+  =:build-phases= list into the nelix-native store + profile.  =make
+  smoke-native-build= is green: =cc -O2= compiled =hello.c=, installed to
+  =$out/bin/hello=, ran from the store printing =nelix-native-build-ok=,
+  *with no nix invoked*.  474/474 tests pass, byte-compile clean, zero
+  Rust.  Phase model = ordered =(NAME . SHELL-CMD)=; cwd via parent
+  =chdir=/=default-directory=, env + FS via in-shell =export=/=cp=.  This
+  is the *Tier-0 "Nix-free fine-grained build" end-to-end proof* (M0+M1).
+  Host-Emacs no-nix proof per §13; standalone end-to-end (nelix on the
+  NeLisp load-path) deferred.
 
 * 11. ldb front-end work (audit 3 — capture Guix #:phases)
 

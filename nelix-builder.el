@@ -509,6 +509,103 @@ cons cell.")
                   :fetch fetch-report)))
       (nelix-store--delete-directory-quietly build-path))))
 
+(defun nelix-builder--run-phase (phase-name cmd build-dir out-dir)
+  "Run build PHASE-NAME CMD string in BUILD-DIR with $out=OUT-DIR.
+Uses `default-directory' binding on host Emacs; calls
+`nelisp-sys-chdir' first on standalone NeLisp so the child inherits
+the cwd.  ENV is injected via shell-wrapping (sh -c \"export out=...\").
+Signals `nelix-error' on non-zero exit."
+  (let* ((safe-out (expand-file-name out-dir))
+         (safe-dir (expand-file-name build-dir))
+         ;; Shell wrapper: export $out and preserve PATH, then run the phase.
+         (wrapped (format "export out=%s; export PATH=%s; %s"
+                          (shell-quote-argument safe-out)
+                          (shell-quote-argument (or (getenv "PATH") "/usr/bin:/bin"))
+                          cmd))
+         exit stdout)
+    ;; On standalone NeLisp, default-directory is ignored by call-process.
+    ;; Call nelisp-sys-chdir to set the process cwd before spawning.
+    (when (and (nelix-compat--standalone-nelisp-p)
+               (fboundp 'nelisp-sys-chdir))
+      (nelisp-sys-chdir safe-dir))
+    (let ((default-directory (file-name-as-directory safe-dir)))
+      (if (fboundp 'call-process)
+          (let ((buf (generate-new-buffer " *nelix-build-phase*")))
+            (unwind-protect
+                (progn
+                  (setq exit (call-process "/bin/sh" nil buf nil "-c" wrapped))
+                  (setq stdout (with-current-buffer buf (buffer-string))))
+              (when (buffer-live-p buf)
+                (kill-buffer buf))))
+        ;; Fallback for environments without call-process (should not occur).
+        (let ((res (nelix-compat-call-process "/bin/sh"
+                                              (list "-c" wrapped))))
+          (setq exit (plist-get res :exit))
+          (setq stdout (plist-get res :stdout)))))
+    (unless (eq exit 0)
+      (signal 'nelix-error
+              (list (format "nelix-builder: build phase %S failed (exit %S):\n%s"
+                            phase-name exit stdout))))))
+
+(defun nelix-builder--install-build (recipe system _source install profile-name)
+  "Source-build RECIPE for SYSTEM and deposit into store; update PROFILE-NAME.
+
+_SOURCE is accepted for interface parity but unused for (:type inline)
+recipes where the phases generate all source files in the build
+directory (Tier-0 MVP, no archive needed).
+INSTALL must include :build-phases, an alist ((NAME . SHELL-CMD)...).
+
+Each phase runs via sh(1) in the build dir with $out set to the
+store temp dir.  Any non-zero phase exit signals `nelix-error'."
+  (let* (;; Use a stable synthetic hash derived from phase bodies so the store
+         ;; entry is content-addressed in a repeatable way within a session.
+         ;; (Full reproducibility is Tier-1+; this satisfies the store API.)
+         (phases (plist-get install :build-phases))
+         (phase-str (format "%S" phases))
+         (fake-hash (concat "sha256-build-"
+                            (substring (md5 phase-str) 0 32)))
+         (fetch-report (list :ok t :sha256 fake-hash))
+         (entry (nelix-builder--store-entry
+                 recipe system
+                 (list :type 'inline)
+                 install
+                 fetch-report))
+         (store-path (nelix-store-entry-path entry))
+         (out-dir (nelix-store--entry-temp-dir entry))
+         ;; Build dir: a separate scratch directory for compilation.
+         (build-dir (make-temp-file "nelix-build-" t)))
+    (unwind-protect
+        (progn
+          ;; Run each (NAME . SHELL-CMD) phase in build-dir with $out=out-dir.
+          (dolist (phase phases)
+            (let ((phase-name (car phase))
+                  (cmd (cdr phase)))
+              (nelix-builder--run-phase phase-name cmd build-dir out-dir)))
+          ;; Mark declared binaries executable.
+          (nelix-builder--chmod-runtime-bins out-dir install)
+          ;; Commit the populated $out into the store.
+          (nelix-store-write-entry-at entry out-dir)
+          (nelix-store--commit-entry-dir out-dir store-path)
+          (setq out-dir nil)
+          (let ((profile
+                 (nelix-builder--create-profile-generation
+                  profile-name
+                  system
+                  (nelix-builder--profile-entry
+                   entry store-path install))))
+            (list :status 'ok
+                  :backend 'nelix-native
+                  :name (plist-get recipe :name)
+                  :version (plist-get recipe :version)
+                  :system system
+                  :store-path store-path
+                  :profile profile
+                  :fetch fetch-report)))
+      (nelix-store--delete-directory-quietly out-dir)
+      (when (and (fboundp 'file-directory-p)
+                 (file-directory-p build-dir))
+        (delete-directory build-dir t)))))
+
 (defun nelix-builder--install-unpack (recipe system source install profile-name)
   "Install RECIPE by unpacking SOURCE into the native store."
   (nelix-builder--finish-install recipe system source install profile-name))
@@ -738,6 +835,9 @@ lock set before PACKAGE is installed."
               ('script-shim
                (nelix-builder--install-script-shim
                 recipe system* install profile-name*))
+              ('build
+               (nelix-builder--install-build
+                recipe system* source install profile-name*))
               (_
                (signal 'nelix-error
                        (list (format "nelix-native-install-recipe: unsupported install type %S"
