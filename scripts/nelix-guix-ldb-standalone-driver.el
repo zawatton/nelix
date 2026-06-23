@@ -123,7 +123,7 @@
         (concat nelix-guix-driver--xdg-state-home "/nelix/profiles")))
 
 (nelix-guix-driver-log "nelix-guix-standalone-driver: loading nelix modules...")
-(dolist (mod '("nelix-compat.el" "nelix-store.el" "nelix-registry.el"
+(dolist (mod '("nelix-compat.el" "nelix-build.el" "nelix-store.el" "nelix-registry.el"
                "nelix-fetch.el" "nelix-backend.el" "nelix-builder.el"))
   (let ((p (concat nelix-guix-driver--nelix-root mod)))
     (nelix-guix-driver-log "  loading %s" mod)

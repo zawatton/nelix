@@ -97,7 +97,10 @@ slashes / shell metacharacters in patterns are never a problem."
                       (cadr clause)       ; (PATTERN REPLACEMENT)
                     (cdr clause)))))      ; (PATTERN . REPLACEMENT)
         (setq text (replace-regexp-in-string pat rep text t t))))
-    (with-temp-file path (insert text))
+    ;; `write-region' with a STRING arg writes TEXT to PATH without a temp
+    ;; buffer — works on standalone NeLisp (which lacks `current-buffer' that
+    ;; `with-temp-file' calls internally) and identically on host Emacs.
+    (write-region text nil path)
     path))
 
 (defmacro nelix-with-directory (dir &rest body)
