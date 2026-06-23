@@ -417,6 +417,15 @@ through =nelisp-cc--dlsym-resolve= and calls it (≤6 GP args).  *No Rust.*
   99/99.  Legacy shell-string phases still run (dual-dispatch).  Commits:
   nelix =c62acb1=, ldb =559cd04=.  Closes the "phases are shell-ified, not
   elisp-ified" gap.
+- *OP SUBSET BROADENED (2026-06-23):* with phases as Elisp, control flow maps
+  ~1:1 — ldb now translates =when=/=unless=/=if=/=let=/=let*=/=for-each=
+  (→=mapc=)/=map=(→=mapcar=)/=lambda=, a predicate/value subset
+  (=file-exists?=/=string=?=/comparisons/=not=/=and=/=or=/=member=/=getenv= …),
+  and =symlink=/=delete-file-recursively= (new =nelix-symlink= /
+  =nelix-delete-directory= primitives).  =(assoc-ref inputs …)= stays a *loud
+  reject* — a *semantic* gap (nelix has no input store paths), not a
+  translation gap; =wrap-program= and unlisted forms also reject loudly.
+  ldb ERT 127/127.  Commits: ldb =8dd683d=, nelix =86b56f1=.
 
 * 11. ldb front-end work (audit 3 — capture Guix #:phases)
 
