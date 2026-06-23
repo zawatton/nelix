@@ -161,7 +161,7 @@ SMOKE_BUILD_PAIRS = \
   examples/stdenv-hello.el:gnu-hello \
   examples/python-black.el:black
 
-.PHONY: all check verify-local nelix-rc-gate nelix-no-nix-container-gate nelix-no-nix-rc-container-gate nelix-nelisp-container-gate release-scope-audit release-scope-status release-scope-stage release-scope-stage-a release-scope-stage-b release-scope-stage-c release-scope-stage-d publication-local-gate publication-url-check publication-preflight publication-public-smoke deb-orig deb-source deb-source-lint deb-source-gate deb-build verify-deb-contents deb-lint deb-local-gate install-built-deb deb-release-gate deb-full-gate fix-debian-ownership apt-repo verify-apt-repo apt-repo-gate apt-sign-repo verify-signed-apt-repo apt-signed-repo-gate apt-publish-static verify-apt-public-tree apt-publication-preflight apt-http-smoke apt-http-gate apt-public-url-smoke fedora-source fedora-source-verify fedora-source-gate fedora-rpm-build fedora-rpm-lint fedora-repo fedora-publish-static verify-fedora-public-tree fedora-publication-preflight fedora-dnf-smoke fedora-local-gate fedora-container-gate fedora-public-url-smoke verify-user-manifest-dsl verify-user-runtime-gate nelix-native-user-gate verify-user-source-gate verify-source-nelisp-transaction-gate verify-source-operational-gate verify-installed-user-manifest-runtime verify-installed-operational-gate verify-installed-debian verify-installed-cli-gate verify-user-environment verify-user-init-migration verify-user-init-migration-load autopkgtest-debian check-whitespace nix-check test compile compile-tests check-declare install install-elisp install-doc install-bin uninstall clean deb-clean distclean lint help smoke-render smoke-pairs-check smoke-eval-pairs-check smoke-build-pairs-check smoke-eval smoke-nelisp smoke-nelix-nelisp smoke-nelix-cli-nelisp smoke-nelix-manifest-dsl-schema smoke-nelix-lock-schema smoke-nelix-lock-plan-apply smoke-nelix-lock-plan-apply-nelisp smoke-nelix-lock-plan-apply-nelisp-direct smoke-nelix-native-cli smoke-nelix-aot-cache-cli smoke-nelix-aot-engine-nelisp smoke-nelix-aot-cache-fast-lane smoke-nelix-aot-artifact-nelisp smoke-nelix-aot-native-cli-proof smoke-nelix-aot-native-artifact-host smoke-nelix-cli-image-build smoke-nelix-cli-image smoke-nelisp-capabilities smoke-nelisp-suite-readiness smoke-nelisp-suite-loadability smoke-nelisp-suite smoke-nelisp-suite-image-build smoke-nelisp-suite-image smoke-nelisp-local smoke-native-build smoke-native-build-make smoke-guix-to-native smoke-guix-to-native-rich smoke-native-build-standalone smoke-clean
+.PHONY: all check verify-local nelix-rc-gate nelix-no-nix-container-gate nelix-no-nix-rc-container-gate nelix-nelisp-container-gate release-scope-audit release-scope-status release-scope-stage release-scope-stage-a release-scope-stage-b release-scope-stage-c release-scope-stage-d publication-local-gate publication-url-check publication-preflight publication-public-smoke deb-orig deb-source deb-source-lint deb-source-gate deb-build verify-deb-contents deb-lint deb-local-gate install-built-deb deb-release-gate deb-full-gate fix-debian-ownership apt-repo verify-apt-repo apt-repo-gate apt-sign-repo verify-signed-apt-repo apt-signed-repo-gate apt-publish-static verify-apt-public-tree apt-publication-preflight apt-http-smoke apt-http-gate apt-public-url-smoke fedora-source fedora-source-verify fedora-source-gate fedora-rpm-build fedora-rpm-lint fedora-repo fedora-publish-static verify-fedora-public-tree fedora-publication-preflight fedora-dnf-smoke fedora-local-gate fedora-container-gate fedora-public-url-smoke verify-user-manifest-dsl verify-user-runtime-gate nelix-native-user-gate verify-user-source-gate verify-source-nelisp-transaction-gate verify-source-operational-gate verify-installed-user-manifest-runtime verify-installed-operational-gate verify-installed-debian verify-installed-cli-gate verify-user-environment verify-user-init-migration verify-user-init-migration-load autopkgtest-debian check-whitespace nix-check test compile compile-tests check-declare install install-elisp install-doc install-bin uninstall clean deb-clean distclean lint help smoke-render smoke-pairs-check smoke-eval-pairs-check smoke-build-pairs-check smoke-eval smoke-nelisp smoke-nelix-nelisp smoke-nelix-cli-nelisp smoke-nelix-manifest-dsl-schema smoke-nelix-lock-schema smoke-nelix-lock-plan-apply smoke-nelix-lock-plan-apply-nelisp smoke-nelix-lock-plan-apply-nelisp-direct smoke-nelix-native-cli smoke-nelix-aot-cache-cli smoke-nelix-aot-engine-nelisp smoke-nelix-aot-cache-fast-lane smoke-nelix-aot-artifact-nelisp smoke-nelix-aot-native-cli-proof smoke-nelix-aot-native-artifact-host smoke-nelix-cli-image-build smoke-nelix-cli-image smoke-nelisp-capabilities smoke-nelisp-suite-readiness smoke-nelisp-suite-loadability smoke-nelisp-suite smoke-nelisp-suite-image-build smoke-nelisp-suite-image smoke-nelisp-local smoke-native-build smoke-native-build-make smoke-guix-to-native smoke-guix-to-native-rich smoke-native-build-standalone smoke-guix-to-native-standalone smoke-clean
 
 all: check
 
@@ -2031,3 +2031,40 @@ smoke-native-build-standalone:
 	  test "$$out" = "nelix-native-build-ok" || { echo "error: smoke-native-build-standalone: output was '$$out'"; exit 1; }; \
 	  test ! -s "$$tmp/nixlog" || { echo "error: smoke-native-build-standalone: nix WAS invoked"; cat "$$tmp/nixlog"; exit 1; }; \
 	  echo "smoke-native-build-standalone: SUCCESS — C built+ran on the standalone NeLisp binary, NO Emacs, NO nix"
+
+smoke-guix-to-native-standalone:
+	@test -x "$(NELISP_BIN)" || { echo "smoke-guix-to-native-standalone: SKIP — standalone NeLisp binary not at $(NELISP_BIN) (build it: make -C ../nelisp standalone-reader)"; exit 0; }
+	@command -v cc >/dev/null 2>&1 || { echo "error: smoke-guix-to-native-standalone: cc not found"; exit 1; }
+	@test -f "$(LDB_REPO)/ldb-guix-importer.el" || { \
+	  echo "error: smoke-guix-to-native-standalone: lisp-dialect-bridge not at $(LDB_REPO) (set LDB_REPO)"; \
+	  exit 1; \
+	}
+	@tmp=$$(mktemp -d); \
+	  mkdir -p "$$tmp/h" "$$tmp/d" "$$tmp/s" "$$tmp/bin"; \
+	  printf '#!/bin/sh\necho INVOKED >> %s/nixlog\nexit 127\n' "$$tmp" > "$$tmp/bin/nix"; \
+	  chmod +x "$$tmp/bin/nix"; : > "$$tmp/nixlog"; \
+	  cleanup() { rm -rf "$$tmp"; }; trap cleanup EXIT HUP INT TERM; \
+	  echo "smoke-guix-to-native-standalone: Guix recipe -> ldb -> nelix executor ON standalone NeLisp binary (no Emacs, no nix)..."; \
+	  driver_tmp="$$tmp/nelix-guix-ldb-standalone-driver.el"; \
+	  cp "$(CURDIR)/scripts/nelix-guix-ldb-standalone-driver.el" "$$driver_tmp"; \
+	  env -i PATH="$$tmp/bin:/usr/bin:/bin" HOME="$$tmp/h" XDG_DATA_HOME="$$tmp/d" XDG_STATE_HOME="$$tmp/s" \
+	    "$(NELISP_BIN)" --load "$$driver_tmp" \
+	    2>&1 | grep -E "SUCCESS|FATAL|error" || true; \
+	  store_bin=$$(find "$$tmp/d/nelix/store" -name hello-guix -type f 2>/dev/null | head -1); \
+	  test -n "$$store_bin" || { \
+	    echo "error: smoke-guix-to-native-standalone: hello-guix binary not found in $$tmp/d/nelix/store"; \
+	    exit 1; \
+	  }; \
+	  echo "smoke-guix-to-native-standalone: binary found in store: $$store_bin"; \
+	  env -i PATH=/usr/bin:/bin "$$store_bin"; rc=$$?; \
+	  test "$$rc" -eq 42 || { \
+	    echo "error: smoke-guix-to-native-standalone: binary exit was $$rc, expected 42"; \
+	    exit 1; \
+	  }; \
+	  test ! -s "$$tmp/nixlog" || { \
+	    echo "error: smoke-guix-to-native-standalone: nix WAS invoked (poison log not empty)"; \
+	    cat "$$tmp/nixlog"; \
+	    exit 1; \
+	  }; \
+	  echo "smoke-guix-to-native-standalone: binary exit $$rc (expected 42)"; \
+	  echo "smoke-guix-to-native-standalone: SUCCESS — Guix recipe imported by ldb AND built by nelix executor on standalone NeLisp binary, NO Emacs, NO nix"
