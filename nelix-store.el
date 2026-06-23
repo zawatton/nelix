@@ -219,11 +219,17 @@ store directory before committing it to the final store path."
   "Create and return a temporary store build directory for ENTRY."
   (let ((root (nelix-store-root)))
     (nelix-compat-make-directory root t)
-    (make-temp-file
-     (expand-file-name
-      (concat ".tmp-" (nelix-store--entry-dir-name entry) "-")
-      root)
-     t)))
+    (let ((prefix (expand-file-name
+                   (concat ".tmp-" (nelix-store--entry-dir-name entry) "-")
+                   root)))
+      ;; Standalone NeLisp's `make-temp-file' prepends temporary-file-directory
+      ;; (/tmp) even to an ABSOLUTE prefix, which lands the build temp dir on a
+      ;; different filesystem than the store and makes the commit `rename-file'
+      ;; fail EXDEV (-18).  `nelisp-sys-mkdtemp' (M0.1) honours the absolute
+      ;; prefix, so the temp dir is a same-fs sibling of the final store path.
+      (if (fboundp 'nelisp-sys-mkdtemp)
+          (nelisp-sys-mkdtemp prefix)
+        (make-temp-file prefix t)))))
 
 (defun nelix-store--commit-entry-dir (temp-dir store-path)
   "Atomically replace STORE-PATH with completed TEMP-DIR where possible."

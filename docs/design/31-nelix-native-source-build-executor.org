@@ -384,6 +384,22 @@ through =nelisp-cc--dlsym-resolve= and calls it (≤6 GP args).  *No Rust.*
   proof, not a string match.  The end-to-end caught two real bugs the unit
   tests missed (=$out= single-quoting freezing expansion; a =#=-comment
   injected into a shell arg).  M5 (Tier-2 isolation) remains out of scope.
+- *STANDALONE EXECUTOR SHIPPED (2026-06-23):* the executor now runs on the
+  *pure standalone NeLisp binary* (=../nelisp/target/nelisp=) with *no Emacs
+  and no Nix*.  =make smoke-native-build-standalone= builds =hello-native=
+  and runs it (=nelix-native-build-ok=) under =env -i= with nix *poisoned*
+  (never invoked).  Gated pure-elisp adaptations (host Emacs unaffected):
+  =nelix-registry= reads recipe forms via =read-from-string= when =goto-char=
+  is absent; =nelix-builder= captures =call-process= output via
+  =with-temp-buffer=+=t= and a non-=md5= hash fallback; =nelix-store--entry-
+  temp-dir= uses =nelisp-sys-mkdtemp= (M0.1) so the build temp dir is a
+  *same-fs sibling* of the store (standalone =make-temp-file= lands it on
+  /tmp → EXDEV on the commit rename — a real cross-device bug caught by an
+  *independent* standalone run, not by the agent's own check).  Plus
+  =scripts/nelix-standalone-{shim,driver}.el=.  This closes the M1
+  'standalone end-to-end' item deferred in §13.  (Running ldb's Guix import
+  itself on the standalone binary is a further step; the native executor +
+  hand-written recipe is proven host-Emacs-free and Nix-free.)
 
 * 11. ldb front-end work (audit 3 — capture Guix #:phases)
 

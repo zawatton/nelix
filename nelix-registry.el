@@ -232,18 +232,65 @@ package name."
   "Read Elisp data forms from FILE without evaluating them."
   (let ((forms nil)
         (read-eval nil))
-    (with-temp-buffer
-      (insert-file-contents (expand-file-name file))
-      (goto-char (point-min))
-      (condition-case err
-          (while t
-            (push (read (current-buffer)) forms))
-        (end-of-file nil)
-        (invalid-read-syntax
-         (signal 'nelix-error
-                 (list (format "nelix-registry: invalid recipe syntax in %s: %s"
-                               file
-                               (error-message-string err)))))))
+    (if (not (fboundp 'goto-char))
+        ;; Standalone NeLisp: buffer-nav primitives absent; use
+        ;; read-from-string loop over the file contents instead.
+        (let* ((contents (with-temp-buffer
+                           (insert-file-contents (expand-file-name file))
+                           (buffer-string)))
+               (pos 0)
+               (len (length contents)))
+          (condition-case err
+              (while (< pos len)
+                ;; Skip leading whitespace manually.
+                (while (and (< pos len)
+                            (let ((ch (substring contents pos (1+ pos))))
+                              (or (string-equal ch " ")
+                                  (string-equal ch "\t")
+                                  (string-equal ch "\n")
+                                  (string-equal ch "\r"))))
+                  (setq pos (1+ pos)))
+                ;; Skip comment lines (`;' to end of line).
+                (while (and (< pos len)
+                            (string-equal (substring contents pos (1+ pos)) ";"))
+                  (while (and (< pos len)
+                              (not (string-equal (substring contents pos (1+ pos)) "\n")))
+                    (setq pos (1+ pos)))
+                  ;; Consume the newline.
+                  (when (< pos len)
+                    (setq pos (1+ pos)))
+                  ;; Skip any further whitespace after the comment.
+                  (while (and (< pos len)
+                              (let ((ch (substring contents pos (1+ pos))))
+                                (or (string-equal ch " ")
+                                    (string-equal ch "\t")
+                                    (string-equal ch "\n")
+                                    (string-equal ch "\r"))))
+                    (setq pos (1+ pos))))
+                (when (< pos len)
+                  (let* ((result (read-from-string contents pos))
+                         (form (car result))
+                         (new-pos (cdr result)))
+                    (push form forms)
+                    (setq pos new-pos))))
+            (end-of-file nil)
+            (invalid-read-syntax
+             (signal 'nelix-error
+                     (list (format "nelix-registry: invalid recipe syntax in %s: %s"
+                                   file
+                                   (error-message-string err)))))))
+      (with-temp-buffer
+        (insert-file-contents (expand-file-name file))
+        (goto-char (point-min))
+        (condition-case err
+            (while t
+              (push (read (current-buffer)) forms))
+          (end-of-file nil)
+          (invalid-read-syntax
+           (signal 'nelix-error
+                   (list (format "nelix-registry: invalid recipe syntax in %s: %s"
+                                 file
+                                 (error-message-string err))))))))
     (nreverse forms)))
 
 (defun nelix-registry--quoted-form-p (form)

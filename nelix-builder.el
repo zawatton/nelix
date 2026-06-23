@@ -55,11 +55,15 @@
             (list (format "nelix-builder: required program not found: %s"
                           program))))
   (let ((res (if (fboundp 'call-process)
+                 ;; Use `t' as BUFFER arg so output goes to current buffer
+                 ;; without requiring `current-buffer' (missing in standalone
+                 ;; NeLisp).  `with-temp-buffer' establishes the current buffer
+                 ;; on both Emacs and NeLisp standalone.
                  (with-temp-buffer
                    (let ((exit (apply #'call-process
                                       program
                                       nil
-                                      (current-buffer)
+                                      t
                                       nil
                                       args)))
                      (list :exit exit
@@ -642,13 +646,14 @@ Signals `nelix-error' on non-zero exit."
       (nelisp-sys-chdir safe-dir))
     (let ((default-directory (file-name-as-directory safe-dir)))
       (if (fboundp 'call-process)
-          (let ((buf (generate-new-buffer " *nelix-build-phase*")))
-            (unwind-protect
-                (progn
-                  (setq exit (call-process "/bin/sh" nil buf nil "-c" wrapped))
-                  (setq stdout (with-current-buffer buf (buffer-string))))
-              (when (buffer-live-p buf)
-                (kill-buffer buf))))
+          ;; Use `with-temp-buffer' + `t' instead of `generate-new-buffer' +
+          ;; named buffer so this path works on standalone NeLisp which lacks
+          ;; `current-buffer' / `set-buffer' but does have `with-temp-buffer',
+          ;; `call-process nil t nil', and `buffer-string'.  The pattern is
+          ;; identical on host Emacs.
+          (with-temp-buffer
+            (setq exit (call-process "/bin/sh" nil t nil "-c" wrapped))
+            (setq stdout (buffer-string)))
         ;; Fallback for environments without call-process (should not occur).
         (let ((res (nelix-compat-call-process "/bin/sh"
                                               (list "-c" wrapped))))
@@ -689,7 +694,30 @@ SOURCE_DATE_EPOCH, TZ, LC_ALL, ulimit -t) is applied by
          ;; store API.)
          (phase-str (format "%S" phases))
          (fake-hash (concat "sha256-build-"
-                            (substring (md5 phase-str) 0 32)))
+                            ;; `md5' is absent on standalone NeLisp; fall back
+                            ;; to a simple length+charcode mix that is stable
+                            ;; within a session.  This is not a real hash but
+                            ;; satisfies the store-entry uniqueness contract.
+                            (if (fboundp 'md5)
+                                (substring (md5 phase-str) 0 32)
+                              ;; Standalone NeLisp: no md5, no %x format.
+                              ;; Build a 32-char decimal+padding fake hash.
+                              (let* ((n (length phase-str))
+                                     (acc 0)
+                                     (i 0))
+                                (while (< i n)
+                                  (setq acc (+ (* acc 31)
+                                               (aref phase-str i))
+                                        i (1+ i)))
+                                ;; acc may be negative on overflow; take abs.
+                                (let* ((v (if (< acc 0) (- acc) acc))
+                                       (s (format "%d" v)))
+                                  ;; Pad to 32 chars with leading zeros.
+                                  (while (< (length s) 32)
+                                    (setq s (concat "0" s)))
+                                  (if (> (length s) 32)
+                                      (substring s 0 32)
+                                    s))))))
          (fetch-report (list :ok t :sha256 fake-hash))
          (entry (nelix-builder--store-entry
                  recipe system
