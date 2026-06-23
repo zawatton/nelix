@@ -426,6 +426,23 @@ through =nelisp-cc--dlsym-resolve= and calls it (≤6 GP args).  *No Rust.*
   reject* — a *semantic* gap (nelix has no input store paths), not a
   translation gap; =wrap-program= and unlisted forms also reject loudly.
   ldb ERT 127/127.  Commits: ldb =8dd683d=, nelix =86b56f1=.
+- *DEPENDENCY GRAPH + =(assoc-ref inputs)= SHIPPED (2026-06-23):* a recipe's
+  inputs build as a dependency graph and their store paths are injected into
+  the dependent's phases.  Reuses the existing recursive build
+  (=nelix-builder--install-dependencies=: cycle detection via install-stack,
+  memoization via profile-has-entry-p, bottom-up topological order).  NEW:
+  =nelix-build--inputs= (dynamic NAME→store-path alist) + =(nelix-input NAME)=
+  primitive; =nelix-native-install-recipe= threads built deps' store paths
+  (from the :dependencies install reports) into the phase eval.  ldb emits
+  Guix =inputs=/=native-inputs= → native =:dependencies= and translates
+  =(assoc-ref inputs NAME)= → =(nelix-input NAME)= (was a loud reject).  =make
+  smoke-deps-inputs=: =useapp= depends on =libgreet= → libgreet builds first
+  (gen 1), its store path is injected, useapp reads it via =(nelix-input
+  "libgreet")= and the binary exits 42 — dependency graph + store-path
+  injection proven end-to-end, no nix.  ldb ERT 130/130.  Commits: ldb
+  =541e5dd=, nelix =519f54c=.  Limit: input recipes must exist in the registry
+  (no auto-fetch of the nixpkgs/Guix input universe — that long tail stays a
+  community/registry concern).
 
 * 11. ldb front-end work (audit 3 — capture Guix #:phases)
 
