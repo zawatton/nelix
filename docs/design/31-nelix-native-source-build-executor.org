@@ -400,6 +400,23 @@ through =nelisp-cc--dlsym-resolve= and calls it (≤6 GP args).  *No Rust.*
   'standalone end-to-end' item deferred in §13.  (Running ldb's Guix import
   itself on the standalone binary is a further step; the native executor +
   hand-written recipe is proven host-Emacs-free and Nix-free.)
+- *PHASE-ELISP REFACTOR SHIPPED (2026-06-23):* build phases are now
+  *Lisp-native* — the executor =eval=s Elisp forms, not just shell strings.
+  =nelix-build.el= adds the primitive vocabulary (=nelix-invoke=,
+  =nelix-substitute*= [pure-Elisp regex, no sed], =nelix-with-directory=,
+  =nelix-install-file=, =nelix-out= = $out, =nelix-copy[-recursively]=,
+  =nelix-mkdir-p=, ...); =nelix-builder--run-phase= dual-dispatches — a phase
+  whose cmd is a string runs via =sh -c= (legacy), one that is a FORM is
+  =eval='d with =(nelix-out)= + cwd bound.  ldb's importer now *emits Elisp
+  forms* (=ldb--guix-{expr,stmt,phase-body,proc}-to-elisp=): a Guix phase
+  becomes e.g. =(progn (nelix-substitute* "x" '("a" . "b")) (nelix-invoke
+  "cc" …))=.  ⇒ the whole Guix→ldb→executor orchestration is Elisp *data*;
+  M4's shell-quoting fragilities (sed delimiter, $out single-quote) are
+  *structurally gone*.  =make smoke-native-build-elisp= (a fully Lisp-native
+  recipe) + host =smoke-guix-to-native[-rich]= green (exit 42); ldb ERT
+  99/99.  Legacy shell-string phases still run (dual-dispatch).  Commits:
+  nelix =c62acb1=, ldb =559cd04=.  Closes the "phases are shell-ified, not
+  elisp-ified" gap.
 
 * 11. ldb front-end work (audit 3 — capture Guix #:phases)
 
