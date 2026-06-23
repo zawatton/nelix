@@ -36,6 +36,14 @@
 Bound in `nelix-native-install-recipe' from the dependency reports and
 forwarded through `nelix-builder--install-build' into each phase eval.")
 
+(defvar nelix-builder-hermeticity nil
+  "Hermeticity tier for source builds.
+nil / `tier0 / `tier1 run build phases in-process (the default, cross-
+platform path).  `tier2 runs the whole phase sequence inside a Linux
+namespace sandbox via the optional `nelix-sandbox' module (design 32),
+which is required lazily only then.  Bound dynamically by callers opting
+into Tier 2; the default in-process path and its load cost are unchanged.")
+
 (defun nelix-builder--system-entry (recipe system)
   "Return RECIPE's system entry for SYSTEM."
   (let (found)
@@ -716,6 +724,30 @@ Signals `nelix-error' on non-zero exit."
               (list (format "nelix-builder: build phase %S failed (exit %S):\n%s"
                             phase-name exit stdout))))))
 
+(declare-function nelix-sandbox-run "nelix-sandbox" (spec &optional backend))
+
+(defun nelix-builder--run-phases-sandboxed (phases build-dir out-dir phase-inputs)
+  "Run PHASES inside a Tier 2 namespace sandbox (design 32).
+Lazily requires the optional `nelix-sandbox' module and delegates to
+`nelix-sandbox-run', which builds a SPEC, launches a builder child inside
+the sandbox (read-only input closure, writable $out, no network), and runs
+the same phases there.  Signals `nelix-error' on build failure or when the
+sandbox is unavailable (the latter carries a Tier-1 fallback hint)."
+  (require 'nelix-sandbox)
+  (let ((result (nelix-sandbox-run
+                 (list :phases phases
+                       :inputs phase-inputs
+                       :out out-dir
+                       :build build-dir
+                       :net nil))))
+    (unless (eq (plist-get result :status) 'ok)
+      (signal 'nelix-error
+              (list (format
+                     "nelix-builder: sandboxed (tier2) build failed (code %S): %s"
+                     (plist-get result :code)
+                     (plist-get result :log)))))
+    result))
+
 (defun nelix-builder--install-build (recipe system _source install profile-name
                                      &optional phase-inputs)
   "Source-build RECIPE for SYSTEM and deposit into store; update PROFILE-NAME.
@@ -788,10 +820,15 @@ SOURCE_DATE_EPOCH, TZ, LC_ALL, ulimit -t) is applied by
     (unwind-protect
         (progn
           ;; Run each (NAME . SHELL-CMD) phase in build-dir with $out=out-dir.
-          (dolist (phase phases)
-            (let ((phase-name (car phase))
-                  (cmd (cdr phase)))
-              (nelix-builder--run-phase phase-name cmd build-dir out-dir phase-inputs)))
+          (if (eq nelix-builder-hermeticity 'tier2)
+              ;; Tier 2 (design 32): run the whole phase sequence inside a
+              ;; namespace sandbox (read-only input closure, no network).
+              (nelix-builder--run-phases-sandboxed
+               phases build-dir out-dir phase-inputs)
+            (dolist (phase phases)
+              (let ((phase-name (car phase))
+                    (cmd (cdr phase)))
+                (nelix-builder--run-phase phase-name cmd build-dir out-dir phase-inputs))))
           ;; Mark declared binaries executable.
           (nelix-builder--chmod-runtime-bins out-dir install)
           ;; Commit the populated $out into the store.

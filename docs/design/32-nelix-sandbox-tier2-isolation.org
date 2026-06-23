@@ -258,6 +258,25 @@ Acceptance for T0 mirrors nelix's =smoke-native-build-standalone= (31
 §10.5) but adds the *negative* assertion: a phase that opens a socket
 fails, proving the network namespace is real.
 
+** Implementation status (live)
+- *T0 SHIPPED + verified (2026-06-24).*  =nelix-sandbox.el= (optional
+  module, lazily =require='d only for =:hermeticity 'tier2=), the
+  backend-neutral =nelix-sandbox-run= contract, the bwrap backend
+  (=nelix-sandbox--bwrap-argv= / =--run-bwrap=), the builder child
+  (=scripts/nelix-sandbox-builder.el=), and the =nelix-builder-hermeticity=
+  ='tier2 routing in =nelix-builder--install-build= are in place.  =make
+  smoke-sandbox-bwrap= is green (3/3, non-flaky): =hello-native= builds
+  inside a bwrap namespace sandbox and runs from the store
+  (=nelix-native-build-ok=), and the negative assertion holds — a =curl=
+  phase FAILS under tier2, with a host-curl control confirming the host
+  has network, proving =--unshare-net= is real.  No nix, zero Rust; the
+  design-31 standalone smokes (native-build / deps-inputs) still pass (no
+  regression).  Two standalone-runtime gotchas were found and worked
+  around in pure Elisp: (a) loading the module set in a tight loop
+  SIGSEGVs — a =princ= between loads avoids it; (b) the standalone binary
+  always exits 0 — success is reported via a disk status-file the host
+  reads back, not the exit code.
+
 * 8. Integration with nelix
 
 - *Optional module registration.*  =nelix-sandbox.el= is added to nelix's
