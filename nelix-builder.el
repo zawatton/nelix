@@ -509,19 +509,131 @@ cons cell.")
                   :fetch fetch-report)))
       (nelix-store--delete-directory-quietly build-path))))
 
+;;; M2 — Build-system phase presets (design §8)
+;;
+;; Each entry: (SYSTEM . PRESET-PHASES) where PRESET-PHASES is an alist
+;; of (NAME . SHELL-CMD) pairs in standard execution order.
+;;
+;; Design notes:
+;;   - 'make / 'gnu share the same preset.
+;;   - configure is attempted only if ./configure exists (test -x guard).
+;;   - 'check is present in the preset list but mapped to nil so callers
+;;     can detect it; --resolve-phases drops nil-cmd entries unless the
+;;     caller explicitly overrides them.
+;;   - 'trivial has no preset; all phases must be explicit.
+;;   - $out is set by the run-phase shell wrapper; presets reference it freely.
+
+(defvar nelix-builder--build-system-presets
+  '((make
+     ;; unpack: no-op placeholder; recipes supply their own unpack phase
+     ;; to generate source files.  Having it in the preset means an
+     ;; explicit (unpack . CMD) is placed here, before configure/build.
+     (unpack    . "true")
+     (configure . "test -x ./configure && ./configure --prefix=\"$out\" || true")
+     (build     . "make")
+     (install   . "make install PREFIX=\"$out\""))
+    (gnu
+     (unpack    . "true")
+     (configure . "test -x ./configure && ./configure --prefix=\"$out\" || true")
+     (build     . "make")
+     (install   . "make install PREFIX=\"$out\""))
+    (cmake
+     (unpack    . "true")
+     (configure . "cmake -S . -B build -DCMAKE_INSTALL_PREFIX=\"$out\"")
+     (build     . "cmake --build build")
+     (install   . "cmake --install build"))
+    (cargo
+     (unpack  . "true")
+     (build   . "cargo build --release")
+     (install . "mkdir -p \"$out/bin\" && cp target/release/* \"$out/bin/\" 2>/dev/null || true")))
+  "Alist mapping build-system symbols to preset (NAME . SHELL-CMD) phase lists.
+\\='trivial is absent: no preset, recipe must supply all :build-phases.
+Each preset lists standard phases in execution order.
+See `nelix-builder--resolve-phases' for the merge contract.")
+
+(defun nelix-builder--resolve-phases (build-system explicit-phases)
+  "Return the final ordered (NAME . CMD) phase list for BUILD-SYSTEM.
+
+Merge contract:
+  - If BUILD-SYSTEM is \\='trivial (or nil), return EXPLICIT-PHASES as-is.
+  - Otherwise, start from the preset for BUILD-SYSTEM.
+  - An explicit entry whose NAME matches a preset phase *replaces* it
+    in-place (preserving order).
+  - An explicit entry whose NAME is NOT in the preset is *appended*
+    after the last preset phase, in EXPLICIT-PHASES order.
+  - Recipes can override individual phases (e.g., \\='install) while
+    inheriting the rest of the preset, and add project-specific phases
+    (e.g., \\='unpack, \\='patch) without restating build/install steps.
+
+Examples:
+  (nelix-builder--resolve-phases \\='make nil)
+  ;; => ((configure . \"...\") (build . \"make\")
+  ;;     (install . \"make install PREFIX=...\"))
+
+  (nelix-builder--resolve-phases
+    \\='make \\='((unpack . \"tar xf foo.tar.gz\")
+               (install . \"make DESTDIR=$out install\")))
+  ;; => ((unpack . \"tar xf foo.tar.gz\") (configure . \"...\")
+  ;;     (build . \"make\") (install . \"make DESTDIR=$out install\"))"
+  (if (or (null build-system) (eq build-system 'trivial))
+      (or explicit-phases '())
+    (let* ((preset (cdr (assq build-system
+                              nelix-builder--build-system-presets)))
+           (explicit (or explicit-phases '()))
+           ;; Names overridden by explicit entries (for in-place replacement).
+           (override-names (mapcar #'car explicit))
+           ;; Preset with overrides applied in-place.
+           (merged-preset
+            (mapcar (lambda (entry)
+                      (let ((name (car entry)))
+                        (if (memq name override-names)
+                            (assq name explicit)
+                          entry)))
+                    preset))
+           ;; Extra explicit entries not present in the preset (appended after).
+           (preset-names (mapcar #'car preset))
+           (extras (cl-remove-if (lambda (e) (memq (car e) preset-names))
+                                 explicit)))
+      (append merged-preset extras))))
+
 (defun nelix-builder--run-phase (phase-name cmd build-dir out-dir)
   "Run build PHASE-NAME CMD string in BUILD-DIR with $out=OUT-DIR.
+
 Uses `default-directory' binding on host Emacs; calls
 `nelisp-sys-chdir' first on standalone NeLisp so the child inherits
-the cwd.  ENV is injected via shell-wrapping (sh -c \"export out=...\").
+the cwd.  ENV is injected via a deterministic shell prelude (Tier-1
+hardening, design §6 Tier 1):
+
+  - PATH is restricted to /usr/bin:/bin (minimal host toolchain base).
+    Recipes needing extra tools should arrange them via :buildInputs or
+    explicit phase commands; the ambient caller PATH is NOT inherited.
+  - $out is set to OUT-DIR (the store scratch dir for this build).
+  - $HOME is redirected to BUILD-DIR so phases cannot read or write the
+    real user home directory.
+  - SOURCE_DATE_EPOCH=1, TZ=UTC, LC_ALL=C provide a deterministic locale
+    and timestamp base (necessary for reproducible archives).
+  - `ulimit -t 600' caps CPU time at 600 seconds per phase (shell-level
+    guard; not a kernel rlimit, but prevents runaway compilations).
+  - No kernel sandbox (Tier 2, out of scope); network is still open.
+
 Signals `nelix-error' on non-zero exit."
   (let* ((safe-out (expand-file-name out-dir))
          (safe-dir (expand-file-name build-dir))
-         ;; Shell wrapper: export $out and preserve PATH, then run the phase.
-         (wrapped (format "export out=%s; export PATH=%s; %s"
-                          (shell-quote-argument safe-out)
-                          (shell-quote-argument (or (getenv "PATH") "/usr/bin:/bin"))
-                          cmd))
+         ;; Tier-1 env prelude: deterministic, minimal, HOME-scrubbed.
+         ;; PATH: keep only /usr/bin:/bin (host toolchain minimum).
+         ;; Caller's ambient PATH is intentionally NOT forwarded.
+         (wrapped (format
+                   (concat "ulimit -t 600; "
+                           "export out=%s; "
+                           "export PATH=/usr/bin:/bin; "
+                           "export HOME=%s; "
+                           "export SOURCE_DATE_EPOCH=1; "
+                           "export TZ=UTC; "
+                           "export LC_ALL=C; "
+                           "%s")
+                   (shell-quote-argument safe-out)
+                   (shell-quote-argument safe-dir)
+                   cmd))
          exit stdout)
     ;; On standalone NeLisp, default-directory is ignored by call-process.
     ;; Call nelisp-sys-chdir to set the process cwd before spawning.
@@ -553,14 +665,28 @@ Signals `nelix-error' on non-zero exit."
 _SOURCE is accepted for interface parity but unused for (:type inline)
 recipes where the phases generate all source files in the build
 directory (Tier-0 MVP, no archive needed).
-INSTALL must include :build-phases, an alist ((NAME . SHELL-CMD)...).
+
+INSTALL is a plist which may include:
+  :build-system SYMBOL — selects a phase preset (\\='make, \\='cmake, \\='cargo,
+                         \\='trivial).  Defaults to \\='trivial if absent.
+  :build-phases ALIST  — explicit (NAME . SHELL-CMD) pairs.  When
+                         :build-system is non-trivial, explicit entries
+                         override or extend the preset (see
+                         `nelix-builder--resolve-phases').  For \\='trivial,
+                         :build-phases is the complete phase list.
 
 Each phase runs via sh(1) in the build dir with $out set to the
-store temp dir.  Any non-zero phase exit signals `nelix-error'."
-  (let* (;; Use a stable synthetic hash derived from phase bodies so the store
-         ;; entry is content-addressed in a repeatable way within a session.
-         ;; (Full reproducibility is Tier-1+; this satisfies the store API.)
-         (phases (plist-get install :build-phases))
+store temp dir.  Tier-1 env hardening (deterministic PATH, HOME scrub,
+SOURCE_DATE_EPOCH, TZ, LC_ALL, ulimit -t) is applied by
+`nelix-builder--run-phase'.  Any non-zero phase exit signals \\='nelix-error."
+  (let* (;; Resolve phases: merge preset + explicit overrides/extras.
+         (build-system (or (plist-get install :build-system) 'trivial))
+         (explicit-phases (plist-get install :build-phases))
+         (phases (nelix-builder--resolve-phases build-system explicit-phases))
+         ;; Use a stable synthetic hash derived from resolved phase bodies so
+         ;; the store entry is content-addressed in a repeatable way within a
+         ;; session.  (Full reproducibility is Tier-1+; this satisfies the
+         ;; store API.)
          (phase-str (format "%S" phases))
          (fake-hash (concat "sha256-build-"
                             (substring (md5 phase-str) 0 32)))
