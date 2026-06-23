@@ -600,8 +600,49 @@ Examples:
                                  explicit)))
       (append merged-preset extras))))
 
+;; `nelix-build' defines these as the dynamic phase-eval context.  Declare
+;; them special here so the compiler treats the let-binding in
+;; `nelix-builder--run-phase-elisp' as a DYNAMIC binding that the `eval'ed
+;; phase forms (which call `nelix-out' etc.) can actually see.
+(defvar nelix-build--out)
+(defvar nelix-build--dir)
+
 (defun nelix-builder--run-phase (phase-name cmd build-dir out-dir)
-  "Run build PHASE-NAME CMD string in BUILD-DIR with $out=OUT-DIR.
+  "Run build phase PHASE-NAME in BUILD-DIR with $out=OUT-DIR.
+CMD is either a SHELL-COMMAND STRING (run via sh -c) or a Lisp-native
+ELISP FORM evaluated with the `nelix-build' primitive vocabulary
+(`nelix-invoke' / `nelix-substitute*' / `nelix-out' / ...).  The Lisp-native
+form keeps phase orchestration in Elisp data — free of shell-quoting
+fragility — and only spawns the actual build tools as subprocesses.
+Signals `nelix-error' on failure."
+  (if (stringp cmd)
+      (nelix-builder--run-phase-shell phase-name cmd build-dir out-dir)
+    (nelix-builder--run-phase-elisp phase-name cmd build-dir out-dir)))
+
+(defun nelix-builder--run-phase-elisp (phase-name form build-dir out-dir)
+  "Evaluate a Lisp-native build phase FORM in BUILD-DIR with $out=OUT-DIR.
+FORM is plain Elisp using the `nelix-build' vocabulary; `(nelix-out)' returns
+OUT-DIR.  No shell drives the orchestration."
+  (require 'nelix-build)
+  (let ((nelix-build--out (expand-file-name out-dir))
+        (nelix-build--dir (expand-file-name build-dir))
+        (default-directory (file-name-as-directory (expand-file-name build-dir))))
+    (when (and (nelix-compat--standalone-nelisp-p) (fboundp 'nelisp-sys-chdir))
+      (nelisp-sys-chdir nelix-build--dir))
+    (condition-case e
+        (eval form t)
+      (nelix-error (signal (car e) (cdr e)))
+      (nelix-build-error
+       (signal 'nelix-error
+               (list (format "nelix-builder: build phase %S failed:\n%s"
+                             phase-name (cadr e)))))
+      (error
+       (signal 'nelix-error
+               (list (format "nelix-builder: build phase %S errored: %S"
+                             phase-name e)))))))
+
+(defun nelix-builder--run-phase-shell (phase-name cmd build-dir out-dir)
+  "Run shell CMD string for PHASE-NAME in BUILD-DIR with $out=OUT-DIR.
 
 Uses `default-directory' binding on host Emacs; calls
 `nelisp-sys-chdir' first on standalone NeLisp so the child inherits
