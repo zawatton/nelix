@@ -21,11 +21,14 @@
 ;; `call-process' with a deterministic env — no shell in the loop.
 ;;
 ;; Bound by the executor during a phase eval (see nelix-builder--run-phase):
-;;   `nelix-build--out' = $out (the store scratch dir); read via `(nelix-out)'.
-;;   `nelix-build--dir' = the build directory (cwd).
+;;   `nelix-build--out'    = $out (the store scratch dir); read via `(nelix-out)'.
+;;   `nelix-build--dir'    = the build directory (cwd).
+;;   `nelix-build--inputs' = alist ((NAME . STORE-PATH) ...) of built deps;
+;;                           read via `(nelix-input NAME)'.
 ;;
 ;; Primitives provided:
 ;;   nelix-out              — return $out path
+;;   nelix-input            — return store path of a named dependency (assoc-ref inputs analogue)
 ;;   nelix-invoke           — run a subprocess with deterministic env
 ;;   nelix-substitute*      — regex-replace file in place (pure Elisp)
 ;;   nelix-with-directory   — macro: run body in a sub-directory
@@ -50,6 +53,11 @@
   "Bound to the build output dir ($out, the store scratch dir) during a phase.")
 (defvar nelix-build--dir nil
   "Bound to the build directory (working dir) during a phase.")
+(defvar nelix-build--inputs nil
+  "Bound to an alist ((NAME . STORE-PATH) ...) of built dependency store paths
+during a phase eval.  This is the nelix analogue of Guix's (assoc-ref inputs
+NAME) — the build phases of a package can access a dependency's store path
+via (nelix-input \"NAME\").")
 
 (define-error 'nelix-build-error "nelix-build phase primitive error")
 
@@ -59,6 +67,20 @@
 This is what a Guix `(assoc-ref outputs \"out\")' / `#$output' maps to."
   (or nelix-build--out
       (signal 'nelix-build-error '("nelix-out called outside a build phase"))))
+
+;;;###autoload
+(defun nelix-input (name)
+  "Return the store path of dependency NAME from the current build's inputs.
+This is the nelix analogue of Guix (assoc-ref inputs \"NAME\").
+NAME must be a string matching the package name as declared in :dependencies.
+Signals `nelix-build-error' with a descriptive message listing available
+input names if NAME is absent."
+  (let ((entry (assoc name nelix-build--inputs)))
+    (if entry
+        (cdr entry)
+      (signal 'nelix-build-error
+              (list (format "nelix-input: no input named %S; available: %S"
+                            name (mapcar #'car nelix-build--inputs)))))))
 
 (defun nelix-build--env ()
   "Return the deterministic environment KV list for `nelix-invoke' (Tier-1).

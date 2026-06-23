@@ -31,6 +31,11 @@
 (defvar nelix-builder--install-stack nil
   "Dynamic stack of native package names currently being installed.")
 
+(defvar nelix-builder--phase-inputs nil
+  "Inputs alist ((NAME . STORE-PATH) ...) for the package currently being built.
+Bound in `nelix-native-install-recipe' from the dependency reports and
+forwarded through `nelix-builder--install-build' into each phase eval.")
+
 (defun nelix-builder--system-entry (recipe system)
   "Return RECIPE's system entry for SYSTEM."
   (let (found)
@@ -603,29 +608,35 @@ Examples:
 ;; `nelix-build' defines these as the dynamic phase-eval context.  Declare
 ;; them special here so the compiler treats the let-binding in
 ;; `nelix-builder--run-phase-elisp' as a DYNAMIC binding that the `eval'ed
-;; phase forms (which call `nelix-out' etc.) can actually see.
+;; phase forms (which call `nelix-out' / `nelix-input' etc.) can actually see.
 (defvar nelix-build--out)
 (defvar nelix-build--dir)
+(defvar nelix-build--inputs)
 
-(defun nelix-builder--run-phase (phase-name cmd build-dir out-dir)
+(defun nelix-builder--run-phase (phase-name cmd build-dir out-dir &optional phase-inputs)
   "Run build phase PHASE-NAME in BUILD-DIR with $out=OUT-DIR.
+PHASE-INPUTS is an alist ((NAME . STORE-PATH) ...) of dependency store paths
+made available to Elisp phases via `nelix-input'.
 CMD is either a SHELL-COMMAND STRING (run via sh -c) or a Lisp-native
 ELISP FORM evaluated with the `nelix-build' primitive vocabulary
-(`nelix-invoke' / `nelix-substitute*' / `nelix-out' / ...).  The Lisp-native
-form keeps phase orchestration in Elisp data — free of shell-quoting
-fragility — and only spawns the actual build tools as subprocesses.
-Signals `nelix-error' on failure."
+(`nelix-invoke' / `nelix-substitute*' / `nelix-out' / `nelix-input' / ...).
+The Lisp-native form keeps phase orchestration in Elisp data — free of
+shell-quoting fragility — and only spawns the actual build tools as
+subprocesses.  Signals `nelix-error' on failure."
   (if (stringp cmd)
       (nelix-builder--run-phase-shell phase-name cmd build-dir out-dir)
-    (nelix-builder--run-phase-elisp phase-name cmd build-dir out-dir)))
+    (nelix-builder--run-phase-elisp phase-name cmd build-dir out-dir phase-inputs)))
 
-(defun nelix-builder--run-phase-elisp (phase-name form build-dir out-dir)
+(defun nelix-builder--run-phase-elisp (phase-name form build-dir out-dir &optional phase-inputs)
   "Evaluate a Lisp-native build phase FORM in BUILD-DIR with $out=OUT-DIR.
-FORM is plain Elisp using the `nelix-build' vocabulary; `(nelix-out)' returns
-OUT-DIR.  No shell drives the orchestration."
+PHASE-INPUTS is an alist ((NAME . STORE-PATH) ...) bound to
+`nelix-build--inputs' so that `(nelix-input NAME)' can resolve dependency
+store paths.  FORM is plain Elisp using the `nelix-build' vocabulary;
+`(nelix-out)' returns OUT-DIR.  No shell drives the orchestration."
   (require 'nelix-build)
   (let ((nelix-build--out (expand-file-name out-dir))
         (nelix-build--dir (expand-file-name build-dir))
+        (nelix-build--inputs (or phase-inputs '()))
         (default-directory (file-name-as-directory (expand-file-name build-dir))))
     (when (and (nelix-compat--standalone-nelisp-p) (fboundp 'nelisp-sys-chdir))
       (nelisp-sys-chdir nelix-build--dir))
@@ -705,12 +716,17 @@ Signals `nelix-error' on non-zero exit."
               (list (format "nelix-builder: build phase %S failed (exit %S):\n%s"
                             phase-name exit stdout))))))
 
-(defun nelix-builder--install-build (recipe system _source install profile-name)
+(defun nelix-builder--install-build (recipe system _source install profile-name
+                                     &optional phase-inputs)
   "Source-build RECIPE for SYSTEM and deposit into store; update PROFILE-NAME.
 
 _SOURCE is accepted for interface parity but unused for (:type inline)
 recipes where the phases generate all source files in the build
 directory (Tier-0 MVP, no archive needed).
+
+PHASE-INPUTS is an optional alist ((NAME . STORE-PATH) ...) of dependency
+store paths built before this package.  It is bound to `nelix-build--inputs'
+during each Elisp-native phase so that `(nelix-input NAME)' can resolve them.
 
 INSTALL is a plist which may include:
   :build-system SYMBOL — selects a phase preset (\\='make, \\='cmake, \\='cargo,
@@ -775,7 +791,7 @@ SOURCE_DATE_EPOCH, TZ, LC_ALL, ulimit -t) is applied by
           (dolist (phase phases)
             (let ((phase-name (car phase))
                   (cmd (cdr phase)))
-              (nelix-builder--run-phase phase-name cmd build-dir out-dir)))
+              (nelix-builder--run-phase phase-name cmd build-dir out-dir phase-inputs)))
           ;; Mark declared binaries executable.
           (nelix-builder--chmod-runtime-bins out-dir install)
           ;; Commit the populated $out into the store.
@@ -1016,6 +1032,17 @@ lock set before PACKAGE is installed."
            (dependency-reports
             (nelix-builder--install-dependencies
              dependencies profile-name* system*))
+           ;; Build inputs alist from dependency reports so Elisp phases can
+           ;; call (nelix-input "NAME") to get a dep's store path — the nelix
+           ;; analogue of Guix's (assoc-ref inputs "NAME").
+           (phase-inputs
+            (delq nil
+                  (mapcar (lambda (r)
+                            (let ((n  (plist-get r :name))
+                                  (sp (plist-get r :store-path)))
+                              (when (and n sp)
+                                (cons n sp))))
+                          dependency-reports)))
            (report
             (pcase kind
               ('unpack
@@ -1032,7 +1059,7 @@ lock set before PACKAGE is installed."
                 recipe system* install profile-name*))
               ('build
                (nelix-builder--install-build
-                recipe system* source install profile-name*))
+                recipe system* source install profile-name* phase-inputs))
               (_
                (signal 'nelix-error
                        (list (format "nelix-native-install-recipe: unsupported install type %S"
