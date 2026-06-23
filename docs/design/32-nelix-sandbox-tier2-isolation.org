@@ -1,0 +1,320 @@
+#+TITLE: 32 — nelix-sandbox: Tier 2 hermetic build isolation (Linux, optional module)
+#+AUTHOR: zawatton
+#+OPTIONS: toc:2 num:t
+#+STARTUP: showall
+
+* Status
+:PROPERTIES:
+:STATE: DRAFT-2026-06-24
+:DECIDED: home = in-nelix optional module (nelix-sandbox.el); backend = pluggable (bwrap default, raw-ns later); network = deny-all + fixed-output
+:END:
+
+DRAFT.  An *optional, Linux-only module within nelix* (=nelix-sandbox.el=,
+*not loaded by default*) that adds *Tier 2 kernel isolation* (hermetic,
+reproducibility-leaning builds) on top of the nelix-native source-build
+executor (design 31).
+
+Design 31 ships Tier 0/1 and *explicitly defers Tier 2* (signoff
+2026-06-23; 31 §6 "Tier 2 — OUT OF SCOPE", §14.2).  This document is that
+deferred work, now scoped as an *in-tree optional module* rather than a
+separate repository (user signoff 2026-06-24).
+
+Key leverage: because nelix build phases are already *Elisp data* (the
+phase-elisp refactor, 31 §10.5 "PHASE-ELISP REFACTOR SHIPPED"), the *entire
+build can be re-run, unchanged, inside a namespace sandbox* by a small
+builder-child entrypoint that calls the existing =nelix-builder--run-phase=.
+This module therefore does NOT re-architect the executor; it *wraps* it.
+The only net-new code is the *sandbox contract* + a *bind-mount / launch
+backend* + the *builder child*.
+
+** Decisions (user signoff 2026-06-24)
+1. *Home = in-nelix optional module.*  Ships as =nelix-sandbox.el= in the
+   nelix repo, registered as an *optional* module (like the other
+   tier-specific extras) and loaded *only* when a build requests
+   =:hermeticity 'tier2= on Linux.  No separate repo; no default load cost
+   for the common Tier 0/1 path.  Naming follows nelix's 3-layer convention
+   (=nelix/CLAUDE.md=): module =nelix-sandbox=, public API
+   =nelix-sandbox-run=, private =nelix-sandbox--=.
+2. *Mechanism = pluggable.*  Ship a =bwrap= (bubblewrap) backend first
+   (mature, fast, *zero new runtime primitive* — pure =call-process=,
+   consistent with Tier 0/1's host-toolchain stance, 31 §12), behind a
+   *backend-neutral contract*.  Add a pure-Elisp =raw-ns= backend later
+   (=unshare=/=chroot= via nelisp dlsym, *zero Rust* per 31 §4.1) under the
+   *same* contract and the *same* acceptance smokes.
+3. *Network = deny-all + fixed-output.*  Build phases get NO network
+   (=--unshare-net= / =CLONE_NEWNET=).  Source fetches run on the *host*,
+   are verified against a declared =sha256= (fixed-output derivation), and
+   the verified result is bind-mounted *read-only* into the offline build.
+   Mirrors Nix's network model.
+
+* 1. Motivation
+
+Tier 0/1 (design 31) made "fine-grained build instructions in Elisp, no
+Nix" real, but with three honest gaps (31 §12):
+- *Not hermetic* — a phase can read the host FS / reach the network.
+- *Not reproducible* — output depends on host =cc=/=make= versions and on
+  whatever ambient inputs leak in.
+- No enforced *input closure* — phases can use undeclared host paths.
+
+Tier 2 is "where reproducibility becomes meaningful" (31 §6).  It closes
+the gaps by running the build in a Linux *namespace sandbox* whose only
+visible filesystem is the *declared input closure* (read-only) plus a
+writable =$out=, with *no network* during the build.  Given the same
+inputs, the same toolchain (itself a declared input), and the deterministic
+env already set in Tier 1, the build becomes *reproducibility-leaning*: the
+remaining non-determinism is the toolchain's own (addressed in T3 by making
+the toolchain a content-addressed input) and explicit entropy sources
+(=/dev/urandom=, time) which the sandbox controls.
+
+This is exactly the boundary at which Nix earns its keep; Tier 2 brings
+that property to the Elisp-defined, Nix-free executor — *without* adopting
+the Nix evaluator or store daemon, and *without* a default-load cost (the
+module stays dormant unless =tier2= is requested).
+
+* 2. Goals / Non-goals
+
+** Goals
+- A backend-neutral *sandbox contract* (one Elisp entry point,
+  =nelix-sandbox-run=) that runs a nelix build inside a hermetic Linux
+  namespace and returns the same install report the in-process executor
+  returns today.
+- A *bwrap backend* (default) that needs no new runtime primitive.
+- *Network deny-all* in the build; *fixed-output* fetch on the host.
+- *Input-closure enforcement*: only declared inputs are visible (RO);
+  =(nelix-input NAME)= paths resolve *identically* inside the sandbox.
+- Reuse the *phase-elisp executor verbatim* inside the sandbox.
+- *Optional, zero-default-cost* integration: the module is not loaded and
+  has no effect unless =:hermeticity 'tier2= is requested.
+- Graceful, *loud* degradation when the sandbox is unavailable (no bwrap /
+  unprivileged userns disabled / non-Linux): fail with a clear diagnostic
+  and a Tier-1 fallback instruction; never silently downgrade.
+- A future *raw-ns backend* (pure Elisp, zero Rust) behind the same
+  contract — design the contract so it does not leak bwrap specifics.
+
+** Non-goals (initial)
+- *macOS / Windows hermetic builds.*  Namespaces are Linux-only; macOS caps
+  at Tier 1 (31 §14 risk "macOS divergence").  A future =sandbox-exec=
+  backend is out of scope here.
+- *Bit-for-bit reproducibility guarantee.*  T3 makes it *attainable* when
+  the toolchain is a content-addressed input; we do not promise it for
+  builds that bind the host toolchain.
+- *Recursive graph build of the nixpkgs/Guix universe.*  Inputs must exist
+  in the registry/store (same limit as 31 §10.5 deps note).  This module
+  isolates a build; it does not source the world.
+- *Re-implementing the Nix store/daemon.*  We keep nelix's content store.
+- *Any Rust change to NeLisp* (31 §4.1 hard rule — applies transitively).
+- *Changing the default build path.*  Tier 0/1 behavior and load cost are
+  untouched; this module is inert unless explicitly requested.
+
+* 3. Architecture overview
+
+The build pipeline gains one optional stage.  Host side (unchanged
+executor) prepares everything; a *builder child* runs the phases inside the
+sandbox; the host commits =$out= to the store afterwards.
+
+#+begin_example
+  host (nelix-builder, long-lived NeLisp/Emacs)
+    1. resolve deps  -> input store paths        (existing dep graph, 31)
+    2. fetch source  -> hash-verified (FOD)       (host, network allowed)
+    3. prepare $out scratch dir + build dir       (existing nelix-store)
+    4. build a SANDBOX JOB SPEC:
+         { phases:   <Elisp forms, already data>
+           inputs:   ((NAME . /store/...-NAME) ...)   ; RO binds
+           out:      /store/.tmp-...-PKG               ; RW bind
+           build:    /tmp/nelix-build-...              ; RW bind
+           env:      Tier-1 scrubbed env
+           net:      nil }
+    5. nelix-sandbox-run SPEC :backend 'bwrap
+         |
+         v  (spawn builder child INSIDE the namespace)
+       bwrap <mount plan> --unshare-net -- \
+         nelisp --load nelix-sandbox-builder.el  <spec-path>
+         |
+         |   inside sandbox: RO store closure, RW $out, no network
+         v
+       builder child:
+         (load nelix-build) (load phase forms)
+         for each (NAME . FORM): (nelix-builder--run-phase FORM ...)
+         exit 0 / non-zero + captured log
+    6. on success: host commits $out -> store, makes profile generation
+#+end_example
+
+Two facts make this clean:
+- Phases are *data*, so step 4 is just serialization, not translation.
+- =(nelix-input NAME)= and =(nelix-out)= resolve against paths the host
+  *chose*; the sandbox bind-mounts those exact paths, so the forms need no
+  rewriting between host and sandbox.
+
+* 4. The sandbox contract (backend-neutral)
+
+A single entry point, implemented once per backend:
+
+#+begin_example
+  (nelix-sandbox-run SPEC &key backend)  ; -> (:status ok|error :log STR :code N)
+  SPEC plist:
+    :phases   ((NAME . FORM) ...)     ; Elisp build phases (data)
+    :inputs   ((NAME . PATH) ...)     ; bind read-only at PATH
+    :out      PATH                    ; bind read-write at PATH ($out)
+    :build    PATH                    ; working dir, bind read-write
+    :toolchain (PATH ...)             ; extra RO binds (T3: CA toolchain)
+    :env      ((K . V) ...)           ; Tier-1 scrubbed env
+    :net      nil|t|(HOST ...)        ; nil = deny-all (default)
+    :uid-map  (INNER . OUTER)         ; user-ns id map (default 1000:caller)
+  backend: 'bwrap (default) | 'raw-ns (future) | 'none (Tier-1 passthrough)
+#+end_example
+
+Backends MUST be interchangeable: same SPEC, same observable result, same
+acceptance smokes (§7).  The contract intentionally exposes *mount intent*
+(inputs/out/build/toolchain/net), not bwrap flags, so =raw-ns= can satisfy
+it with =mount(2)= directly.
+
+** 4.1 bwrap backend (default, T1)
+Translate SPEC to a =bwrap= argv and =call-process= it:
+- =--unshare-net= (+ user, mount, pid, ipc, uts, cgroup) so the build is
+  offline.
+- =--ro-bind PATH PATH= for each input + toolchain; =--bind OUT OUT=,
+  =--bind BUILD BUILD=; =--proc /proc=; =--dev /dev= (or a minimal
+  =--dev-bind=); =--tmpfs /tmp=; =--chdir BUILD=.
+- =--clearenv= then =--setenv K V= for each env entry (Tier-1 scrub).
+- =--die-with-parent=; =--unshare-user= with =--uid/--gid= map.
+- The command run inside is the *builder child* (§5), not the phase
+  directly — one child evals all phases so cwd/env state carries across
+  phases exactly as in-process today.
+Zero new runtime primitive; pure =call-process=.
+
+** 4.2 raw-ns backend (future, T4 — pure Elisp, zero Rust)
+Same SPEC, implemented with nelisp's *existing* syscall reader builtins
+(the =nelisp-sys-*= / =nelisp--syscall-path-int= family used for chdir/
+mkdtemp in 31 §10.1) extended *only by dlsym reach*, never by Rust:
+- =unshare(CLONE_NEWUSER|NEWNS|NEWPID|NEWNET|NEWIPC|NEWUTS)=,
+- write =uid_map=/=gid_map=, =mount("", "/", MS_REC|MS_PRIVATE)=,
+- bind inputs RO / =$out= RW (=mount(src,dst,NULL,MS_BIND[,MS_RDONLY remount])=),
+- =mount("tmpfs","/tmp",...)=, =pivot_root= (or =chroot=), =chdir=, then
+  =execve= the builder child.
+*Gate (31 §14 risk):* before committing to any symbol, verify it is
+present in the standalone binary's *dynsym* (=nm -D=); if a needed symbol
+is not linked, that route is blocked (Rust wrapper is forbidden) and we
+stay on =bwrap=.  This backend is *additive*: it ships only if and when the
+dynsym audit passes, and never blocks T1–T3.
+
+* 5. The builder child (the in-sandbox entrypoint)
+
+=scripts/nelix-sandbox-builder.el=: a tiny standalone driver (modeled on
+the existing =scripts/nelix-*-standalone-driver.el=, 31 §10.5) that runs
+*inside* the sandbox under =nelisp --load= (or =emacs --batch=):
+1. Read the serialized SPEC (a single =read=-able Elisp file; the phase
+   FORMS round-trip through =read-from-string= — apply the
+   =nelix-registry--canonicalize-nil-t= fix, nelix commit =c859278=, so the
+   standalone reader's pseudo-=nil=/=t= bug does not bite here either).
+2. =(load "nelix-build")= to get the primitive vocabulary.
+3. Bind =nelix-build--out= / =--dir= / =--inputs= from the SPEC.
+4. For each =(NAME . FORM)=: =(nelix-builder--run-phase FORM ...)= — the
+   *unchanged* executor path.
+5. Print a structured result line + the captured phase log; exit code = 0
+   on success, non-zero on the first failing phase.
+No new build logic lives here — it is the existing per-phase eval, relocated
+into the namespace.
+
+* 6. Network & fetch (deny-all + fixed-output)
+
+- *Build phases*: no network (=--unshare-net= / =NEWNET=).  A phase that
+  tries to reach the network fails because there is no route — this is the
+  enforced property, asserted by a smoke (§7, T0).
+- *Source fetch*: stays a *host* concern (existing =nelix-fetch=), runs
+  *before* the sandbox, *with* network, and is *hash-verified*:
+  =(source (url-fetch URL :sha256 "..."))= → fetched on host → sha256
+  checked → only on match is the result bind-mounted RO into the build.
+  A missing/mismatched hash is a *loud* error (no silent network in the
+  build).  This is the fixed-output-derivation rule; it is the single
+  sanctioned network touchpoint and it is content-addressed.
+- *Open*: vendored/git source pinning (commit SHA as the "hash") — same
+  rule, different verifier; deferred to the fetch layer.
+
+* 7. Milestones
+
+| T  | Deliverable                                                              |
+|----+--------------------------------------------------------------------------|
+| T0 | =nelix-sandbox.el= (optional module) + contract + SPEC serializer +      |
+|    | builder child + *bwrap backend*.  =smoke-sandbox-bwrap=: build           |
+|    | =hello-native= inside bwrap, =$out= RW, net denied; a phase doing        |
+|    | =curl= FAILS (proves =--unshare-net=).                                   |
+| T1 | Input-closure binds from =:dependencies=; =(nelix-input NAME)= resolves  |
+|    | RO inside.  =smoke-sandbox-deps=: useapp+libgreet built sandboxed.       |
+| T2 | Fixed-output fetch: host hash-verify → RO bind; build offline.           |
+|    | =smoke-sandbox-fod=: =url-fetch :sha256= builds offline; wrong hash      |
+|    | rejected loudly.                                                          |
+| T3 | Toolchain-as-input (content-addressed =cc=/=make= RO bind) + a           |
+|    | *build-twice, compare-hash* reproducibility smoke (=smoke-sandbox-repro=).|
+| T4 | =raw-ns= backend (pure Elisp unshare/chroot via dlsym) behind the same   |
+|    | contract; dynsym audit first; T0–T3 smokes pass on *both* backends.      |
+| T5 | macOS/Windows note + Tier-1 graceful-degrade path (documented; no        |
+|    | hermetic build off-Linux).                                               |
+
+T0+T1 = "isolated, offline, input-closed build of the existing fixtures".
+T2+T3 = "fixed-output + toolchain-as-input → reproducibility-leaning".
+T4 = "the pure-Elisp self-sufficient backend (no external sandbox dep)".
+
+Acceptance for T0 mirrors nelix's =smoke-native-build-standalone= (31
+§10.5) but adds the *negative* assertion: a phase that opens a socket
+fails, proving the network namespace is real.
+
+* 8. Integration with nelix
+
+- *Optional module registration.*  =nelix-sandbox.el= is added to nelix's
+  *optional* module set (not the default load list), so Tier 0/1 builds pay
+  *zero* load cost.  It is =require='d lazily the first time a =tier2= build
+  is requested.
+- *Tier knob.*  =(nelix-native-install-recipe RECIPE PROFILE SYSTEM &key
+  (hermeticity 'tier1))= with =hermeticity= ∈ ={tier0,tier1,tier2}=;
+  =tier2= routes =nelix-builder--install-build= through =nelix-sandbox-run=
+  instead of the in-process phase loop.  Default stays =tier1=
+  (cross-platform); =tier2= is opt-in and Linux-gated.
+- *Availability gate.*  On a non-Linux host, or when bwrap / unprivileged
+  userns is unavailable, requesting =tier2= errors *loudly* with the reason
+  and the Tier-1 fallback instruction (no silent downgrade).
+- *No change to the recipe schema or to ldb.*  The same Elisp phase forms
+  run in-process (tier0/1) or sandboxed (tier2).  This is the payoff of the
+  phase-elisp architecture.
+
+* 9. Risks & open decisions
+
+** Open decisions (need signoff at the named milestone)
+1. */dev/urandom & time inside the sandbox* (decide at T3).  Compilers may
+   read entropy; exposing =/dev/urandom= reintroduces non-determinism,
+   denying it breaks some toolchains.  Default proposal: expose a *seeded*
+   or denied entropy source and document the determinism caveat.
+2. *Toolchain provenance* (decide at T3).  Full reproducibility needs a
+   content-addressed toolchain as an input; until then, =tier2= binds the
+   host toolchain RO = "isolated but not bit-reproducible".  Proposal: ship
+   T0–T2 with host-toolchain binds, label clearly, make CA-toolchain a T3
+   opt-in.
+3. *Repo home* — *RESOLVED 2026-06-24 = in-nelix optional module*
+   (=nelix-sandbox.el=, this doc's placement).  Not a separate repo.
+
+** Risks
+- *bwrap absence / unprivileged userns disabled* on the host → =tier2=
+  cannot run.  Mitigation: detect early (=bwrap --version= + a userns
+  probe), fail loudly with the Tier-1 fallback; never silently downgrade.
+- *raw-ns dynsym reachability* (31 §14 risk, transitive): a needed syscall
+  symbol may not be in the static binary's dynsym; then =raw-ns= is blocked
+  (no Rust) and =bwrap= remains the only backend.  Audit before T4.
+- *Toolchain drift* (31 §12) — accepted until T3's CA-toolchain.
+- *Standalone reader quirks* — the pseudo-=nil=/=t= bug (nelix =c859278=)
+  and the UTF-8 raw-byte caveat already known for the standalone runtime;
+  the SPEC round-trip and builder child must apply the canonicalizer and
+  avoid =current-time=/=random=/=emacs-pid= (absent on standalone, 31
+  §10.5).
+- *macOS users* get no hermetic build — must be stated in nelix docs so the
+  =tier2= knob's Linux-only nature is not surprising.
+
+* 10. Summary
+
+Tier 2 = "run the *already-Elisp* nelix build inside a Linux namespace
+sandbox: read-only declared input closure, writable =$out=, no network;
+source fetched + hash-pinned on the host".  It ships as an *optional,
+zero-default-cost module within nelix* (=nelix-sandbox.el=, loaded only for
+=:hermeticity 'tier2= on Linux), *wrapping* rather than rewriting the
+design-31 executor.  Backend is *pluggable* — =bwrap= first (zero new
+primitive), pure-Elisp =raw-ns= later (zero Rust) under one contract — and
+the network model is *deny-all + fixed-output*, matching Nix's hermeticity
+without Nix.  Linux-only; macOS/Windows stay at Tier 1.

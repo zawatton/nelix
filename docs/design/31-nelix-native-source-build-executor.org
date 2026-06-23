@@ -207,7 +207,7 @@ of scope (separate Linux-only project).*
 - Still no kernel sandbox; network still open.  Pure config over Tier 0.
 
 ** Tier 2 — kernel isolation (Linux-only, net-new) — OUT OF SCOPE
-/Deferred to a separate project (signoff 2026-06-23); kept for reference./
+/Deferred (signoff 2026-06-23), now realised as an in-nelix optional module and designed in =docs/design/32-nelix-sandbox-tier2-isolation.org= (in-nelix optional module =nelix-sandbox.el=) (decisions: pluggable backend = bwrap default + pure-elisp raw-ns later; network = deny-all + fixed-output).  Kept here for reference./
 Two routes, pick one if/when taken up:
 1. *Wire libc isolation via dlsym* (zero Rust, §4.1): in the forked
    child, =unshare(CLONE_NEWNS|NEWUSER|NEWNET)= → =chroot= a built
