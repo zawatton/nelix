@@ -228,6 +228,26 @@ package name."
              (nelix-registry--ensure-table))
     normalized))
 
+(defun nelix-registry--canonicalize-nil-t (form)
+  "Recursively replace standalone-reader pseudo nil/t symbols in FORM.
+NeLisp's standalone `read-from-string' interns the bare tokens `nil' and
+`t' as fresh symbols not `eq' to the canonical empty-list / true objects;
+only the empty-list token yields canonical nil.  Such pseudo-symbols print
+as nil/t yet are truthy and non-`eq', silently breaking predicates and
+optional-argument handling such as `write-region's END, which aborts a
+build phase.  Walk FORM, rebuilding conses and mapping any non-canonical
+nil/t leaf back to the canonical object.  No-op on host Emacs."
+  (cond
+   ((consp form)
+    (cons (nelix-registry--canonicalize-nil-t (car form))
+          (nelix-registry--canonicalize-nil-t (cdr form))))
+   ((and (symbolp form) form)
+    (let ((nm (symbol-name form)))
+      (cond ((string-equal nm "nil") nil)
+            ((and (string-equal nm "t") (not (eq form t))) t)
+            (t form))))
+   (t form)))
+
 (defun nelix-registry--read-forms (file)
   "Read Elisp data forms from FILE without evaluating them."
   (let ((forms nil)
@@ -271,7 +291,7 @@ package name."
                   (let* ((result (read-from-string contents pos))
                          (form (car result))
                          (new-pos (cdr result)))
-                    (push form forms)
+                    (push (nelix-registry--canonicalize-nil-t form) forms)
                     (setq pos new-pos))))
             (end-of-file nil)
             (invalid-read-syntax
