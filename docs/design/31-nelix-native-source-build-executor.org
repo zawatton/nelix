@@ -352,6 +352,27 @@ through =nelisp-cc--dlsym-resolve= and calls it (≤6 GP args).  *No Rust.*
   is the *Tier-0 "Nix-free fine-grained build" end-to-end proof* (M0+M1).
   Host-Emacs no-nix proof per §13; standalone end-to-end (nelix on the
   NeLisp load-path) deferred.
+- *M2 SHIPPED (2026-06-23):* build-system phase *presets*
+  (=nelix-builder--build-system-presets= 'make/'cmake/'cargo +
+  =nelix-builder--resolve-phases= merge) and *Tier-1 hardening* in
+  =run-phase= (controlled env: PATH=/usr/bin:/bin, HOME=build-dir,
+  SOURCE_DATE_EPOCH=1, TZ=UTC, LC_ALL=C, =ulimit -t 600=).  =make
+  smoke-native-build-make= green.
+- *M3 SHIPPED (2026-06-23, ldb 4e31e43 + emitter fix):*
+  =ldb-guix-import-native-string= translates a Guix recipe (incl
+  =arguments=/=#:phases=) into the native source-build recipe schema —
+  reader gexp/=lambda*=, =modify-phases= structure, phase-body shell
+  subset (invoke/begin/chdir/substitute*), un-translatable forms reject
+  loudly.
+- *END-TO-END SHIPPED (2026-06-23):* =make smoke-guix-to-native= (nelix)
+  takes a *Guix Scheme recipe* (=test/fixtures/hello-guix.scm=) →
+  =ldb-guix-import-native-string= → native recipe → executor builds the C
+  program from source → runs from the store with *exit 42*, *no nix
+  invoked*.  This is the *full M0–M3 vision proven end-to-end in one
+  command.*  Known rough edge: ldb shell-quoting of =(invoke "sh" "-c"
+  CMD)= over-escapes (works for the proven case; a future polish should
+  pass CMD as one quoted unit).  M4 (broader gexp phase-body subset) is
+  the bounded long-tail; M5 (Tier-2 isolation) out of scope.
 
 * 11. ldb front-end work (audit 3 — capture Guix #:phases)
 
