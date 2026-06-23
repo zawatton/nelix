@@ -371,8 +371,19 @@ through =nelisp-cc--dlsym-resolve= and calls it (≤6 GP args).  *No Rust.*
   invoked*.  This is the *full M0–M3 vision proven end-to-end in one
   command.*  Known rough edge: ldb shell-quoting of =(invoke "sh" "-c"
   CMD)= over-escapes (works for the proven case; a future polish should
-  pass CMD as one quoted unit).  M4 (broader gexp phase-body subset) is
-  the bounded long-tail; M5 (Tier-2 isolation) out of scope.
+  pass CMD as one quoted unit — *fixed in M4 Part C*).
+- *M4 SHIPPED (2026-06-23, ldb):* broadened Guix phase-body translation —
+  an arg-expression evaluator (=string-append=, =(assoc-ref outputs …)= →
+  *expandable* =$out=), multi-clause delimiter-safe =substitute*=, file ops
+  (=install-file=/=copy-recursively=/=mkdir-p=/=delete-file=/=rename-file=/
+  =symlink=/…), =with-directory-excursion=, =setenv=, =system*=; un-listed
+  forms reject loudly.  65/65 ldb ERT.  =make smoke-guix-to-native-rich=
+  (nelix) proves it *end-to-end*: a Guix recipe using
+  substitute*+install-file+string-append+assoc-ref builds a C program whose
+  *exit 42* confirms the substitution ran and =$out= expanded — a *runtime*
+  proof, not a string match.  The end-to-end caught two real bugs the unit
+  tests missed (=$out= single-quoting freezing expansion; a =#=-comment
+  injected into a shell arg).  M5 (Tier-2 isolation) remains out of scope.
 
 * 11. ldb front-end work (audit 3 — capture Guix #:phases)
 
