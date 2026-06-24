@@ -5,16 +5,25 @@
 
 * Status
 :PROPERTIES:
-:STATE: CLOSED-2026-06-24 (achievable scope shipped; T4 blocked external)
+:STATE: CLOSED-2026-06-24 (TWO backends shipped: bwrap + pure-Elisp raw-ns v2)
 :DECIDED: home = in-nelix optional module (nelix-sandbox.el); backend = pluggable (bwrap default, raw-ns later); network = deny-all + fixed-output
 :END:
 
-CLOSED (2026-06-24).  *T0–T3 + T5 SHIPPED*; *T4 (raw-ns backend) BLOCKED* by
-an external runtime limitation (the standalone NeLisp binary's generic
-syscall trampoline + cstring layer are stubbed — see §7 "T4 BLOCKED").  The
-Tier 2 hermetic sandbox is fully working via the =bwrap= backend; the
-pluggable contract (§4) leaves a future =raw-ns= backend a drop-in once the
-runtime ships a functional syscall surface.
+CLOSED (2026-06-24) — *Tier 2 ships with TWO interchangeable backends behind
+the §4 pluggable contract*:
+1. *=bwrap=* (default) — T0–T3 + T5 SHIPPED, fully hermetic incl. PID-ns.
+2. *=raw-ns= v2* — a PURE-ELISP backend (no bwrap, no Rust, no libc) built on
+   new =nelisp--syscall-{unshare,mount,pivot-root}= AOT builtins
+   (syscall-direct; nelisp =c21b1b8e=/=64838d3e=).  It unshares the
+   user/mount/net/uts/ipc namespaces, pivot_roots into a minimal root (host
+   FS hidden, declared inputs RO, =$out= RW), and denies the network —
+   *bwrap-equivalent on the hermeticity that matters* (verified: host hidden,
+   deps' =(nelix-input)= resolves RO in the closure, =curl= fails).  *Not
+   done:* PID-namespace =/proc=, which needs =fork(2)= and is blocked by a
+   NeLisp runtime value-boxing-under-fork bug (a core-runtime fix; see §7).
+The earlier "T4 BLOCKED" framing was wrong: the standalone runtime builds
+syscalls from pure Elisp via =syscall-direct= (no libc), which is exactly how
+raw-ns v1/v2 were delivered.
 
 An *optional, Linux-only module within nelix* (=nelix-sandbox.el=, *not
 loaded by default*) that adds *Tier 2 kernel isolation* (hermetic,
