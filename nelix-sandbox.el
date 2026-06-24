@@ -178,6 +178,13 @@ Returns a list of strings (the args after the program name)."
       (dolist (in inputs)
         (let ((p (expand-file-name (cdr in))))
           (push* "--ro-bind" p p)))
+      ;; Extra read-only toolchain paths (T3, design 32): a content-addressed
+      ;; toolchain opt-in.  When empty the host /usr bound above provides the
+      ;; compiler (same-host reproducible; cross-host repro needs a pinned
+      ;; toolchain here).
+      (dolist (tc (plist-get spec :toolchain))
+        (let ((p (expand-file-name tc)))
+          (push* "--ro-bind" p p)))
       ;; The job spec, read-only.
       (push* "--ro-bind" spec-file spec-file)
       ;; Run in the build dir, with a scrubbed env carrying only the spec

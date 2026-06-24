@@ -44,6 +44,14 @@ namespace sandbox via the optional `nelix-sandbox' module (design 32),
 which is required lazily only then.  Bound dynamically by callers opting
 into Tier 2; the default in-process path and its load cost are unchanged.")
 
+(defvar nelix-builder-toolchain-inputs nil
+  "Optional list of toolchain paths to bind read-only into the Tier 2 sandbox.
+Each path is exposed at its canonical location alongside the host /usr base,
+the mechanism for a content-addressed toolchain (design 32 T3).  When nil
+the sandbox relies on the host toolchain bound from /usr, which gives
+same-host reproducibility; bit-identical output ACROSS hosts requires a
+content-addressed toolchain pinned here.  Bound dynamically by callers.")
+
 (defun nelix-builder--system-entry (recipe system)
   "Return RECIPE's system entry for SYSTEM."
   (let (found)
@@ -739,7 +747,8 @@ sandbox is unavailable (the latter carries a Tier-1 fallback hint)."
                        :inputs phase-inputs
                        :out out-dir
                        :build build-dir
-                       :net nil))))
+                       :net nil
+                       :toolchain nelix-builder-toolchain-inputs))))
     (unless (eq (plist-get result :status) 'ok)
       (signal 'nelix-error
               (list (format

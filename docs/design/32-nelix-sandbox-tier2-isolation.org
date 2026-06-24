@@ -302,6 +302,20 @@ fails, proving the network namespace is real.
   fixed-output-derivation rule.  No regression: the inline-source builds
   (native-build host/standalone, deps-inputs, T0/T1 sandbox smokes) all
   still pass.
+- *T3 SHIPPED + verified (2026-06-24).*  Reproducibility + toolchain-input
+  mechanism.  =make smoke-sandbox-repro= is green (2/2): the SAME recipe
+  built TWICE in independent sandboxes (fresh store each time) yields a
+  *byte-identical* binary — the Tier-1 deterministic env
+  (=SOURCE_DATE_EPOCH=1=, =TZ=UTC=, =LC_ALL=C=) plus the namespace make the
+  build a pure function of its declared inputs on a given host/toolchain.
+  A =:toolchain= SPEC field (threaded from the =nelix-builder-toolchain-
+  inputs= dynamic var) bind-mounts extra paths read-only — the
+  content-addressed-toolchain opt-in (the smoke asserts a =:toolchain= path
+  becomes an =--ro-bind= in the argv).  Determinism boundary stated
+  honestly: bit-identical output holds same-host for builds that do not
+  read entropy/time; cross-host bit-reproducibility needs a pinned CA
+  toolchain (building one is out of scope).  No regression (T0/T1/T2
+  smokes still pass).
 
 * 8. Integration with nelix
 
@@ -324,15 +338,20 @@ fails, proving the network namespace is real.
 * 9. Risks & open decisions
 
 ** Open decisions (need signoff at the named milestone)
-1. */dev/urandom & time inside the sandbox* (decide at T3).  Compilers may
-   read entropy; exposing =/dev/urandom= reintroduces non-determinism,
-   denying it breaks some toolchains.  Default proposal: expose a *seeded*
-   or denied entropy source and document the determinism caveat.
-2. *Toolchain provenance* (decide at T3).  Full reproducibility needs a
-   content-addressed toolchain as an input; until then, =tier2= binds the
-   host toolchain RO = "isolated but not bit-reproducible".  Proposal: ship
-   T0–T2 with host-toolchain binds, label clearly, make CA-toolchain a T3
-   opt-in.
+1. */dev/urandom & time inside the sandbox* — *RESOLVED 2026-06-24 at T3*.
+   =/dev/urandom= is exposed (via =--dev /dev=) for toolchain compatibility;
+   time/locale are pinned (=SOURCE_DATE_EPOCH=1=, =TZ=UTC=, =LC_ALL=C=).  A
+   build that reads entropy is non-deterministic by its own choice — that is
+   the recipe's responsibility, not the sandbox's — and the determinism
+   caveat is documented (§7 T3, the repro smoke commentary).  No seeded
+   entropy device was added (keeps the sandbox simple; recipes that need
+   determinism must not read entropy).
+2. *Toolchain provenance* — *RESOLVED 2026-06-24 at T3*.  Shipped T0–T2 with
+   host-toolchain binds (=/usr= RO), giving *same-host* bit-reproducibility
+   (verified: two builds byte-identical).  A =:toolchain= SPEC field is the
+   content-addressed-toolchain *opt-in* mechanism (extra RO binds); a pinned
+   CA toolchain there is what cross-host bit-reproducibility needs.  Building
+   such a toolchain remains out of scope (Nix/Guix territory).
 3. *Repo home* — *RESOLVED 2026-06-24 = in-nelix optional module*
    (=nelix-sandbox.el=, this doc's placement).  Not a separate repo.
 
