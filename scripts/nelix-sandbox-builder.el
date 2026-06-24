@@ -87,7 +87,13 @@ child shell does, so this recovers env vars set by `bwrap --setenv'."
     (write-region "deny" nil "/proc/self/setgroups")
     (write-region (concat "0 " gid " 1") nil "/proc/self/gid_map")
     (write-region (concat "0 " uid " 1") nil "/proc/self/uid_map")
-    ;; NEWNS|NEWNET|NEWUTS|NEWIPC = 0x20000|0x40000000|0x4000000|0x8000000
+    ;; NEWNS|NEWNET|NEWUTS|NEWIPC = 0x20000|0x40000000|0x4000000|0x8000000.
+    ;; (CLONE_NEWPID is intentionally NOT unshared here: PID-namespace
+    ;; isolation needs a fork(2) so a child becomes PID 1 + mounts a fresh
+    ;; /proc, but on the standalone runtime fork+heavy-allocation -- module
+    ;; load or the FS-closure mount sweep -- crashes the COW child (bump-arena
+    ;; fragility).  The syscalls work individually; the integration is blocked
+    ;; on a NeLisp runtime fork/arena fix.  See design 32 T4 PID-ns note.)
     (nelisp--syscall-unshare 1275199488)
     (princ "nelix-sandbox-builder: raw-ns namespaces established (network denied)\n")))
 

@@ -441,7 +441,25 @@ fails, proving the network namespace is real.
   + =$out=-only-RW + no-network properties — *a complete Nix-free, bwrap-free,
   Rust-free, libc-free, pure-Elisp hermetic build sandbox*.  Remaining vs
   bwrap: a content-addressed toolchain (T3 opt-in, also applies here) and
-  PID-namespace =/proc= (mount proc needs CLONE_NEWPID; skipped for now).
+  PID-namespace =/proc= (see the next note).
+- *T4 raw-ns PID namespace — ATTEMPTED, BLOCKED on a NeLisp runtime fork/arena
+  bug (2026-06-24).*  Full PID isolation + a fresh =/proc= needs =fork(2)= (so
+  a child becomes PID 1 in the new PID ns and mounts a procfs reflecting it).
+  The substrate works: =unshare(CLONE_NEWPID)= + =fork= via =(syscall-direct
+  57 …)= + =wait4=/=exit= via syscall-direct all work, and a *light* forked
+  child does the full FS closure + a fresh =/proc= correctly (verified in a
+  throwaway: =procpids=4= vs the host's ~576, host hidden, =cc= exit 42).  But
+  the *builder's* forked child crashes: forking AFTER the heavy module load
+  exhausts the COW bump arena in Step 4b (status error), and forking BEFORE it
+  segfaults during the child's module load.  I.e. =fork= + heavy subsequent
+  allocation trips the standalone runtime's COW/bump-arena fragility (same
+  family as the small-heap =make-list 10000= → exit 88).  This is a
+  *dev/nelisp runtime* fix (a fork-aware / non-bump arena), outside
+  nelix-sandbox.  Reverted cleanly; raw-ns ships WITHOUT PID-ns
+  (user/mount/net/uts/ipc namespaces + FS closure + no network — already
+  bwrap-equivalent on the hermeticity that matters).  The =nelisp--syscall-
+  {mount,pivot-root}= builtins stay (they power the FS closure); only the
+  fork/proc wiring is deferred.
 - *T5 SHIPPED + verified (2026-06-24).*  macOS/Windows note + graceful
   degrade.  The README gains a "Hermeticity tiers" section (the tier table,
   what Tier 2 provides, and the Linux-only nature of =:hermeticity 'tier2=).
