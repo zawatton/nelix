@@ -81,6 +81,7 @@
 
 (require 'nelix-compat)
 (require 'cl-lib)
+(require 'nelix-fetch)
 
 (eval-when-compile
   (require 'subr-x))
@@ -518,6 +519,98 @@ clone state produces byte-identical output."
                  "%d sha256 placeholders emitted in %s — replace before installing"
                  placeholder-count emit))
         count)))))
+
+;;;; Doc 33 M3: flake.nix -> emacs-package recipe import
+;;
+;; Convert the Nix flake's `pkgs.emacsPackages.melpaBuild' derivations into
+;; native `emacs-package' recipes (Doc 33 M2 preset).  A fetchFromGitHub block
+;; maps to a GitHub codeload tarball URL; the Nix NAR sha256 cannot be reused as
+;; the tarball hash, so the tarball is downloaded and re-hashed when
+;; RESOLVE-SHA256 is requested.
+
+(defun nelix-import--parse-flake-emacs-blocks (flake-file)
+  "Parse FLAKE-FILE `pkgs.emacsPackages.melpaBuild' GitHub blocks.
+Return a list of plists (:name :version :owner :repo :rev :deps).  Blocks
+without owner/repo/rev (fetchgit / fetchurl) are skipped."
+  (with-temp-buffer
+    (insert-file-contents flake-file)
+    (goto-char (point-min))
+    (let (blocks)
+      (while (re-search-forward
+              "^      \\([a-zA-Z0-9_-]+\\) = pkgs\\.emacsPackages\\.melpaBuild {" nil t)
+        (let* ((block-start (point))
+               (block-end (save-excursion
+                            (if (re-search-forward "^      };" nil t) (point) (point-max))))
+               pname version owner repo rev deps)
+          (save-restriction
+            (narrow-to-region block-start block-end)
+            (cl-flet ((field (re)
+                        (goto-char (point-min))
+                        (when (re-search-forward re nil t) (match-string 1))))
+              (setq pname (field "pname = \"\\([^\"]+\\)\";")
+                    version (field "version = \"\\([^\"]+\\)\";")
+                    owner (field "owner = \"\\([^\"]+\\)\";")
+                    repo (field "repo = \"\\([^\"]+\\)\";")
+                    rev (field "rev = \"\\([^\"]+\\)\";"))
+              (goto-char (point-min))
+              (when (re-search-forward
+                     "packageRequires = with pkgs\\.emacsPackages; \\[\\([^]]*\\)\\]" nil t)
+                (setq deps (split-string (match-string 1) "[ \t\n]+" t)))))
+          (when (and pname owner repo rev)
+            (push (list :name pname :version (or version "0.0.0")
+                        :owner owner :repo repo :rev rev :deps deps)
+                  blocks))
+          (goto-char block-end)))
+      (nreverse blocks))))
+
+(defun nelix-import--flake-codeload-url (owner repo rev)
+  "Return the GitHub codeload tarball URL for OWNER/REPO at REV."
+  (format "https://codeload.github.com/%s/%s/tar.gz/%s" owner repo rev))
+
+(defun nelix-import--resolve-tarball-sha256 (url)
+  "Download URL to a temp file and return its `sha256-<hex>' digest."
+  (let ((tmp (nelix-compat-make-temp-file "nelix-import-tarball-")))
+    (unwind-protect
+        (progn
+          (nelix-fetch--download-url url tmp)
+          (nelix-fetch-sha256-file tmp))
+      (ignore-errors (delete-file tmp)))))
+
+(defun nelix-import-flake-block-to-recipe (block &optional system resolve-sha256)
+  "Render flake BLOCK plist into an `emacs-package' recipe plist.
+BLOCK comes from `nelix-import--parse-flake-emacs-blocks'.  SYSTEM defaults
+to x86_64-linux.  When RESOLVE-SHA256 is non-nil, download the tarball and
+fill :sha256 (the Nix NAR hash is not the tarball hash)."
+  (let* ((sys (or system 'x86_64-linux))
+         (name (plist-get block :name))
+         (url (nelix-import--flake-codeload-url
+               (plist-get block :owner) (plist-get block :repo) (plist-get block :rev)))
+         (sha (when resolve-sha256 (nelix-import--resolve-tarball-sha256 url))))
+    (list :name name
+          :version (plist-get block :version)
+          :class 'emacs-package
+          :systems
+          (list (cons sys
+                      (list :source (append (list :type 'url :url url)
+                                            (when sha (list :sha256 sha)))
+                            :dependencies (plist-get block :deps)
+                            :install (list :type 'build
+                                           :build-system 'emacs-package
+                                           :pname name
+                                           :load-paths '(".")
+                                           :features (list (intern name)))))))))
+
+;;;###autoload
+(defun nelix-import-flake-emacs (flake-file &optional names resolve-sha256)
+  "Import FLAKE-FILE Emacs packages as `emacs-package' recipe plists.
+NAMES, when non-nil, restricts to those package names.  RESOLVE-SHA256
+downloads each tarball to fill :sha256 (slow; off by default)."
+  (let ((blocks (nelix-import--parse-flake-emacs-blocks flake-file)))
+    (mapcar (lambda (b) (nelix-import-flake-block-to-recipe b nil resolve-sha256))
+            (if names
+                (cl-remove-if-not
+                 (lambda (b) (member (plist-get b :name) names)) blocks)
+              blocks))))
 
 (provide 'nelix-import)
 ;;; nelix-import.el ends here

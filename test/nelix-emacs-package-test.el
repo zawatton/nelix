@@ -9,6 +9,7 @@
 (require 'ert)
 (require 'nelix)
 (require 'nelix-builder)
+(require 'nelix-import)
 
 (ert-deftest nelix-emacs-package-dash-recipe-shape ()
   "Doc 33 M1/M2: dash is a built `emacs-package' recipe using the preset."
@@ -66,5 +67,49 @@ and loads from the store.  Network-gated (NELIX_NET_TESTS)."
       (load "dash" nil t)
       (should (fboundp '-map))
       (should (equal '(2 3 4) (funcall (intern "-map") #'1+ '(1 2 3)))))))
+
+;;;; Doc 33 M3: flake.nix -> recipe import
+
+(defconst nelix-emacs-package-test--dir
+  (file-name-directory (or load-file-name buffer-file-name default-directory))
+  "Directory of this test file, captured at load time for fixture lookup.
+`load-file-name' is nil during `ert-run-tests', so it must be captured here.")
+
+(defun nelix-emacs-package-test--fixture (name)
+  "Return the absolute path of fixture NAME next to this test file."
+  (expand-file-name (concat "fixtures/" name) nelix-emacs-package-test--dir))
+
+(ert-deftest nelix-import-flake-emacs-parse ()
+  "Doc 33 M3: parse melpaBuild blocks (pname/owner/repo/rev/deps) from flake.nix."
+  (let* ((fixture (nelix-emacs-package-test--fixture "sample-flake.nix"))
+         (blocks (nelix-import--parse-flake-emacs-blocks fixture))
+         (s (seq-find (lambda (b) (equal (plist-get b :name) "s")) blocks))
+         (aw (seq-find (lambda (b) (equal (plist-get b :name) "ace-window")) blocks)))
+    (should (= 2 (length blocks)))
+    (should (equal "magnars" (plist-get s :owner)))
+    (should (equal "s.el" (plist-get s :repo)))
+    (should (equal "b4b8c03fcef316a27f75633fe4bb990aeff6e705" (plist-get s :rev)))
+    (should (null (plist-get s :deps)))
+    ;; dependency extraction from packageRequires.
+    (should (equal '("avy") (plist-get aw :deps)))))
+
+(ert-deftest nelix-import-flake-block-to-recipe ()
+  "Doc 33 M3: render a flake block into an `emacs-package' recipe (no fetch)."
+  (let* ((block (list :name "s" :version "0.0.0" :owner "magnars" :repo "s.el"
+                      :rev "abc123" :deps '("dash")))
+         (recipe (nelix-import-flake-block-to-recipe block))
+         (sys (cdr (assq 'x86_64-linux (plist-get recipe :systems))))
+         (source (plist-get sys :source))
+         (install (plist-get sys :install)))
+    (should (eq 'emacs-package (plist-get recipe :class)))
+    (should (eq 'url (plist-get source :type)))
+    (should (string-match-p "codeload\\.github\\.com/magnars/s\\.el/tar\\.gz/abc123"
+                            (plist-get source :url)))
+    ;; sha256 is left unresolved unless RESOLVE-SHA256 is requested.
+    (should (null (plist-get source :sha256)))
+    (should (equal '("dash") (plist-get sys :dependencies)))
+    (should (eq 'build (plist-get install :type)))
+    (should (eq 'emacs-package (plist-get install :build-system)))
+    (should (equal "s" (plist-get install :pname)))))
 
 ;;; nelix-emacs-package-test.el ends here
