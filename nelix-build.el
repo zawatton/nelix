@@ -82,6 +82,28 @@ input names if NAME is absent."
               (list (format "nelix-input: no input named %S; available: %S"
                             name (mapcar #'car nelix-build--inputs)))))))
 
+(defvar nelix-build--pname nil
+  "Bound to the package name (string) during an Emacs-package build phase.")
+(defvar nelix-build--source-archive nil
+  "Bound to the fetched source archive path during a build phase.")
+
+;;;###autoload
+(defun nelix-package-name ()
+  "Return the package name for the current Emacs-package build phase.
+Bound from the recipe's install `:pname' (defaults to the recipe `:name')."
+  (or nelix-build--pname
+      (signal 'nelix-build-error
+              '("nelix-package-name called outside an Emacs-package build phase"))))
+
+;;;###autoload
+(defun nelix-source-archive ()
+  "Return the fetched source archive path for the current build phase.
+This is the file `nelix-builder--install-build' downloaded for a
+fixed-output (`:sha256') source, so an `unpack' phase can extract it."
+  (or nelix-build--source-archive
+      (signal 'nelix-build-error
+              '("nelix-source-archive called with no fetched source"))))
+
 (defun nelix-build--env ()
   "Return the deterministic environment KV list for `nelix-invoke' (Tier-1).
 Sets a minimal PATH, scrubs HOME to the build dir, exports `out', and pins
