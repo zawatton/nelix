@@ -450,16 +450,25 @@ fails, proving the network namespace is real.
   child does the full FS closure + a fresh =/proc= correctly (verified in a
   throwaway: =procpids=4= vs the host's ~576, host hidden, =cc= exit 42).  But
   the *builder's* forked child crashes: forking AFTER the heavy module load
-  exhausts the COW bump arena in Step 4b (status error), and forking BEFORE it
-  segfaults during the child's module load.  I.e. =fork= + heavy subsequent
-  allocation trips the standalone runtime's COW/bump-arena fragility (same
-  family as the small-heap =make-list 10000= → exit 88).  This is a
-  *dev/nelisp runtime* fix (a fork-aware / non-bump arena), outside
-  nelix-sandbox.  Reverted cleanly; raw-ns ships WITHOUT PID-ns
-  (user/mount/net/uts/ipc namespaces + FS closure + no network — already
-  bwrap-equivalent on the hermeticity that matters).  The =nelisp--syscall-
-  {mount,pivot-root}= builtins stay (they power the FS closure); only the
-  fork/proc wiring is deferred.
+  exhausts the COW arena in Step 4b, and forking BEFORE it segfaults during
+  the child's module load.  *Root cause (diagnosed deeper 2026-06-24):* in a
+  forked child the runtime's *value boxing* is corrupted — an AOT builtin's
+  return value comes back as =#<object>= instead of an integer (e.g.
+  =(nelisp--syscall-mount …)= returns garbage in the child though its side
+  effect still happens), and any heavy boxing (module load) crashes.  SIDE
+  EFFECTS work in the child (mounts, =call-process=), which is why a *light*
+  child succeeds; it is the *allocated/boxed values* that break under fork's
+  COW.  I built and tested a contained mitigation — a =nelisp--arena-gc-
+  disable= AOT builtin that flips the arena RECLAIMER GATE (base+160=1) so the
+  child runs no GC — but it does NOT help: the child still crashes loading
+  modules, confirming the fault is the *value/arena representation under
+  fork*, not the collector.  A real fix is a *fork-safe value/arena system* in
+  the NeLisp runtime (dev/nelisp) — a major, high-risk core-runtime project,
+  well beyond nelix-sandbox.  Reverted cleanly (the gc-disable builtin too);
+  raw-ns ships WITHOUT PID-ns (user/mount/net/uts/ipc namespaces + FS closure
+  + no network — already bwrap-equivalent on the hermeticity that matters).
+  The =nelisp--syscall-{mount,pivot-root}= builtins stay (they power the FS
+  closure); only the fork/proc wiring is deferred to a NeLisp runtime fix.
 - *T5 SHIPPED + verified (2026-06-24).*  macOS/Windows note + graceful
   degrade.  The README gains a "Hermeticity tiers" section (the tier table,
   what Tier 2 provides, and the Linux-only nature of =:hermeticity 'tier2=).
