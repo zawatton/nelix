@@ -337,12 +337,25 @@ fails, proving the network namespace is real.
   single-path shape =syscall(nr, cstring(path), int)=.  That can express
   =chroot(path)= but NOT =unshare(flags)= (flags belong in arg0, not a path
   pointer), =mount=/=pivot_root= (multiple cstrings), or =execve= (cstring
-  arrays) — i.e. it cannot create the namespaces or build the rootfs.  Per
-  the no-Rust hard rule, raw-ns stays blocked; *=bwrap= is the production
-  backend*.  UNBLOCK condition: a NeLisp binary built with a functional
-  generic-syscall trampoline + cstring layer (a runtime build concern, not
-  pure-elisp).  The pluggable contract (§4) is unchanged, so a future
-  =raw-ns= backend can drop in behind it without touching T0–T3.
+  arrays) — i.e. it cannot create the namespaces or build the rootfs, so
+  *=bwrap= is the production backend* on the current binary.
+  *UNBLOCK PATH — pure Elisp, no Rust (corrected 2026-06-24):* NeLisp's
+  =extern-call= already calls libc functions directly from Elisp, with
+  =alloc-bytes=/=dealloc-bytes= for raw memory and =ptr-read/write= for
+  marshalling — see the shipped libc-syscall builtins
+  =lisp/nelisp-cc-bi-syscall-stat.el= (=(extern-call stat cstr statbuf)=),
+  =-read-file=, =-canonicalize=, =nelisp-cc-bi-nl-write-file.el=
+  (open/write/close).  So =unshare(flags)= = =(extern-call unshare flags)=,
+  =mount=/=pivot_root= (cstrings via =alloc-bytes=), and =execve= (cstring
+  arrays) are all expressible in Elisp following that template — exactly the
+  repo's pure-Elisp mission.  The ONLY constraint is that =extern-call= is a
+  native-codegen form, so these must be added as *AOT builtins* (the
+  =nelisp-cc-bi-*= pattern) and the standalone binary *rebuilt*; the
+  interpreter cannot run =extern-call=.  Hence T4 is "not yet implemented in
+  the NeLisp runtime + needs a rebuild", a *dev/nelisp* task, NOT a Rust or
+  pure-Elisp-impossibility blocker.  The pluggable contract (§4) is
+  unchanged, so the =raw-ns= backend drops in behind it without touching
+  T0–T3 once those builtins ship.
 - *T5 SHIPPED + verified (2026-06-24).*  macOS/Windows note + graceful
   degrade.  The README gains a "Hermeticity tiers" section (the tier table,
   what Tier 2 provides, and the Linux-only nature of =:hermeticity 'tier2=).
