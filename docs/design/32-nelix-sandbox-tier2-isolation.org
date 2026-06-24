@@ -316,6 +316,26 @@ fails, proving the network namespace is real.
   read entropy/time; cross-host bit-reproducibility needs a pinned CA
   toolchain (building one is out of scope).  No regression (T0/T1/T2
   smokes still pass).
+- *T4 BLOCKED — audit failed (2026-06-24).*  The raw-ns backend is NOT
+  feasible on the current standalone NeLisp binary.  The dynsym audit
+  (=ldd= shows a *static* binary, 0 dynsym entries, so dlsym is moot; the
+  real question is the runtime syscall surface) found: the generic
+  =nelisp--syscall= builtin is a non-functional *stub* (calling it returns
+  its own symbol; =nelisp--syscall-supported-p= is absent), and the cstring
+  marshalling layer (=nelisp-os--alloc-cstring=, even after loading
+  =nelisp-stdlib-os=) bottoms out in further stubbed builtins
+  (=string-bytes= …) so it never allocates C memory.  The ONLY functional
+  syscall primitive is =nelisp--syscall-path-int=, which is real (verified:
+  =chdir= /tmp → 0, nonexistent → -ENOENT) but supports ONLY the
+  single-path shape =syscall(nr, cstring(path), int)=.  That can express
+  =chroot(path)= but NOT =unshare(flags)= (flags belong in arg0, not a path
+  pointer), =mount=/=pivot_root= (multiple cstrings), or =execve= (cstring
+  arrays) — i.e. it cannot create the namespaces or build the rootfs.  Per
+  the no-Rust hard rule, raw-ns stays blocked; *=bwrap= is the production
+  backend*.  UNBLOCK condition: a NeLisp binary built with a functional
+  generic-syscall trampoline + cstring layer (a runtime build concern, not
+  pure-elisp).  The pluggable contract (§4) is unchanged, so a future
+  =raw-ns= backend can drop in behind it without touching T0–T3.
 
 * 8. Integration with nelix
 
@@ -359,9 +379,11 @@ fails, proving the network namespace is real.
 - *bwrap absence / unprivileged userns disabled* on the host → =tier2=
   cannot run.  Mitigation: detect early (=bwrap --version= + a userns
   probe), fail loudly with the Tier-1 fallback; never silently downgrade.
-- *raw-ns dynsym reachability* (31 §14 risk, transitive): a needed syscall
-  symbol may not be in the static binary's dynsym; then =raw-ns= is blocked
-  (no Rust) and =bwrap= remains the only backend.  Audit before T4.
+- *raw-ns dynsym reachability* (31 §14 risk, transitive) — *MATERIALISED
+  2026-06-24*: the audit found the generic syscall trampoline + cstring
+  layer are stubbed on the current standalone binary (only the single-path
+  =nelisp--syscall-path-int= works), so =raw-ns= is blocked (no Rust) and
+  =bwrap= remains the only backend.  See §7 "T4 BLOCKED" for the full audit.
 - *Toolchain drift* (31 §12) — accepted until T3's CA-toolchain.
 - *Standalone reader quirks* — the pseudo-=nil=/=t= bug (nelix =c859278=)
   and the UTF-8 raw-byte caveat already known for the standalone runtime;
