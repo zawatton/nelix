@@ -276,6 +276,19 @@ fails, proving the network namespace is real.
   SIGSEGVs — a =princ= between loads avoids it; (b) the standalone binary
   always exits 0 — success is reported via a disk status-file the host
   reads back, not the exit code.
+- *T1 SHIPPED + verified (2026-06-24).*  Input-closure binding inside the
+  sandbox.  The dependency graph already builds bottom-up and threads each
+  built dep's store path into the dependent's phase inputs (31 §10.5); the
+  tier2 dynamic binding spans the recursive dependency build, so each
+  dependency builds in *its own* sandbox first.  =nelix-sandbox--bwrap-argv=
+  bind-mounts every declared input READ-ONLY at its canonical store path, so
+  =(nelix-input NAME)= resolves identically inside.  =make smoke-sandbox-deps=
+  is green (2/2): =useapp= depends on =libgreet= → libgreet builds sandboxed
+  (gen 1), its store path is bound RO into useapp's sandbox, useapp reads it
+  via =(nelix-input "libgreet")= and the binary exits 42 — the
+  dependency-graph + (assoc-ref inputs) analogue proven inside the namespace,
+  network denied, no nix.  Required no new binding code (the input bind was
+  already wired in T0's =bwrap-argv=).
 
 * 8. Integration with nelix
 
