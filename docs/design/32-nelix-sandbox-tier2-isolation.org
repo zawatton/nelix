@@ -356,6 +356,30 @@ fails, proving the network namespace is real.
   pure-Elisp-impossibility blocker.  The pluggable contract (§4) is
   unchanged, so the =raw-ns= backend drops in behind it without touching
   T0–T3 once those builtins ship.
+- *T4 implementation map (2026-06-24 deep audit of dev/nelisp).*  The
+  standalone binary is built ENTIRELY from Elisp by the AOT compiler (=make
+  standalone-reader=; no Rust/Cargo in the repo).  =extern-call= lowers to a
+  PLT32 reloc against the bare symbol — no allow-list — so a new libc symbol
+  (=unshare=/=mount=/…) links on demand; =alloc-bytes=/=dealloc-bytes=,
+  =ptr-read/write-u8/u64=, =str-len=, =nelisp_cstr_from_sexp= are the
+  marshalling substrate; the per-syscall AOT-builtin pattern
+  (=lisp/nelisp-cc-bi-nl-make-directory.el= = =(extern-call mkdir cstr mode)=,
+  =-syscall-stat=, =-read-file=) is the proven template, registered in
+  =scripts/compile-elisp-objects.el='s manifest.  THE HARD PART: a new AOT
+  syscall body is NOT callable from interpreted standalone-reader Elisp by
+  default — =nelisp--syscall-stat= et al. are "combiner-deferred" (calling
+  them via the apply path *aborts*, which is the SIGSEGV the audit saw).
+  Each must get a *dispatch arm* in the reader's interpreter dispatch + an
+  entry in the reader-builtin fboundp list (see
+  =scripts/reader-surface-audit.el=).  The pre-existing generic
+  =nelisp--syscall= path is itself broken (segfaults) in this binary, so the
+  viable route is per-syscall AOT builtins, NOT the generic kernel.  Net: T4
+  is *pure-Elisp + a binary rebuild*, but it reaches into the reader's
+  interpreter-dispatch (the runtime's most sensitive layer) — a focused
+  dev/nelisp project (author bodies + dispatch arms for
+  unshare/mount/pivot_root/execve + a cstring-array helper for execve +
+  rebuild + verify extern-call links the new libc symbols), gated by a
+  one-syscall (=unshare=) end-to-end PoC.
 - *T5 SHIPPED + verified (2026-06-24).*  macOS/Windows note + graceful
   degrade.  The README gains a "Hermeticity tiers" section (the tier table,
   what Tier 2 provides, and the Linux-only nature of =:hermeticity 'tier2=).
