@@ -75,6 +75,25 @@
         (nsr-fail "positive: binary not found at %s" bin)))
   (error (nsr-fail "positive: build errored: %s" (error-message-string e))))
 
+;; ---- POSITIVE (deps + FS closure): useapp depends on libgreet ----
+;; libgreet builds in its own raw-ns closure; its store path is bound RO into
+;; useapp's closure so (nelix-input "libgreet") resolves and useapp exits 42.
+(nelix-registry--load-file
+ (expand-file-name "test/fixtures/libgreet.el" nsr--root))
+(nelix-registry--load-file
+ (expand-file-name "test/fixtures/useapp.el" nsr--root))
+(condition-case e
+    (let* ((report (nsr--install "useapp"))
+           (bin (expand-file-name "bin/useapp" (plist-get report :store-path))))
+      (if (file-exists-p bin)
+          (let ((rc (call-process bin nil nil nil)))
+            (if (eq rc 42)
+                (nsr-log (concat "DEPS OK: useapp built under raw-ns exits 42 -- libgreet built "
+                                 "in its own closure, bound RO into useapp's, (nelix-input) resolved"))
+              (nsr-fail "deps: useapp exit %S (expected 42)" rc)))
+        (nsr-fail "deps: useapp binary not found")))
+  (error (nsr-fail "deps: build errored: %s" (error-message-string e))))
+
 ;; ---- NEGATIVE: network-probe build must fail under raw-ns (NEWNET) ----
 (nelix-registry--load-file
  (expand-file-name "test/fixtures/hello-sandbox-net.el" nsr--root))

@@ -120,6 +120,65 @@ child shell does, so this recovers env vars set by `bwrap --setenv'."
   (nelix-registry--canonicalize-nil-t nelix-sandbox-builder--raw-spec)
   "The canonicalized job spec.")
 
+;; Step 4b helpers — bind a host path into the new root NR (mkdir the target
+;; first).  Read-only = bind + a REMOUNT|RDONLY pass; read-write = bind only.
+;; MS_BIND|MS_REC = 20480, +MS_REMOUNT|MS_RDONLY = 20513.
+(defun nelix-sandbox-builder--rawns-bindro (nr src)
+  (let ((d (concat nr src)))
+    (call-process "/bin/mkdir" nil nil nil "-p" d)
+    (nelisp--syscall-mount src d "" 20480 "")
+    (nelisp--syscall-mount "" d "" 20513 "")))
+(defun nelix-sandbox-builder--rawns-bindrw (nr src)
+  (let ((d (concat nr src)))
+    (call-process "/bin/mkdir" nil nil nil "-p" d)
+    (nelisp--syscall-mount src d "" 20480 "")))
+(defun nelix-sandbox-builder--rawns-bindfile (nr src)
+  (let ((d (concat nr src)))
+    (call-process "/bin/mkdir" nil nil nil "-p" (file-name-directory d))
+    (call-process "/bin/sh" nil nil nil "-c" (concat ": > '" d "'"))
+    (nelisp--syscall-mount src d "" 20480 "")))
+
+;; Step 4b — raw-ns FS closure (v2): assemble a minimal root that contains
+;; ONLY the toolchain + declared inputs + $out + the build dir, then
+;; pivot_root into it so the host filesystem is HIDDEN (the input-closure /
+;; read-only property bwrap gives, here in pure elisp via
+;; nelisp--syscall-{mount,pivot-root} + path-int).  Runs AFTER the modules
+;; load (Step 3, off the host FS) and BEFORE the phases.  Gated by
+;; NELIX_SANDBOX_RAWNS + the mount builtin (inert under bwrap).
+(when (and (nelix-sandbox-builder--shell-getenv "NELIX_SANDBOX_RAWNS")
+           (fboundp 'nelisp--syscall-mount))
+  (let* ((spec nelix-sandbox-builder--spec)
+         (out (plist-get spec :out))
+         (build (plist-get spec :build))
+         (inputs (plist-get spec :inputs))
+         (status-file (plist-get spec :status-file))
+         (nr (concat build "-rawns-root")))
+    (call-process "/bin/mkdir" nil nil nil "-p" nr)
+    (nelisp--syscall-mount "" "/" "" 278528 "")        ; MS_REC|MS_PRIVATE
+    (nelisp--syscall-mount "tmpfs" nr "tmpfs" 0 "")    ; minimal root
+    (nelix-sandbox-builder--rawns-bindro nr "/usr")
+    (nelix-sandbox-builder--rawns-bindro nr "/etc")
+    ;; merged-usr: /bin /lib /lib64 /sbin are symlinks into usr.
+    (call-process "/bin/ln" nil nil nil "-s" "usr/bin" (concat nr "/bin"))
+    (call-process "/bin/ln" nil nil nil "-s" "usr/lib" (concat nr "/lib"))
+    (call-process "/bin/ln" nil nil nil "-s" "usr/lib64" (concat nr "/lib64"))
+    (call-process "/bin/ln" nil nil nil "-s" "usr/sbin" (concat nr "/sbin"))
+    (nelix-sandbox-builder--rawns-bindrw nr "/dev")
+    (call-process "/bin/mkdir" nil nil nil "-p" (concat nr "/tmp"))
+    (nelisp--syscall-mount "tmpfs" (concat nr "/tmp") "tmpfs" 0 "")
+    (nelix-sandbox-builder--rawns-bindrw nr build)
+    (nelix-sandbox-builder--rawns-bindrw nr out)
+    (dolist (in inputs)
+      (nelix-sandbox-builder--rawns-bindro nr (cdr in)))
+    (when (stringp status-file)
+      (nelix-sandbox-builder--rawns-bindfile nr status-file))
+    (call-process "/bin/mkdir" nil nil nil "-p" (concat nr "/oldroot"))
+    (nelisp--syscall-path-int 80 nr 0)                  ; chdir(new root)
+    (nelisp--syscall-pivot-root "." "oldroot")
+    (nelisp--syscall-path-int 80 "/" 0)                ; chdir(/)
+    (nelisp--syscall-path-int 166 "/oldroot" 2)        ; umount2(MNT_DETACH)
+    (princ "nelix-sandbox-builder: raw-ns FS closure established (host fs hidden)\n")))
+
 ;; Step 5 — run each phase via the unchanged executor path.  Success/failure
 ;; is reported to the host by writing the SPEC's :status-file.  The standalone
 ;; runtime ALWAYS exits 0 (kill-emacs / error / nelisp-sys-exit all leave the

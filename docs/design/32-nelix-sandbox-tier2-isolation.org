@@ -420,6 +420,28 @@ fails, proving the network namespace is real.
   FS hermeticity, but it is the FIRST Nix-free, bwrap-free, Rust-free,
   libc-free build sandbox — entirely Elisp, the repo's mission.  Commits:
   nelisp =c21b1b8e= (unshare builtin), nelix (this change).
+- *T4 raw-ns backend v2 (FS closure) SHIPPED + verified (2026-06-24) — pure
+  Elisp, bwrap-equivalent hermeticity.*  Added =nelisp--syscall-{mount,
+  pivot-root}= builtins (nelisp =64838d3e=, same =syscall-direct= pattern,
+  =nl_bi_make_cpath= for cstrings; chroot/chdir/umount2/mkdir via the
+  existing =path-int=).  The builder's gated Step 4b now assembles a minimal
+  root and pivot_roots into it AFTER the modules load and BEFORE the phases:
+  =mount("","/",MS_REC|MS_PRIVATE)= → tmpfs root → bind =/usr= + =/etc=
+  read-only + symlink =/bin /lib /lib64 /sbin= (merged-usr) → bind =/dev=,
+  tmpfs =/tmp= → bind the build dir + =$out= read-write and each declared
+  input read-only at its canonical path → =pivot_root= → =umount2(MNT_DETACH)=
+  the old root.  Verified: inside the build the host filesystem is HIDDEN
+  (=test ! -e /home/USER= passes), yet =cc= compiles (toolchain visible via
+  =/usr=) and =(nelix-input NAME)= resolves an input bound read-only in the
+  closure.  =make smoke-sandbox-rawns= is green (2/2, non-flaky):
+  =hello-native= (no deps) + =useapp= (deps: libgreet, each in its own
+  closure, the dep bound RO into the dependent's) + the =curl= negative
+  assertion (NEWNET).  No regression (bwrap + standalone smokes pass).  This
+  closes the v1 FS gap: raw-ns v2 now matches bwrap's read-only input-closure
+  + =$out=-only-RW + no-network properties — *a complete Nix-free, bwrap-free,
+  Rust-free, libc-free, pure-Elisp hermetic build sandbox*.  Remaining vs
+  bwrap: a content-addressed toolchain (T3 opt-in, also applies here) and
+  PID-namespace =/proc= (mount proc needs CLONE_NEWPID; skipped for now).
 - *T5 SHIPPED + verified (2026-06-24).*  macOS/Windows note + graceful
   degrade.  The README gains a "Hermeticity tiers" section (the tier table,
   what Tier 2 provides, and the Linux-only nature of =:hermeticity 'tier2=).
