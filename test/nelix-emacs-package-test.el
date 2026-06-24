@@ -34,9 +34,8 @@
 build phases (unpack/compile/autoload/install)."
   (let ((phases (nelix-builder--resolve-phases 'emacs-package nil)))
     (should (assq 'unpack phases))
-    (should (assq 'compile phases))
-    (should (assq 'autoload phases))
     (should (assq 'install phases))
+    (should (assq 'autoload phases))
     ;; Each phase body is a Lisp-native FORM (cons/list), not a shell string.
     (dolist (p phases)
       (should-not (stringp (cdr p))))))
@@ -49,9 +48,9 @@ and loads from the store.  Network-gated (NELIX_NET_TESTS)."
   (let* ((rep (nelix-native-install "dash" "native-trial-ert" 'x86_64-linux))
          (store-path (plist-get rep :store-path)))
     (should (eq 'ok (plist-get rep :status)))
-    ;; M1b/M2 artifacts: byte-compiled .elc + generated autoloads.
-    (should (file-exists-p (expand-file-name "dash.elc" store-path)))
-    (should (file-exists-p (expand-file-name "dash-functional.elc" store-path)))
+    ;; M5 artifacts: .el sources (no byte-compile at install time) + autoloads.
+    (should (file-exists-p (expand-file-name "dash.el" store-path)))
+    (should (file-exists-p (expand-file-name "dash-functional.el" store-path)))
     (should (file-exists-p (expand-file-name "dash-autoloads.el" store-path)))
     ;; Hidden source files (e.g. .dir-locals.el) must not leak into the store.
     (should-not (file-exists-p (expand-file-name ".dir-locals.el" store-path)))

@@ -574,9 +574,10 @@ all profiles are considered live roots."
 ;;;###autoload
 (defun nelix-profile-activate-emacs (&optional profile-name generation)
   "Add PROFILE-NAME GENERATION Emacs load paths to `load-path'.
-
-Return the load-path entries that were added or already present in
-the profile metadata order."
+Also load each path's generated `*-autoloads.el' so package commands become
+available (robustly: a broken autoloads file must not abort activation of the
+rest -- Doc 33 M5).  Return the load-path entries that were added or already
+present in the profile metadata order."
   (let (activated)
     (dolist (path (nelix-profile-emacs-load-paths profile-name generation)
                   (nreverse activated))
@@ -585,7 +586,10 @@ the profile metadata order."
                  (or (not (fboundp 'file-directory-p))
                      (file-directory-p path)))
         (add-to-list 'load-path path)
-        (push path activated)))))
+        (push path activated)
+        (when (fboundp 'directory-files)
+          (dolist (al (directory-files path t "-autoloads\\.el\\'"))
+            (condition-case nil (load al t t) (error nil))))))))
 
 (defun nelix-profile--windows-system-p (system)
   "Return non-nil when SYSTEM is a Windows platform id."

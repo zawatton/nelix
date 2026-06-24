@@ -243,9 +243,30 @@ content-addressed toolchain pinned here.  Bound dynamically by callers.")
         '("."))))
 
 (defun nelix-builder--absolute-emacs-load-paths (store-path install)
-  "Return absolute Emacs load-path directories for STORE-PATH and INSTALL."
-  (mapcar (lambda (path) (expand-file-name path store-path))
-          (nelix-builder-emacs-load-paths install)))
+  "Return absolute Emacs load-path directories for STORE-PATH and INSTALL.
+For emacs-package builds, detect the directories under STORE-PATH that
+actually contain .el files, so `lisp/' subdirectories are picked up and each
+package keeps its own load-path (no flattening, no name collisions).  Fall
+back to the declared :load-paths otherwise."
+  (or (and (eq (plist-get install :build-system) 'emacs-package)
+           (file-directory-p store-path)
+           (let* ((pname (plist-get install :pname))
+                  (main (and pname (concat pname ".el")))
+                  primary all)
+             (dolist (f (directory-files-recursively store-path "\\.el\\'"))
+               (unless (string-match-p "/\\.nelix\\(?:/\\|\\'\\)" f)
+                 (let ((dir (directory-file-name (file-name-directory f))))
+                   (unless (member dir all) (push dir all))
+                   ;; The directory holding the package's own NAME.el is the
+                   ;; primary load-path; preferring it keeps a vendored/stub copy
+                   ;; of another package (in a different dir) from shadowing the
+                   ;; real one.
+                   (when (and main (equal (file-name-nondirectory f) main)
+                              (not (member dir primary)))
+                     (push dir primary)))))
+             (or (nreverse primary) (nreverse all))))
+      (mapcar (lambda (path) (expand-file-name path store-path))
+              (nelix-builder-emacs-load-paths install))))
 
 ;;;###autoload
 (defun nelix-builder-render-windows-shim (command target)
@@ -578,26 +599,28 @@ cons cell.")
      ;; elpa/git Emacs package (skipping hidden files like .dir-locals.el).
      (unpack
       . (nelix-invoke "tar" "xzf" (nelix-source-archive) "--strip-components=1"))
-     (compile
-      . (let ((load-path (cons nelix-build--dir load-path)))
-          (require 'bytecomp)
-          (dolist (f (directory-files nelix-build--dir t "\\.el\\'"))
-            (unless (or (string-prefix-p "." (file-name-nondirectory f))
-                        (string-match-p "autoloads" f))
-              ;; Best-effort: a package whose deps are not yet on `load-path'
-              ;; may fail to byte-compile (e.g. a missing macro).  Keep the .el
-              ;; (still loadable) and continue rather than failing the build.
-              (condition-case nil (byte-compile-file f) (error nil))))))
+     (install
+      . (let ((files (nelix-build-package-el-files)))
+          ;; Keep each package's directory structure (lisp/ subdirs) so load
+          ;; paths stay separate and names never collide.  Install .el only:
+          ;; byte-compiling before the full dependency closure is on load-path
+          ;; produces broken .elc that break activation; plain .el always loads.
+          (nelix-mkdir-p (nelix-out))
+          (dolist (f files)
+            (let ((dest (expand-file-name (file-relative-name f nelix-build--dir)
+                                          (nelix-out))))
+              (nelix-mkdir-p (file-name-directory dest))
+              (nelix-copy-file f dest)))))
      (autoload
       . (progn
           (require 'package)
-          (package-generate-autoloads (nelix-package-name) nelix-build--dir)))
-     (install
-      . (progn
-          (nelix-mkdir-p (nelix-out))
-          (dolist (f (directory-files nelix-build--dir t "\\.elc?\\'"))
-            (unless (string-prefix-p "." (file-name-nondirectory f))
-              (nelix-copy-file f (expand-file-name (file-name-nondirectory f) (nelix-out)))))))))
+          ;; Generate autoloads for every $out directory that holds .el.
+          (let (dirs)
+            (dolist (f (directory-files-recursively (nelix-out) "\\.el\\'"))
+              (let ((dir (directory-file-name (file-name-directory f))))
+                (unless (member dir dirs) (push dir dirs))))
+            (dolist (dir dirs)
+              (package-generate-autoloads (nelix-package-name) dir)))))))
   "Alist mapping build-system symbols to preset (NAME . SHELL-CMD) phase lists.
 \\='trivial is absent: no preset, recipe must supply all :build-phases.
 Each preset lists standard phases in execution order.

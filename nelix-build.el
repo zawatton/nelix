@@ -104,6 +104,22 @@ fixed-output (`:sha256') source, so an `unpack' phase can extract it."
       (signal 'nelix-build-error
               '("nelix-source-archive called with no fetched source"))))
 
+;;;###autoload
+(defun nelix-build-package-el-files (&optional dir)
+  "Return package source .el files under DIR (default the build dir), recursively.
+Excludes hidden files, generated autoloads, and test/example/dev/doc/feature
+directories, so packages whose .el live under a `lisp/' subdirectory (e.g.
+magit) are handled while non-source .el are skipped."
+  (let ((root (or dir nelix-build--dir))
+        result)
+    (dolist (f (directory-files-recursively root "\\.el\\'"))
+      (let ((rel (concat "/" (file-relative-name f root))))
+        (unless (or (string-prefix-p "." (file-name-nondirectory f))
+                    (string-match-p "autoloads" f)
+                    (string-match-p "/\\(?:tests?\\|examples?\\|dev\\|docs?\\|features\\|stubs?\\|vendor\\)/" rel))
+          (push f result))))
+    (nreverse result)))
+
 (defun nelix-build--env ()
   "Return the deterministic environment KV list for `nelix-invoke' (Tier-1).
 Sets a minimal PATH, scrubs HOME to the build dir, exports `out', and pins
