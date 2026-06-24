@@ -1,0 +1,167 @@
+#+TITLE: Doc 33 — nelix-native Emacs Package Build Lane
+#+AUTHOR: zawatton
+#+DATE: 2026-06-24
+
+* Status
+:PROPERTIES:
+:STATE: DRAFT-2026-06-24
+:END:
+
+DRAFT.  Design for fetching, building, and installing Emacs Lisp packages
+through the =nelix-native= backend with *no Nix dependency*, closing the gap
+that currently forces all 203 =init.el= packages onto the Nix store.
+
+This is the follow-on to Doc 22 (native store) and Doc 31 (Nix-free source-build
+executor): Doc 31 built the generic phase executor + sandbox; Doc 33 specializes
+it for the Emacs-package case and supplies the recipe/converter lanes that 203
+real packages need.
+
+* 1. Motivation
+
+The init.el migration is complete *through the Nix backend*: 203 packages are
+declared as a nelix manifest, locked, and installed into a Nix-store profile
+(=~/.local/state/nelix/profile -> /nix/store/...-profile=, driven by a 204 KB
+=flake.nix= of =pkgs.emacsPackages.melpaBuild= derivations).  =nelix-native=,
+however, cannot yet build or install Emacs packages — so the "Nix-free" promise
+is unmet for the daily Emacs environment.
+
+* 2. Current state (verified 2026-06-24)
+
+| Capability                              | Status today                                  |
+|-----------------------------------------+-----------------------------------------------|
+| native registry recipes                 | 6 only, all =:class system-command= script-shims (git/fd/ripgrep/jq/curl/tree) |
+| =emacs-package= recipe class            | does not exist                                |
+| =nelix-native= store contents           | empty (=native list= => 0; profile entries nil) |
+| 203 real packages                       | Nix store only (=flake.nix= melpaBuild)       |
+| =nelix-builder= install paths           | copy / script-shim only; NO byte-compile or autoload phase |
+| =nelix-fetch= fetchers                  | url + git, sha256-verified (reusable for elpa tarballs) |
+| elpa/MELPA -> native recipe converter   | does not exist                                |
+| =nelix-native= =:build= capability flag | =nil=                                         |
+
+Net: =nelix-native= is currently a "shim existing system binaries" backend.  It
+has the store/profile/generation/rollback/lock substrate (Doc 22) and a generic
+phase executor + sandbox (Doc 31), but no Emacs-package build vocabulary and no
+recipe corpus.
+
+* 3. Goal & scope
+
+** In scope
+- An =emacs-package= recipe class: =:source= (elpa/git/url + =:sha256=),
+  =:deps=, and =:build= phases expressed as nelix-build FORMS (Doc 31 vocabulary).
+- A native Emacs build phase: =unpack -> require deps on load-path ->
+  byte-compile -> generate autoloads (=package-generate-autoloads=) ->
+  emit a profile entry contributing a load-path directory=.
+- A converter from the existing =flake.nix= (203 =melpaBuild= derivations:
+  =pname=, =version=, =src=, dependency closure) into native recipes, so the
+  already-curated migration source of truth is reused rather than re-derived.
+- Dependency resolution + lock for the full 203-package closure
+  (reuse =nelix-builder= recipe dependency graph + cycle detection).
+- init.el cutover: =nelix-package-activate-emacs= sources the *native* profile
+  instead of the Nix profile, with =my-nelix-audit= parity.
+
+** Out of scope (separate work)
+- Native compilation (=.eln=) of built packages — start byte-code only; add a
+  later phase that runs =native-compile= inside the Doc 31 sandbox.
+- Packages with C modules (vterm, pdf-tools, emacsql-sqlite): need a toolchain;
+  fall back to the system/Nix backend per backend-policy, flagged explicitly.
+- A hosted/remote package registry-server (Doc 22 N-future).
+
+* 4. Design
+
+** 4.1 emacs-package recipe class
+#+begin_src elisp
+(:name "dash"
+ :version "2.19.1"
+ :class emacs-package
+ :systems
+ ((x86_64-linux
+   :source (:type url
+            :url "https://elpa.gnu.org/packages/dash-2.19.1.tar"
+            :sha256 "sha256-...")
+   :deps ()                       ; resolved native recipe names
+   :build (emacs-package-build))))  ; nelix-build FORM, see 4.3
+#+end_src
+Git-only packages use =:source (:type git :url ... :rev ... :sha256 ...)= —
+=nelix-fetch= already supports this exact shape (worklog 2026-06-17).
+
+** 4.2 Fetch
+Reuse =nelix-fetch= unchanged: url fetch for elpa/MELPA tarballs, git fetch for
+source-only packages, =sha256= verification before unpack.  No new fetcher type
+is required; an elpa tarball is just a url source.
+
+** 4.3 Build phase (the new vocabulary)
+A new builder entry =nelix-builder--install-emacs-package= (or a Doc 31 FORM
+=(emacs-package-build)=) that, inside the build dir / =$out=:
+1. Unpacks the verified source (=copy-source-contents= already exists).
+2. Adds each dependency's =$out/lisp= to =load-path= (deps are built first via
+   the dependency graph, mirroring =nelix-native-install-recipe=).
+3. Byte-compiles =*.el= -> =*.elc= with =byte-compile-file= (warnings non-fatal,
+   logged), in dependency-correct =load-path= order.
+4. Generates autoloads via =package-generate-autoloads PKG $out= ->
+   =$out/PKG-autoloads.el=.
+5. Emits a profile entry: =(:name PKG :version V :store-path $out :load-path
+   ($out))= consumed by =nelix-package-activate-emacs=.
+
+This is a *specialization* of the Doc 31 executor (it runs as build FORMS), so it
+inherits the Tier-0/1/2 hermeticity story for free.
+
+** 4.4 flake.nix -> native recipe converter
+A one-shot importer =nelix-import-flake-emacs= that parses
+=~/.local/state/nelix/flake.nix=: each =NAME = pkgs.emacsPackages.melpaBuild {
+pname; version; src = fetch...; packageRequires = [ ... ]; }= block becomes an
+=emacs-package= recipe.  =src= -> =:source= url+sha256 (already pinned in
+=flake.lock=); =packageRequires= -> =:deps=.  This reuses the 203-package
+curation work instead of re-resolving MELPA from scratch.
+
+** 4.5 Dependency resolution + lock
+Reuse =nelix-builder='s recipe dependency graph (=nelix-native-install-recipe=
+already does topological install with cycle detection + missing-dep errors).
+Lock = existing nelix lock v2, with =:backend nelix-native= and per-package
+=:sha256= (backend-independent lock-check already shipped, worklog 2026-06-20).
+
+** 4.6 init.el cutover
+=nelix-package-activate-emacs= gains a native code path: when the native profile
+has the package set, prepend each entry's =:load-path= and load
+=PKG-autoloads.el=.  =my-nelix-audit= compares the manifest against the *native*
+profile.  Backend-policy already prefers =nelix-native= first, so once recipes
+exist =apply= targets native automatically; Nix becomes the documented fallback
+for C-module packages.
+
+* 5. Phases & size estimate
+
+The user asked for a *size estimate*; this is the deliverable's headline.
+
+| Phase | Deliverable                                                        | Rough LOC | Risk   |
+|-------+--------------------------------------------------------------------+-----------+--------|
+| M1    | =emacs-package= recipe class + validation; one package (dash) built end-to-end *by hand-written recipe* | ~150 + tests | low    |
+| M2    | =emacs-package-build= phase (unpack/byte-compile/autoloads/profile entry) generalized | ~300      | medium |
+| M3    | =flake.nix -> native recipe= converter (203 melpaBuild blocks)     | ~250      | medium |
+| M4    | Dependency-closure resolution + lock + native install of full 203  | ~200 (reuse builder graph) | medium-high |
+| M5    | init.el native-profile cutover + =my-nelix-audit= parity + gates   | ~150 + gates | medium |
+
+Total rough order: *~1,000–1,200 LOC of Elisp + ERT + one new operational gate*,
+i.e. a multi-session project (comparable to a Doc 22 N-phase block), not a
+single-session change.  M1+M2 alone (a real package building natively) is the
+feasibility milestone and is the recommended first commitment.
+
+* 6. Risks & open questions
+- *Byte-compile load-path ordering*: deps must be on =load-path= and macro-
+  providing deps must be loaded (not just present) before compiling a dependent.
+  Mitigation: topological build order + =require= of macro deps.
+- *C-module packages* (vterm, pdf-tools, emacsql-sqlite, tree-sitter grammars):
+  need a build toolchain; out of scope for M1–M5, route to system/Nix backend
+  and flag in audit.
+- *native-comp (=.eln=)*: deferred; byte-code first.  =.eln= can be a later phase
+  inside the Doc 31 sandbox.
+- *Version-pin parity*: native =:sha256= must match =flake.lock= so the native
+  profile is byte-for-byte the curated set; the converter should carry both.
+- *Bootstrap*: =package-generate-autoloads= itself comes from built-in
+  =package.el=; confirm it is available in the build runtime (Emacs vs NeLisp).
+
+* 7. Tests & gates
+- ERT: recipe-class validation, converter on a flake.nix fixture, one real
+  package build (dash) producing a loadable autoloads file.
+- =make verify-source-operational-gate= extended with a native-emacs build smoke.
+- A new =verify-native-emacs-install-gate= proving an emacs -Q can =(require 'PKG)=
+  purely from the native profile (no Nix, no system load-path).
+- Parity check: native-profile package set == flake.nix package set (203).
