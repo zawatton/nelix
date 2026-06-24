@@ -108,12 +108,34 @@ succeeds (covers kernels where unprivileged user namespaces are disabled)."
                                "--" "/usr/bin/true"))
          (error nil))))
 
+(defun nelix-sandbox--raw-ns-available-p ()
+  "Return non-nil when the pure-elisp `raw-ns' backend can run here.
+Requires Linux, the standalone NeLisp binary, the `nelisp--syscall-unshare'
+builtin compiled in, AND that an unprivileged `unshare(CLONE_NEWUSER)'
+actually succeeds (probed by running the binary once)."
+  (and (nelix-sandbox--linux-p)
+       (stringp nelix-sandbox-nelisp-binary)
+       (file-executable-p (expand-file-name nelix-sandbox-nelisp-binary))
+       (let ((probe (make-temp-file "nelix-rawns-probe-" nil ".el")))
+         (unwind-protect
+             (progn
+               (with-temp-file probe
+                 (insert "(princ (if (fboundp 'nelisp--syscall-unshare)"
+                         " (nelisp--syscall-unshare 268435456) -1))"))
+               (with-temp-buffer
+                 (call-process (expand-file-name nelix-sandbox-nelisp-binary)
+                               nil t nil "--load" probe)
+                 ;; "0" => builtin present AND unshare(CLONE_NEWUSER) succeeded.
+                 (string-prefix-p "0" (string-trim (buffer-string)))))
+           (when (file-exists-p probe) (delete-file probe))))))
+
 ;;;###autoload
 (defun nelix-sandbox-available-p (&optional backend)
   "Return non-nil when the sandbox BACKEND (default `nelix-sandbox-backend')
 can run on this host."
   (pcase (or backend nelix-sandbox-backend)
     ('bwrap (nelix-sandbox--bwrap-available-p))
+    ('raw-ns (nelix-sandbox--raw-ns-available-p))
     (_ nil)))
 
 (defun nelix-sandbox--write-spec (spec)
@@ -239,6 +261,57 @@ exited 0 AND the status file reads \"ok\"."
                      (concat log "\n[status] " status)
                    log)))))
 
+(defun nelix-sandbox--run-raw-ns (spec)
+  "Run SPEC via the PURE-ELISP raw-ns backend (no bwrap; design 32 T4).
+Launches the standalone NeLisp binary directly with NELIX_SANDBOX_RAWNS=1 so
+the builder child unshares the namespaces in-process via
+`nelisp--syscall-unshare' (CLONE_NEWUSER + uid/gid map, then
+NEWNS|NEWNET|NEWUTS|NEWIPC) and runs the phases OFFLINE.  v1 isolation:
+network + user/mount/ipc/uts namespaces; the filesystem is the shared host
+view (no bind-mount read-only input closure yet -- that needs the
+mount/pivot_root builtins).  Same status-file success protocol as bwrap."
+  (let* ((status-file (make-temp-file "nelix-sandbox-status-"))
+         (spec (append spec
+                       (list :nelix-root
+                             (file-name-as-directory
+                              (expand-file-name nelix-sandbox-nelix-root))
+                             :nelisp-root
+                             (file-name-as-directory
+                              (expand-file-name nelix-sandbox-nelisp-root))
+                             :status-file status-file)))
+         (spec-file (nelix-sandbox--write-spec spec))
+         (process-environment
+          (append (list (concat "NELIX_SANDBOX_SPEC=" spec-file)
+                        "NELIX_SANDBOX_RAWNS=1"
+                        (concat "NELIX_SANDBOX_UID="
+                                (number-to-string (user-real-uid)))
+                        (concat "NELIX_SANDBOX_GID="
+                                (number-to-string (group-real-gid)))
+                        "PATH=/usr/bin:/bin")
+                  process-environment))
+         code log status)
+    (unwind-protect
+        (progn
+          (with-temp-buffer
+            (setq code (call-process
+                        (expand-file-name nelix-sandbox-nelisp-binary)
+                        nil t nil "--load" (nelix-sandbox--builder-el)))
+            (setq log (buffer-string)))
+          (setq status (when (file-exists-p status-file)
+                         (with-temp-buffer
+                           (insert-file-contents status-file)
+                           (buffer-string)))))
+      (when (file-exists-p spec-file) (delete-file spec-file))
+      (when (file-exists-p status-file) (delete-file status-file)))
+    (let ((ok (and (eq code 0)
+                   (stringp status)
+                   (string-prefix-p "ok" status))))
+      (list :status (if ok 'ok 'error)
+            :code code
+            :log (if (and (stringp status) (not (string-prefix-p "ok" status)))
+                     (concat log "\n[status] " status)
+                   log)))))
+
 ;;;###autoload
 (defun nelix-sandbox-run (spec &optional backend)
   "Run a nelix build SPEC inside a Tier 2 sandbox; return (:status :code :log).
@@ -254,6 +327,7 @@ user namespaces disabled) so the caller can surface a loud Tier-1 fallback."
                             backend))))
     (pcase backend
       ('bwrap (nelix-sandbox--run-bwrap spec))
+      ('raw-ns (nelix-sandbox--run-raw-ns spec))
       (_ (signal 'nelix-error
                  (list (format "nelix-sandbox: unknown backend %S" backend)))))))
 

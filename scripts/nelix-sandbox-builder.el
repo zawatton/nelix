@@ -69,6 +69,28 @@ child shell does, so this recovers env vars set by `bwrap --setenv'."
              (stringp nelix-sandbox-builder--nelisp-root))
   (nelix-sandbox-builder-fatal "spec missing :nelix-root / :nelisp-root"))
 
+;; Step 2b — raw-ns backend: establish the namespaces IN-PROCESS (no bwrap),
+;; using the pure-elisp `nelisp--syscall-unshare' builtin (design 32 T4).
+;; The bwrap backend leaves NELIX_SANDBOX_RAWNS unset (bwrap already
+;; namespaced us); the raw-ns backend sets it, so we unshare here.  Sequence:
+;; unshare(CLONE_NEWUSER) -> write setgroups=deny + the uid/gid map (so we
+;; become root-in-userns and fork/exec works -- WITHOUT the map, call-process
+;; aborts) -> unshare(NEWNS|NEWNET|NEWUTS|NEWIPC), which detaches the network
+;; namespace so the build runs OFFLINE.  The shell-getenv calls run BEFORE
+;; unshare (call-process is fine pre-namespace).  Guarded by fboundp so this
+;; is inert on a runtime without the builtin.
+(when (and (nelix-sandbox-builder--shell-getenv "NELIX_SANDBOX_RAWNS")
+           (fboundp 'nelisp--syscall-unshare))
+  (let ((uid (or (nelix-sandbox-builder--shell-getenv "NELIX_SANDBOX_UID") "1000"))
+        (gid (or (nelix-sandbox-builder--shell-getenv "NELIX_SANDBOX_GID") "1000")))
+    (nelisp--syscall-unshare 268435456)   ; CLONE_NEWUSER = 0x10000000
+    (write-region "deny" nil "/proc/self/setgroups")
+    (write-region (concat "0 " gid " 1") nil "/proc/self/gid_map")
+    (write-region (concat "0 " uid " 1") nil "/proc/self/uid_map")
+    ;; NEWNS|NEWNET|NEWUTS|NEWIPC = 0x20000|0x40000000|0x4000000|0x8000000
+    (nelisp--syscall-unshare 1275199488)
+    (princ "nelix-sandbox-builder: raw-ns namespaces established (network denied)\n")))
+
 ;; Step 3 — load nelisp-sys + shims + the nelix modules.  Each load is
 ;; preceded by a `princ'.  This inner side-effecting form is LOAD-BEARING:
 ;; on the standalone runtime, loading the full module set in one tight loop

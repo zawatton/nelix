@@ -400,6 +400,26 @@ fails, proving the network namespace is real.
   =mount=/=pivot_root=/=chroot=/=execve= bodies (cstrings via the existing
   =nl_bi_make_cpath=/=alloc-bytes=; execve needs a pointer-array helper) +
   the nelix-sandbox =raw-ns= backend behind the §4 contract.
+- *T4 raw-ns backend v1 SHIPPED + verified (2026-06-24) — pure Elisp, no
+  bwrap.*  =nelix-sandbox--run-raw-ns= + =--raw-ns-available-p= + the
+  ='raw-ns= dispatch in =nelix-sandbox-run= launch the standalone NeLisp
+  binary directly (no bwrap) with =NELIX_SANDBOX_RAWNS=1=; the shared
+  builder child (=scripts/nelix-sandbox-builder.el=, gated Step 2b)
+  establishes the namespaces IN-PROCESS via =nelisp--syscall-unshare=:
+  =unshare(CLONE_NEWUSER)= → write =/proc/self/{setgroups=deny,gid_map,
+  uid_map}= (load-bearing — WITHOUT the uid/gid map, =call-process= aborts
+  after the unshare) → =unshare(NEWNS|NEWNET|NEWUTS|NEWIPC)=, then runs the
+  phases offline.  =make smoke-sandbox-rawns= is green (2/2): =hello-native=
+  builds + runs from the store, and the =curl= negative assertion FAILS
+  (NEWNET denies the network), with a host-curl control.  No regression: the
+  bwrap smokes still pass (the unshare prefix is =NELIX_SANDBOX_RAWNS=-gated
+  and =fboundp=-guarded, inert under bwrap).  *v1 limitation:* isolation =
+  network + user/mount/ipc/uts namespaces, but the *filesystem is the shared
+  host view* — no bind-mount read-only input closure or =$out=-only-RW yet;
+  that needs =mount=/=pivot_root= builtins (next).  So raw-ns v1 ⊂ bwrap on
+  FS hermeticity, but it is the FIRST Nix-free, bwrap-free, Rust-free,
+  libc-free build sandbox — entirely Elisp, the repo's mission.  Commits:
+  nelisp =c21b1b8e= (unshare builtin), nelix (this change).
 - *T5 SHIPPED + verified (2026-06-24).*  macOS/Windows note + graceful
   degrade.  The README gains a "Hermeticity tiers" section (the tier table,
   what Tier 2 provides, and the Linux-only nature of =:hermeticity 'tier2=).
