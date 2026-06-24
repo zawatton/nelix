@@ -1,13 +1,13 @@
 EMACS ?= emacs
 SRC = nelix-compat.el nelix-state.el nelix-core.el nelix-dsl.el nelix-import.el nelix-emacs.el nelix.el nelix-dsl.el nelix-import.el nelix-emacs.el nelix-manifest.el nelix-fast.el nelix-store.el nelix-registry.el nelix-fetch.el nelix-builder.el nelix-backend.el nelix-substitute.el
 PKG_METADATA = nelix-pkg.el
-TEST_SRC = test/nelix-core-test.el test/nelix-core-uninstall-test.el test/nelix-core-upgrade-test.el test/nelix-core-pin-test.el test/nelix-core-info-test.el test/nelix-core-doctor-test.el test/nelix-dsl-test.el test/nelix-core-buildsys-test.el test/nelix-import-test.el test/nelix-compat-test.el test/nelix-emacs-test.el test/nelix-state-test.el test/nelix-manifest-test.el test/nelix-store-test.el test/nelix-cli-test.el
+TEST_SRC = test/nelix-core-test.el test/nelix-core-uninstall-test.el test/nelix-core-upgrade-test.el test/nelix-core-pin-test.el test/nelix-core-info-test.el test/nelix-core-doctor-test.el test/nelix-dsl-test.el test/nelix-core-buildsys-test.el test/nelix-import-test.el test/nelix-compat-test.el test/nelix-emacs-test.el test/nelix-state-test.el test/nelix-manifest-test.el test/nelix-store-test.el test/nelix-cli-test.el test/nelix-emacs-package-test.el
 NELISP_EXEC_TEST_SRC ?= test/nelix-core-test.el test/nelix-core-uninstall-test.el test/nelix-core-upgrade-test.el test/nelix-core-pin-test.el test/nelix-core-info-test.el test/nelix-core-doctor-test.el test/nelix-dsl-test.el test/nelix-core-buildsys-test.el test/nelix-import-test.el
 SCRIPT_SRC = scripts/nelix-core-render.el scripts/nelix-nelisp-smoke.el scripts/nelix-nelisp-ert-shim.el scripts/nelix-cli.el scripts/nelix-aot-manifest-engine.el scripts/nelix-aot-native-subset.el scripts/nelix-aot-native-cli-proof.el
 BIN_SRC = bin/nelix
 DOC_SRC = README.org examples/README.org docs/smoke-test.org packaging/README.org
 REGISTRY_SRC = $(sort $(wildcard registry/packages/*/*.el))
-EXPECTED_ERT_TESTS ?= 474
+EXPECTED_ERT_TESTS ?= 476
 EXPECTED_NELISP_ERT_TESTS ?= 130
 NELISP_CACHE_DIR ?= .cache/nelisp
 NELISP_SUITE_IMAGE ?= $(NELISP_CACHE_DIR)/nelix-core-suite.nlri
