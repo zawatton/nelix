@@ -6,6 +6,27 @@
  :name "vterm"
  :version "0.0.0"
  :class 'emacs-package
- :systems '((x86_64-linux :source (:type url :url "https://codeload.github.com/akermu/emacs-libvterm/tar.gz/988279316fc89e6d78947b48513f248597ba969a" :sha256 "sha256-fb44457c8197a30f08b7ae3799b87f08970b9007090d0dc5d6cd628db8831028") :dependencies nil :install (:type build :build-system emacs-package :pname "vterm" :load-paths (".") :features (vterm)))))
+ :systems '((x86_64-linux
+             :source (:type url
+                      :url "https://codeload.github.com/akermu/emacs-libvterm/tar.gz/988279316fc89e6d78947b48513f248597ba969a"
+                      :sha256 "sha256-fb44457c8197a30f08b7ae3799b87f08970b9007090d0dc5d6cd628db8831028")
+             :dependencies nil
+             :install (:type build
+                       :build-system emacs-package
+                       :pname "vterm"
+                       :load-paths (".")
+                       :features (vterm)
+                       :build-phases
+                       ((module
+                         . (progn
+                             (nelix-invoke "cmake" "-S" "." "-B" "build"
+                                           "-DCMAKE_BUILD_TYPE=Release"
+                                           "-DUSE_SYSTEM_LIBVTERM=ON")
+                             (nelix-invoke "cmake" "--build" "build")
+                             (nelix-copy-file
+                              (expand-file-name "vterm-module.so"
+                                                nelix-build--dir)
+                              (expand-file-name "vterm-module.so"
+                                                (nelix-out))))))))))
 
 ;;; vterm.el ends here

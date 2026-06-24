@@ -78,6 +78,36 @@ and loads from the store.  Network-gated (NELIX_NET_TESTS)."
   "Return the absolute path of fixture NAME next to this test file."
   (expand-file-name (concat "fixtures/" name) nelix-emacs-package-test--dir))
 
+(defun nelix-emacs-package-test--registry-root ()
+  "Return the repository registry root for local recipe-shape tests."
+  (expand-file-name "../registry" nelix-emacs-package-test--dir))
+
+(ert-deftest nelix-emacs-package-vterm-recipe-shape ()
+  "vterm's native recipe carries the system-libvterm cmake phase."
+  (let ((nelix-registry--packages (make-hash-table :test 'equal)))
+    (nelix-registry-load-root (nelix-emacs-package-test--registry-root))
+    (let* ((r (nelix-registry-get "vterm"))
+           (sys (cdr (assq 'x86_64-linux (plist-get r :systems))))
+           (install (plist-get sys :install))
+           (phases (plist-get install :build-phases)))
+      (should r)
+      (should (null (plist-get sys :dependencies)))
+      (should (eq 'build (plist-get install :type)))
+      (should (eq 'emacs-package (plist-get install :build-system)))
+      (should (assq 'module phases))
+      (should (string-match-p "USE_SYSTEM_LIBVTERM=ON"
+                              (format "%S" (cdr (assq 'module phases))))))))
+
+(ert-deftest nelix-emacs-package-multi-vterm-recipe-shape ()
+  "multi-vterm declares a plain vterm dependency in the registry graph."
+  (let ((nelix-registry--packages (make-hash-table :test 'equal)))
+    (nelix-registry-load-root (nelix-emacs-package-test--registry-root))
+    (let* ((r (nelix-registry-get "multi-vterm"))
+           (sys (cdr (assq 'x86_64-linux (plist-get r :systems)))))
+      (should r)
+      (should (equal '("vterm") (plist-get sys :dependencies)))
+      (should (equal '(multi-vterm) (plist-get (plist-get sys :install) :features))))))
+
 (ert-deftest nelix-import-flake-emacs-parse ()
   "Doc 33 M3: parse melpaBuild blocks (pname/owner/repo/rev/deps) from flake.nix."
   (let* ((fixture (nelix-emacs-package-test--fixture "sample-flake.nix"))
