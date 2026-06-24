@@ -106,5 +106,32 @@ NAME=VALUE strings with tilde expansion."
                                  (expand-file-name "~/.rustup"))
                          "EMPTY=")))))
 
+(ert-deftest nelix-build-test-copy-package-resources ()
+  "Package resources are copied selectively and preserve relative paths."
+  (let* ((tmpdir (make-temp-file "nelix-build-resource-" t))
+         (outdir (expand-file-name "out" tmpdir))
+         (nelix-build--dir tmpdir)
+         (nelix-build--out outdir)
+         (nelix-build--extra-files '("README.txt"))
+         (nelix-build--data-dirs '("data")))
+    (unwind-protect
+        (progn
+          (make-directory (expand-file-name "data/sub" tmpdir) t)
+          (write-region "alpha" nil (expand-file-name "README.txt" tmpdir))
+          (write-region "beta" nil (expand-file-name "data/emoji.json" tmpdir))
+          (write-region "gamma" nil (expand-file-name "data/sub/more.json" tmpdir))
+          (nelix-build-copy-package-resources outdir)
+          (should (equal "alpha" (with-temp-buffer
+                                   (insert-file-contents (expand-file-name "README.txt" outdir))
+                                   (buffer-string))))
+          (should (equal "beta" (with-temp-buffer
+                                  (insert-file-contents (expand-file-name "data/emoji.json" outdir))
+                                  (buffer-string))))
+          (should (equal "gamma" (with-temp-buffer
+                                   (insert-file-contents (expand-file-name "data/sub/more.json" outdir))
+                                   (buffer-string))))
+          (should (file-directory-p (expand-file-name "data/sub" outdir))))
+      (delete-directory tmpdir t))))
+
 (provide 'nelix-build-test)
 ;;; nelix-build-test.el ends here

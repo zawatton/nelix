@@ -96,6 +96,17 @@ the real llama on the shared profile load-path.  The M5 `:pname'-directory
 restriction only separates copies in *different* directories; an `:el-exclude'
 entry is the recipe-level escape hatch for same-directory vendoring.")
 
+(defvar nelix-build--extra-files nil
+  "List of additional non-.el files to copy during an Emacs-package install.
+Bound from the recipe install plist's `:extra-files'.  Each entry is copied
+relative to the build directory into the same relative path under `$out'.")
+
+(defvar nelix-build--data-dirs nil
+  "List of additional data directories to copy during an Emacs-package install.
+Bound from the recipe install plist's `:data-dirs'.  Each entry is copied
+recursively relative to the build directory into the same relative path under
+`$out'.")
+
 ;;;###autoload
 (defun nelix-package-name ()
   "Return the package name for the current Emacs-package build phase.
@@ -132,6 +143,40 @@ which removes same-directory vendored copies of other packages' libraries."
                     (string-match-p "/\\(?:tests?\\|examples?\\|dev\\|docs?\\|features\\|stubs?\\|vendor\\)/" rel))
           (push f result))))
     (nreverse result)))
+
+(defun nelix-build-package-resource-paths ()
+  "Return additional resource paths to copy for an Emacs-package install.
+The returned paths are relative to `nelix-build--dir' and include explicit
+`nelix-build--extra-files' entries plus `nelix-build--data-dirs'."
+  (append (delq nil
+                (mapcar (lambda (path)
+                          (and (stringp path)
+                               (> (length path) 0)
+                               path))
+                        nelix-build--extra-files))
+          (delq nil
+                (mapcar (lambda (dir)
+                          (and (stringp dir)
+                               (> (length dir) 0)
+                               dir))
+                        nelix-build--data-dirs))))
+
+(defun nelix-build-copy-package-resources (out-dir &optional dir)
+  "Copy extra package resources from DIR into OUT-DIR.
+Copies the paths named by `nelix-build--extra-files' and
+`nelix-build--data-dirs', preserving relative path layout.  Missing
+resources are ignored."
+  (let ((root (file-name-as-directory (or dir nelix-build--dir)))
+        (out (file-name-as-directory (nelix-build--stringify out-dir))))
+    (dolist (path (nelix-build-package-resource-paths))
+      (let* ((src (expand-file-name path root))
+             (dst (expand-file-name path out)))
+        (when (file-exists-p src)
+          (if (file-directory-p src)
+              (nelix-copy-recursively src dst)
+            (nelix-mkdir-p (file-name-directory dst))
+            (nelix-copy-file src dst)))))
+    out-dir))
 
 (defvar nelix-build-tool-paths nil
   "Extra absolute bin directories prepended to the build PATH.

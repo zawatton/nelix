@@ -1,0 +1,132 @@
+#+TITLE: Doc 34 - nelix-native external build lane
+#+AUTHOR: zawatton
+#+DATE: 2026-06-25
+
+* Status
+:PROPERTIES:
+:STATE: SHIPPED-2026-06-25
+:END:
+
+This document specifies the external build lane that lets =nelix-native=
+install Emacs packages which are not pure =*.el= libraries.  The lane keeps the
+native profile Nix-free by using OS-provided development libraries and build
+tools where needed, while preserving the existing hermetic defaults for pure
+Elisp packages.
+
+* 1. Goal
+
+The native backend must be able to build the packages that the user actually
+needs in the daily Emacs profile without falling back to Nix.  That includes:
+
+- pure Elisp packages with transitive dependencies
+- packages that ship non-source resources such as =data/= directories
+- packages that need an external build tool during install, such as =cmake=
+  for =vterm= modules or =cargo= for future Rust-backed packages
+
+The rule is simple: the build lane may use OS packages, but it must not depend
+on Nix for the target profile.
+
+* 2. Boundary
+
+The boundary is the system development library set, not the store.
+
+- Pure Elisp packages stay in the hermetic build environment and copy only
+  source plus declared resources.
+- C or Rust module packages may invoke external tools, but those tools must be
+  present on the host system or in a declared build-tool path.
+- Runtime activation still uses the native profile only; Nix remains a fallback
+  backend for packages that cannot be built natively.
+
+Examples of the boundary:
+
+- =vterm= needs =cmake= and =libvterm-dev=
+- =package-lint= and =emojify= need their =data/= trees copied into the native
+  store
+- =mu4e= needs the system =mu= package, because its upstream is not a normal
+  codeload-only Emacs package
+
+* 3. Build model
+
+The build lane is implemented as a specialization of the existing native phase
+executor.
+
+1. The recipe selects an =emacs-package= build system preset.
+2. The preset handles =unpack=, =install=, and =autoload=.
+3. Recipes may override or extend the preset with =:build-phases=.
+4. External tools are injected through two knobs:
+   - =nelix-build-tool-paths= prepends extra bin dirs ahead of =/usr/bin:/bin=
+   - =nelix-build-tool-env= appends environment variables such as =CARGO_HOME=
+     and =RUSTUP_HOME=
+5. The install phase copies =*.el= plus any declared non-source resources.
+6. The autoload phase generates =PKG-autoloads.el= inside the store entry.
+
+This keeps the default path hermetic for pure Elisp packages and only widens
+the environment for recipes that need it.
+
+* 4. Resource copying
+
+The emacs-package install phase now copies more than source files.
+
+- =:el-exclude= drops vendored same-directory libraries that would shadow the
+  real package on the shared load-path.
+- =:extra-files= copies individual files relative to the package root.
+- =:data-dirs= copies entire resource trees such as =data/=.
+
+This is conservative by design:
+
+- it does not copy test directories
+- it does not copy build output
+- it does not change the layout of the package root
+
+The goal is to preserve the package's own relative paths while avoiding
+surprising extra content in the store.
+
+* 5. Toolchain policy
+
+The policy is deliberately split by package class.
+
+| Package kind                | Toolchain policy                              |
+|----------------------------+-----------------------------------------------|
+| pure Elisp                 | hermetic build env, no extra tools             |
+| Elisp with data files      | hermetic build env + resource copy             |
+| C module package           | system toolchain or declared build-tool paths  |
+| Rust-backed package        | =cargo= + =RUSTUP_HOME= / =CARGO_HOME=         |
+| mu4e / system mail stack   | system =mu= package, not a Nix build           |
+
+The implementation intentionally prefers system libraries to fetching
+additional source during build time.
+
+* 6. Verification
+
+The lane is considered working when the following hold:
+
+- =make compile= and =make test= stay green
+- native install smoke tests can require the target packages from the native
+  profile without file-missing errors
+- non-source resources are present in the native store entry
+- a profile-wide require sweep has no =MISSING-DEP= entries
+
+The current verification set includes:
+
+- a unit test for copying extra resources and =data/= trees
+- a unit test for the registry dependency shape of the affected recipes
+- a direct native-install smoke test for =emojify=, =package-lint=, and
+  =elisp-lint=
+- a require sweep over the current =native-full= profile
+
+* 7. Status summary
+
+This work closes the gap between the native store substrate and the user's
+actual Emacs package set for the packages that are represented in the current
+manifest.
+
+The remaining gaps are now operational, not architectural:
+
+- system packages such as =mu= still need OS installation when they are used
+- future C/Rust packages may need additional external toolchain entries
+- if a recipe needs a new non-source resource pattern, it should extend the
+  declarative copy knobs instead of hard-coding paths in the builder
+
+The lane is therefore ready to be used as the default path for Nix-free native
+Emacs package builds.
+

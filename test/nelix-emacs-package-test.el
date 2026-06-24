@@ -123,6 +123,10 @@ and loads from the store.  Network-gated (NELIX_NET_TESTS)."
                     ("cider" . ("parseclj" "parseedn"))
                     ("clojure-mode" . ("parseclj" "parseedn"))
                     ("doom-modeline" . ("shrink-path" "compat" "nerd-icons"))
+                    ("ht" . ("dash"))
+                    ("package-lint" . nil)
+                    ("emojify" . ("ht"))
+                    ("elisp-lint" . ("dash" "package-lint"))
                     ("org-node-fakeroam" . ("org-node" "emacsql" "org-roam"))
                     ("eat-windows-pty" . ("eat"))))
       (let* ((name (car spec))
@@ -131,7 +135,9 @@ and loads from the store.  Network-gated (NELIX_NET_TESTS)."
              (sys (cdr (assq 'x86_64-linux (plist-get r :systems)))))
         (should r)
         (should (eq 'emacs-package (plist-get r :class)))
-        (should (equal deps (plist-get sys :dependencies)))))))
+        (should (equal deps (plist-get sys :dependencies)))
+        (when (member name '("package-lint" "emojify"))
+          (should (equal '("data") (plist-get (plist-get sys :install) :data-dirs))))))))
 
 (ert-deftest nelix-import-flake-emacs-parse ()
   "Doc 33 M3: parse melpaBuild blocks (pname/owner/repo/rev/deps) from flake.nix."
