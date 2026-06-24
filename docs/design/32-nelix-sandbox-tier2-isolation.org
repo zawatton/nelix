@@ -380,6 +380,26 @@ fails, proving the network namespace is real.
   unshare/mount/pivot_root/execve + a cstring-array helper for execve +
   rebuild + verify extern-call links the new libc symbols), gated by a
   one-syscall (=unshare=) end-to-end PoC.
+- *T4 PoC SHIPPED + verified (2026-06-24) — feasibility PROVEN.*  A
+  =nelisp--syscall-unshare= builtin was added in PURE ELISP and the
+  standalone binary rebuilt; =(nelisp--syscall-unshare 268435456)=
+  [CLONE_NEWUSER] returns 0, =131072= [CLONE_NEWNS] returns 0, and =1=
+  returns -22 (-EINVAL) — a real kernel syscall, no crash.  *Mechanism
+  correction:* the standalone binary does NOT link libc (its crt0 is
+  hand-emitted machine code; file-I/O bodies make RAW syscalls).  So the
+  route is NOT =extern-call= to a libc symbol (that failed to link —
+  =unshare= is not a provided symbol) but the =syscall-direct= AOT op (the
+  =syscall= instruction): =unshare(flags)= = =(syscall-direct 272 flags 0 0
+  0 0 0)=.  Recipe (all in =nelisp/scripts/nelisp-standalone-build.el=,
+  cloning the =nl_bi_syscall_*= pattern): AOT body =(defun nl_bi_syscall_X
+  (args out) (... (syscall-direct NR ...) ...))=, a reader dispatch arm
+  =((:lit "NAME") . (nl_bi_syscall_X args out))=, and the name in
+  =nelisp-standalone--reader-builtins=; rebuild with =make
+  standalone-reader= (incremental).  nelix standalone smokes still pass (no
+  regression).  Commit nelisp =c21b1b8e=.  Remaining for full raw-ns:
+  =mount=/=pivot_root=/=chroot=/=execve= bodies (cstrings via the existing
+  =nl_bi_make_cpath=/=alloc-bytes=; execve needs a pointer-array helper) +
+  the nelix-sandbox =raw-ns= backend behind the §4 contract.
 - *T5 SHIPPED + verified (2026-06-24).*  macOS/Windows note + graceful
   degrade.  The README gains a "Hermeticity tiers" section (the tier table,
   what Tier 2 provides, and the Linux-only nature of =:hermeticity 'tier2=).
