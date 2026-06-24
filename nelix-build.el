@@ -133,16 +133,62 @@ which removes same-directory vendored copies of other packages' libraries."
           (push f result))))
     (nreverse result)))
 
+(defvar nelix-build-tool-paths nil
+  "Extra absolute bin directories prepended to the build PATH.
+The hermetic default build PATH is /usr/bin:/bin.  Native-module recipes that
+invoke external build tools (cmake / cargo / make / ...) installed outside the
+system prefix need those directories listed here, e.g.
+\(\"~/.local/bin\" \"~/.cargo/bin\").  nil keeps the hermetic /usr/bin:/bin only,
+so the default build environment is unchanged for pure-Elisp packages.")
+
+(defun nelix-build--path ()
+  "Return the build PATH string: `nelix-build-tool-paths' then /usr/bin:/bin.
+Tilde / relative entries are expanded.  This is the single source of truth for
+the build PATH on both the Elisp-phase (`nelix-build--env') and shell-phase
+code paths."
+  (mapconcat #'identity
+             (append (delq nil
+                           (mapcar (lambda (d)
+                                     (and (stringp d) (> (length d) 0)
+                                          (directory-file-name
+                                           (expand-file-name d))))
+                                   nelix-build-tool-paths))
+                     '("/usr/bin" "/bin"))
+             ":"))
+
+(defvar nelix-build-tool-env nil
+  "Extra environment variables passed into the build environment.
+An alist of (NAME . VALUE) strings appended to the hermetic build env on both
+the Elisp-phase and shell-phase code paths.  The hermetic env scrubs HOME to
+the build dir, which breaks external build tools that key off HOME-relative
+state, e.g. rustup's cargo needs RUSTUP_HOME / CARGO_HOME.  Use this to pass
+those through, e.g. ((\"RUSTUP_HOME\" . \"~/.rustup\") (\"CARGO_HOME\" . \"~/.cargo\")).
+nil keeps the env hermetic (default).  Values starting with ~ are expanded.")
+
+(defun nelix-build--tool-env-pairs ()
+  "Return `nelix-build-tool-env' as a list of \"NAME=VALUE\" strings.
+Tilde-prefixed values are expanded so HOME-scrubbed builds still resolve them."
+  (delq nil
+        (mapcar (lambda (kv)
+                  (when (and (consp kv) (stringp (car kv)) (stringp (cdr kv)))
+                    (concat (car kv) "="
+                            (if (string-prefix-p "~" (cdr kv))
+                                (expand-file-name (cdr kv))
+                              (cdr kv)))))
+                nelix-build-tool-env)))
+
 (defun nelix-build--env ()
   "Return the deterministic environment KV list for `nelix-invoke' (Tier-1).
 Sets a minimal PATH, scrubs HOME to the build dir, exports `out', and pins
 SOURCE_DATE_EPOCH/TZ/LC_ALL.  Passed to env(1) so no shell is needed."
-  (list (concat "out=" (or nelix-build--out ""))
-        "PATH=/usr/bin:/bin"
-        (concat "HOME=" (or nelix-build--dir ""))
-        "SOURCE_DATE_EPOCH=1"
-        "TZ=UTC"
-        "LC_ALL=C"))
+  (append
+   (list (concat "out=" (or nelix-build--out ""))
+         (concat "PATH=" (nelix-build--path))
+         (concat "HOME=" (or nelix-build--dir ""))
+         "SOURCE_DATE_EPOCH=1"
+         "TZ=UTC"
+         "LC_ALL=C")
+   (nelix-build--tool-env-pairs)))
 
 (defun nelix-build--stringify (x)
   "Coerce phase-argument X to a string (numbers/symbols allowed)."

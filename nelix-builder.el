@@ -17,6 +17,7 @@
 (require 'nelix-fetch)
 (require 'nelix-store)
 (require 'nelix-registry)
+(require 'nelix-build)
 
 (defgroup nelix-builder nil
   "Nelix native builders."
@@ -747,17 +748,30 @@ Signals `nelix-error' on non-zero exit."
          ;; Tier-1 env prelude: deterministic, minimal, HOME-scrubbed.
          ;; PATH: keep only /usr/bin:/bin (host toolchain minimum).
          ;; Caller's ambient PATH is intentionally NOT forwarded.
+         (tool-exports
+          (mapconcat
+           (lambda (pair)
+             (let ((eq (string-match "=" pair)))
+               (if eq
+                   (format "export %s=%s; "
+                           (substring pair 0 eq)
+                           (shell-quote-argument (substring pair (1+ eq))))
+                 "")))
+           (nelix-build--tool-env-pairs) ""))
          (wrapped (format
                    (concat "ulimit -t 600; "
                            "export out=%s; "
-                           "export PATH=/usr/bin:/bin; "
+                           "export PATH=%s; "
                            "export HOME=%s; "
                            "export SOURCE_DATE_EPOCH=1; "
                            "export TZ=UTC; "
                            "export LC_ALL=C; "
+                           "%s"
                            "%s")
                    (shell-quote-argument safe-out)
+                   (shell-quote-argument (nelix-build--path))
                    (shell-quote-argument safe-dir)
+                   tool-exports
                    cmd))
          exit stdout)
     ;; On standalone NeLisp, default-directory is ignored by call-process.

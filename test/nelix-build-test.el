@@ -80,5 +80,31 @@ package on the shared profile load-path."
             (should-not (member "llama.el" names))))
       (delete-directory tmpdir t))))
 
+(ert-deftest nelix-build-test-path-and-tool-env ()
+  "Build tool helpers prepend extra paths and expand HOME-relative values.
+`nelix-build--path' must keep the hermetic /usr/bin:/bin tail, while
+`nelix-build--tool-env-pairs' must turn `nelix-build-tool-env' into
+NAME=VALUE strings with tilde expansion."
+  (let ((nelix-build-tool-paths '("/opt/extra/bin" "~/.cargo/bin" "" nil))
+        (nelix-build-tool-env '(("CARGO_HOME" . "~/.cargo")
+                                ("RUSTUP_HOME" . "~/.rustup")
+                                ("EMPTY" . "")
+                                ("BAD" . 42)
+                                nil)))
+    (should (equal (nelix-build--path)
+                   (mapconcat #'identity
+                              (list (directory-file-name "/opt/extra/bin")
+                                    (directory-file-name
+                                     (expand-file-name "~/.cargo/bin"))
+                                    "/usr/bin"
+                                    "/bin")
+                              ":")))
+    (should (equal (nelix-build--tool-env-pairs)
+                   (list (concat "CARGO_HOME="
+                                 (expand-file-name "~/.cargo"))
+                         (concat "RUSTUP_HOME="
+                                 (expand-file-name "~/.rustup"))
+                         "EMPTY=")))))
+
 (provide 'nelix-build-test)
 ;;; nelix-build-test.el ends here
