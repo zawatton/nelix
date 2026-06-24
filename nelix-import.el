@@ -612,5 +612,25 @@ downloads each tarball to fill :sha256 (slow; off by default)."
                  (lambda (b) (member (plist-get b :name) names)) blocks)
               blocks))))
 
+(defun nelix-import--recipe-field-string (key value)
+  "Render recipe KEY VALUE as `KEY VALUE' text, quoting non-self-evaluating VALUE."
+  (let ((vs (cond ((or (stringp value) (numberp value) (keywordp value) (null value))
+                   (prin1-to-string value))
+                  (t (concat "'" (prin1-to-string value))))))
+    (format "%s %s" key vs)))
+
+(defun nelix-import-write-emacs-recipe (recipe dir)
+  "Write RECIPE plist as a registry `.el' file under DIR; return the file path."
+  (let* ((name (plist-get recipe :name))
+         (file (expand-file-name (concat name ".el") dir)))
+    (with-temp-file file
+      (insert (format ";;; %s.el --- Nelix recipe generated from flake.nix -*- lexical-binding: t; -*-\n\n(require 'nelix-registry)\n\n(nelix-package" name))
+      (let ((p recipe))
+        (while p
+          (insert "\n " (nelix-import--recipe-field-string (car p) (cadr p)))
+          (setq p (cddr p))))
+      (insert (format ")\n\n;;; %s.el ends here\n" name)))
+    file))
+
 (provide 'nelix-import)
 ;;; nelix-import.el ends here

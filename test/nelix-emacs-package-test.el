@@ -112,4 +112,23 @@ and loads from the store.  Network-gated (NELIX_NET_TESTS)."
     (should (eq 'emacs-package (plist-get install :build-system)))
     (should (equal "s" (plist-get install :pname)))))
 
+(ert-deftest nelix-import-write-emacs-recipe-roundtrip ()
+  "Doc 33 M4: write a generated recipe to .el and re-read it via the registry
+reader, confirming the persisted recipe round-trips."
+  (let* ((block (list :name "s" :version "0.0.0" :owner "magnars" :repo "s.el"
+                      :rev "deadbeef" :deps '("dash")))
+         (recipe (nelix-import-flake-block-to-recipe block))
+         (dir (make-temp-file "nelix-recipe-test-" t)))
+    (unwind-protect
+        (let* ((file (nelix-import-write-emacs-recipe recipe dir))
+               (reread (apply #'nelix-package
+                              (nelix-registry--read-call file 'nelix-package)))
+               (sys (cdr (assq 'x86_64-linux (plist-get reread :systems)))))
+          (should (equal "s" (plist-get reread :name)))
+          (should (eq 'emacs-package (plist-get reread :class)))
+          (should (equal '("dash") (plist-get sys :dependencies)))
+          (should (eq 'emacs-package
+                      (plist-get (plist-get sys :install) :build-system))))
+      (delete-directory dir t))))
+
 ;;; nelix-emacs-package-test.el ends here

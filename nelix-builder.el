@@ -584,7 +584,10 @@ cons cell.")
           (dolist (f (directory-files nelix-build--dir t "\\.el\\'"))
             (unless (or (string-prefix-p "." (file-name-nondirectory f))
                         (string-match-p "autoloads" f))
-              (byte-compile-file f)))))
+              ;; Best-effort: a package whose deps are not yet on `load-path'
+              ;; may fail to byte-compile (e.g. a missing macro).  Keep the .el
+              ;; (still loadable) and continue rather than failing the build.
+              (condition-case nil (byte-compile-file f) (error nil))))))
      (autoload
       . (progn
           (require 'package)
@@ -946,6 +949,12 @@ SOURCE_DATE_EPOCH, TZ, LC_ALL, ulimit -t) is applied by
       (when (equal name (plist-get entry :name))
         (setq found t)))))
 
+(defvar nelix-builder-allow-missing-dependencies nil
+  "When non-nil, a dependency with no registry recipe is logged and skipped
+instead of signaling an error.  Used for bulk imports where some deps are
+Emacs built-ins (org, transient, magit-section, ...) or come from other
+fetchers not yet in the registry.")
+
 (defun nelix-builder--install-dependencies
     (dependencies profile-name system)
   "Install DEPENDENCIES into PROFILE-NAME before the parent recipe."
@@ -961,9 +970,13 @@ SOURCE_DATE_EPOCH, TZ, LC_ALL, ulimit -t) is applied by
          ((nelix-builder--profile-has-entry-p profile-name name)
           nil)
          ((null recipe)
-          (signal 'nelix-error
-                  (list (format "nelix-native-install-recipe: missing dependency recipe %s"
-                                name))))
+          (if nelix-builder-allow-missing-dependencies
+              (when (fboundp 'message)
+                (message "nelix: dependency %s has no recipe (built-in/external); skipping"
+                         name))
+            (signal 'nelix-error
+                    (list (format "nelix-native-install-recipe: missing dependency recipe %s"
+                                  name)))))
          (t
           (push (nelix-native-install-recipe recipe profile-name system)
                 reports)))))))
