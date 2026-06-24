@@ -289,6 +289,19 @@ fails, proving the network namespace is real.
   dependency-graph + (assoc-ref inputs) analogue proven inside the namespace,
   network denied, no nix.  Required no new binding code (the input bind was
   already wired in T0's =bwrap-argv=).
+- *T2 SHIPPED + verified (2026-06-24).*  Fixed-output fetch.
+  =nelix-builder--install-build= now, before running phases, fetches +
+  sha256-verifies any non-inline source carrying a =:sha256= ON THE HOST
+  (reusing =nelix-fetch-source=, which signals loudly on a hash mismatch)
+  and places the verified file in the build dir, so the tier2 build runs
+  OFFLINE (the sandbox unshares the net namespace).  Inline sources (no
+  =:sha256=) are unchanged.  =make smoke-sandbox-fod= is green (2/2): a
+  recipe with =(:source (:type url :url file://… :sha256 …))= is fetched +
+  verified on the host and built offline in the sandbox (binary exits 42),
+  while a wrong =:sha256= is rejected loudly before any build — the
+  fixed-output-derivation rule.  No regression: the inline-source builds
+  (native-build host/standalone, deps-inputs, T0/T1 sandbox smokes) all
+  still pass.
 
 * 8. Integration with nelix
 
