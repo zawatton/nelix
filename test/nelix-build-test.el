@@ -51,5 +51,34 @@
         (nelix-build--dir "/tmp"))
     (should-not (nelix-delete-directory "/tmp/nelix-absent-dir-test-xyz-99"))))
 
+(ert-deftest nelix-build-test-package-el-files-el-exclude ()
+  "`nelix-build-package-el-files' drops `nelix-build--el-exclude' basenames.
+A package that vendors a copy of another package's library in its own
+directory (e.g. chatgpt-el ships a top-level `llama.el') can refuse to install
+it via the recipe `:el-exclude', so the vendored copy never shadows the real
+package on the shared profile load-path."
+  (let* ((tmpdir (make-temp-file "nelix-build-elx-" t))
+         (nelix-build--dir tmpdir))
+    (unwind-protect
+        (progn
+          (write-region ";; chatgpt" nil (expand-file-name "chatgpt.el" tmpdir))
+          (write-region ";; vendored" nil (expand-file-name "llama.el" tmpdir))
+          (make-directory (expand-file-name "test" tmpdir) t)
+          (write-region ";; t" nil (expand-file-name "test/foo-test.el" tmpdir))
+          ;; Without an exclude: chatgpt.el + llama.el kept, test/ dropped.
+          (let* ((nelix-build--el-exclude nil)
+                 (names (mapcar #'file-name-nondirectory
+                                (nelix-build-package-el-files))))
+            (should (member "chatgpt.el" names))
+            (should (member "llama.el" names))
+            (should-not (member "foo-test.el" names)))
+          ;; With :el-exclude ("llama.el"): the vendored copy is dropped.
+          (let* ((nelix-build--el-exclude '("llama.el"))
+                 (names (mapcar #'file-name-nondirectory
+                                (nelix-build-package-el-files))))
+            (should (member "chatgpt.el" names))
+            (should-not (member "llama.el" names))))
+      (delete-directory tmpdir t))))
+
 (provide 'nelix-build-test)
 ;;; nelix-build-test.el ends here

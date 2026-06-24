@@ -680,6 +680,7 @@ Examples:
 (defvar nelix-build--inputs)
 (defvar nelix-build--pname)
 (defvar nelix-build--source-archive)
+(defvar nelix-build--el-exclude)
 
 (defun nelix-builder--run-phase (phase-name cmd build-dir out-dir &optional phase-inputs)
   "Run build phase PHASE-NAME in BUILD-DIR with $out=OUT-DIR.
@@ -899,6 +900,7 @@ SOURCE_DATE_EPOCH, TZ, LC_ALL, ulimit -t) is applied by
             ;; package-agnostic.  pname defaults to the recipe :name.
             (let ((nelix-build--pname (or (plist-get install :pname)
                                           (plist-get recipe :name)))
+                  (nelix-build--el-exclude (plist-get install :el-exclude))
                   (nelix-build--source-archive fetched-archive))
               ;; Run each (NAME . CMD) phase in build-dir with $out=out-dir.
               (if (eq nelix-builder-hermeticity 'tier2)

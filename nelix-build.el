@@ -86,6 +86,15 @@ input names if NAME is absent."
   "Bound to the package name (string) during an Emacs-package build phase.")
 (defvar nelix-build--source-archive nil
   "Bound to the fetched source archive path during a build phase.")
+(defvar nelix-build--el-exclude nil
+  "List of .el basenames to drop during an Emacs-package install phase.
+Bound from the recipe install plist's `:el-exclude'.  Lets a recipe refuse to
+install a vendored copy of another package's library that sits in the same
+directory as the package's own files — e.g. chatgpt-el ships a top-level
+`llama.el' (which does not even `provide' llama) that would otherwise shadow
+the real llama on the shared profile load-path.  The M5 `:pname'-directory
+restriction only separates copies in *different* directories; an `:el-exclude'
+entry is the recipe-level escape hatch for same-directory vendoring.")
 
 ;;;###autoload
 (defun nelix-package-name ()
@@ -109,13 +118,17 @@ fixed-output (`:sha256') source, so an `unpack' phase can extract it."
   "Return package source .el files under DIR (default the build dir), recursively.
 Excludes hidden files, generated autoloads, and test/example/dev/doc/feature
 directories, so packages whose .el live under a `lisp/' subdirectory (e.g.
-magit) are handled while non-source .el are skipped."
+magit) are handled while non-source .el are skipped.  Also drops any file whose
+basename is listed in `nelix-build--el-exclude' (the recipe `:el-exclude'),
+which removes same-directory vendored copies of other packages' libraries."
   (let ((root (or dir nelix-build--dir))
+        (excluded nelix-build--el-exclude)
         result)
     (dolist (f (directory-files-recursively root "\\.el\\'"))
       (let ((rel (concat "/" (file-relative-name f root))))
         (unless (or (string-prefix-p "." (file-name-nondirectory f))
                     (string-match-p "autoloads" f)
+                    (member (file-name-nondirectory f) excluded)
                     (string-match-p "/\\(?:tests?\\|examples?\\|dev\\|docs?\\|features\\|stubs?\\|vendor\\)/" rel))
           (push f result))))
     (nreverse result)))
