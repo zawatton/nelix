@@ -759,6 +759,34 @@ The Makefile auto-detects =/nix/var/nix/profiles/default/bin/nix= when
 =nix= is not on =PATH= and passes =NIX_CONFIG='experimental-features =
 nix-command flakes'= for the smoke targets.
 
+* Hermeticity tiers (source builds)
+
+The native source-build executor (=:install (:type build ...)=, no Nix) runs
+build phases at one of three *hermeticity tiers*, selected per build.  The
+default is Tier 1 and is cross-platform; Tier 2 is an *opt-in, Linux-only*
+kernel sandbox (design docs 31 and 32).
+
+| Tier | Isolation | Network | Reproducible | Platforms |
+|------+-----------------------------------------+----------+--------------+-----------|
+| 0    | plain build dir                         | open     | no           | Linux/macOS |
+| 1    | env-scrub + rlimit + deterministic env  | open     | no           | Linux/macOS (default) |
+| 2    | kernel namespace sandbox (bubblewrap)   | *denied* | yes (same host) | *Linux only* |
+
+*Tier 2* (the =nelix-sandbox= optional module) runs the whole build inside a
+=bwrap= namespace: only the declared input closure is visible (read-only),
+=$out= is writable, and the network namespace is unshared so the build is
+*offline*.  Source is fetched + =sha256=-verified on the host first
+(fixed-output, like Nix); a hash mismatch is rejected loudly.  Two builds of
+the same recipe on the same host produce a byte-identical binary.  It is
+loaded lazily and adds *zero* cost to Tier 0/1 builds.
+
+*macOS / Windows stay at Tier 1.*  Kernel namespaces are Linux-only, so
+=:hermeticity 'tier2= is unavailable off Linux (and on Linux hosts without
+=bwrap= or unprivileged user namespaces).  In those cases the build does NOT
+silently downgrade — it fails loudly with a clear instruction to re-run at
+=:hermeticity 'tier1=.  Requirements for Tier 2: Linux, =bubblewrap=
+installed, and unprivileged user namespaces enabled.
+
 * Requirements (planned)
 
 - Emacs 29+ (anvil runtime requirement)
