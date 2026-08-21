@@ -55,6 +55,15 @@
 (defvar nelix-nelisp-smoke-process-source nil
   "Optional path to nelisp-process.el for native backend probes.")
 
+(defvar nelix-nelisp-smoke-compat-source nil
+  "Optional absolute path to nelix-compat.el for standalone NeLisp `load'.
+Standalone NeLisp `load' treats its argument as a literal file path and
+does not search `load-path' the way host Emacs `load' does (path-search
+lives only in `nelisp-require', per `nelisp-load.el').  Without this set,
+`nelix-nelisp-smoke--load-compat' falls back to a bare \"nelix-compat.el\"
+load, which only resolves under a host Emacs whose `load-path' already
+contains the nelix checkout (e.g. `bin/nelix's `-L lispdir' runtime).")
+
 (defvar nelix-nelisp-smoke-network-source nil
   "Optional path to nelisp-network.el for native backend probes.")
 
@@ -174,7 +183,9 @@
 
 (defun nelix-nelisp-smoke--load-compat ()
   "Load nelix-core's compat layer for standalone smoke entry points."
-  (load "nelix-compat.el"))
+  (if (nelix-nelisp-smoke--path-present-p nelix-nelisp-smoke-compat-source)
+      (load nelix-nelisp-smoke-compat-source)
+    (load "nelix-compat.el")))
 
 (defun nelix-nelisp-smoke--load-native-prereqs ()
   "Load optional native backend prerequisites in standalone NeLisp."

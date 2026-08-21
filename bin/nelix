@@ -2216,12 +2216,19 @@ nelix_run_nelisp_direct() {
   json_src=${NELISP_JSON_SRC:-$nelisp_root/packages/nelisp-json/src/nelisp-json.el}
   actor_src=${NELISP_ACTOR_SRC:-$nelisp_root/packages/nelisp-actor/src/nelisp-actor.el}
   process_src=${NELISP_PROCESS_SRC:-$nelisp_root/packages/nelisp-process/src/nelisp-process.el}
+  # Standalone NeLisp `load' does not search `load-path' (path search is
+  # `nelisp-require' only), so `nelix-nelisp-smoke--load-compat's default
+  # bare "nelix-compat.el" load never resolves under the standalone
+  # runtime.  Point it at the absolute path so it works the same way the
+  # rest of this function's *-source variables already do.  Honors
+  # NELIX_LISPDIR through $lispdir, resolved at the top of this script.
+  compat_src=${NELIX_COMPAT_SRC:-$lispdir/nelix-compat.el}
   stats_enabled=nil
   if nelix_truthy "${NELIX_NELISP_STATS:-}"; then
     stats_enabled=t
   fi
 
-  for file in "$smoke_file" "$ert_shim" "$stdlib_eval" "$cl_macros" "$json_src" "$actor_src" "$process_src" "$clifile"; do
+  for file in "$smoke_file" "$ert_shim" "$stdlib_eval" "$cl_macros" "$json_src" "$actor_src" "$process_src" "$compat_src" "$clifile"; do
     if [ ! -f "$file" ]; then
       echo "nelix: nelisp runtime missing bootstrap file: $file" >&2
       exit 127
@@ -2249,6 +2256,7 @@ nelix_run_nelisp_direct() {
     printf '(setq nelix-nelisp-smoke-ert-shim-source %s)\n' "$(nelix_quote_elisp_string "$ert_shim")"
     printf '(setq nelix-nelisp-smoke-actor-source %s)\n' "$(nelix_quote_elisp_string "$actor_src")"
     printf '(setq nelix-nelisp-smoke-process-source %s)\n' "$(nelix_quote_elisp_string "$process_src")"
+    printf '(setq nelix-nelisp-smoke-compat-source %s)\n' "$(nelix_quote_elisp_string "$compat_src")"
     printf '(setq nelix-cli--direct-home %s)\n' "$(nelix_quote_elisp_string "${HOME:-}")"
     # NeLisp `getenv' does not read the process environment, so pass the env
     # vars the native store/profile resolver needs as an alist the compat
