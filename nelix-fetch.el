@@ -14,7 +14,14 @@
 
 (require 'nelix-core)
 (require 'nelix-compat)
-(require 'subr-x)
+;; Optional: standalone NeLisp has no loadable subr-x.el on its load-path,
+;; but `string-empty-p' et al. are already prelude builtins there (see
+;; `nelisp-pkg-core-host-requires' in the NeLisp checkout for the same
+;; convention applied to NeLisp's own src/lisp files). A hard require would
+;; abort this file's load under that runtime for a dependency it does not
+;; actually need resolved from disk; noerror lets it proceed the same way
+;; under both runtimes.
+(require 'subr-x nil t)
 
 (defgroup nelix-fetch nil
   "Hash-verified Nelix native fetchers."

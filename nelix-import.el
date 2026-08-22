@@ -83,8 +83,12 @@
 (require 'cl-lib)
 (require 'nelix-fetch)
 
+;; Optional: see the identical comment in nelix-fetch.el.  Standalone
+;; NeLisp's `eval-when-compile' runs its body immediately (interpreter-mode
+;; stub, not a real compile-time-only gate), so this require executes at
+;; load time under that runtime too and needs the same noerror treatment.
 (eval-when-compile
-  (require 'subr-x))
+  (require 'subr-x nil t))
 
 ;;;; --- error symbol ----------------------------------------------------------
 

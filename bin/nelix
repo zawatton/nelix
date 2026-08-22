@@ -2257,6 +2257,26 @@ nelix_run_nelisp_direct() {
     printf '(setq nelix-nelisp-smoke-actor-source %s)\n' "$(nelix_quote_elisp_string "$actor_src")"
     printf '(setq nelix-nelisp-smoke-process-source %s)\n' "$(nelix_quote_elisp_string "$process_src")"
     printf '(setq nelix-nelisp-smoke-compat-source %s)\n' "$(nelix_quote_elisp_string "$compat_src")"
+    # Standalone NeLisp `require' (unlike `load', see the compat_src
+    # comment above) DOES search `load-path' -- confirmed against the
+    # actual compiled runtime, not just src/nelisp-load.el's self-hosted
+    # description of the mechanism: `bf_require' in
+    # scripts/nelisp-standalone-build.el falls back to walking `load-path'
+    # (via `bf_load_path_get', which reads the plain Emacs-style symbol
+    # `load-path', not the self-hosted `nelisp-load-path') whenever a
+    # bare feature name is not itself a readable path.  Every nelix-*.el
+    # file in $lispdir (nelix-dsl.el -> nelix-manifest.el among them) is
+    # loaded here by absolute path via nelix_emit_nelisp_suite_source_files,
+    # but each one's own top-level `(require 'nelix-OTHER)' still names a
+    # bare feature, so without `load-path' set that require has nowhere to
+    # search and signals `file-missing' for any dependency positioned
+    # later in the emit list.  Setting `load-path' to $lispdir here fixes
+    # the whole class of "this suite file requires that suite file" gaps
+    # regardless of emit order, rather than only the one ordering that has
+    # been observed to fail so far (nelix-dsl.el before nelix-manifest.el);
+    # a future file added to the emit list, or a new `require' added to an
+    # existing one, resolves the same way without another ordering fix.
+    printf '(setq load-path (list %s))\n' "$(nelix_quote_elisp_string "$lispdir")"
     printf '(setq nelix-cli--direct-home %s)\n' "$(nelix_quote_elisp_string "${HOME:-}")"
     # NeLisp `getenv' does not read the process environment, so pass the env
     # vars the native store/profile resolver needs as an alist the compat

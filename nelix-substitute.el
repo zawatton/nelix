@@ -14,7 +14,9 @@
 ;;; Code:
 
 (require 'cl-lib)
-(require 'subr-x)
+;; Optional: see the identical comment in nelix-fetch.el -- standalone
+;; NeLisp polyfills `string-empty-p' etc. without a loadable subr-x.el.
+(require 'subr-x nil t)
 (require 'nelix-core)
 (require 'nelix-compat)
 (require 'nelix-store)
