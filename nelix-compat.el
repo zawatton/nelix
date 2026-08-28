@@ -650,14 +650,14 @@ Tries Emacs `getenv', then NeLisp Layer-2 alternatives."
     (with-temp-buffer
       (set-buffer-multibyte nil)
       (insert-file-contents-literally path)
-      (buffer-string)))
+      (string-as-unibyte (buffer-string))))
    ((and (fboundp 'with-temp-buffer)
          (fboundp 'insert-file-contents))
     (let ((coding-system-for-read 'binary))
       (with-temp-buffer
         (set-buffer-multibyte nil)
         (insert-file-contents path)
-        (buffer-string))))
+        (string-as-unibyte (buffer-string)))))
    (t
     (nelix-compat-read-file path))))
 

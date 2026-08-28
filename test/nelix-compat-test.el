@@ -550,6 +550,21 @@
       (should (equal '(:buffer "*nelix-core-read*") killed))
       (should (memq 'nelisp-emacs-compat-fileio requires)))))
 
+(ert-deftest nelix-compat-test-read-file-binary-is-unibyte ()
+  "Binary reads preserve every byte and return a unibyte string."
+  (let ((file (make-temp-file "nelix-compat-binary-")))
+    (unwind-protect
+        (progn
+          (let ((coding-system-for-write 'binary))
+            (with-temp-file file
+              (set-buffer-multibyte nil)
+              (insert (unibyte-string 0 127 128 200 255))))
+          (let ((bytes (nelix-compat--read-file-binary file)))
+            (should-not (multibyte-string-p bytes))
+            (should (= 5 (length bytes)))
+            (should (equal '(0 127 128 200 255) (append bytes nil)))))
+      (delete-file file))))
+
 (ert-deftest nelix-compat-test-write-file-lazy-requires-nelisp-fileio ()
   "Text writes probe NeLisp fileio before falling back or failing."
   (let ((loaded nil)
