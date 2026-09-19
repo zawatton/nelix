@@ -86,6 +86,17 @@ input names if NAME is absent."
   "Bound to the package name (string) during an Emacs-package build phase.")
 (defvar nelix-build--source-archive nil
   "Bound to the fetched source archive path during a build phase.")
+(defvar nelix-build--extra-data-paths nil
+  "List of extra relative paths (files or directories) to copy verbatim
+during an Emacs-package install phase, in addition to the .el files
+`nelix-build-package-el-files' selects.  Bound from the recipe install
+plist's `:extra-data-paths'.  The Emacs-package install phase only copies
+.el sources (see `nelix-build-package-el-files'); a package that `require's
+non-Lisp runtime resources by relative path at load/run time (e.g.
+emojify's data/emoji-sets.json, package-lint's data/stdlib-changes) needs
+those paths listed here or they are silently dropped and the package
+fails with file-missing the first time it touches them.")
+
 (defvar nelix-build--el-exclude nil
   "List of .el basenames to drop during an Emacs-package install phase.
 Bound from the recipe install plist's `:el-exclude'.  Lets a recipe refuse to
@@ -95,17 +106,6 @@ directory as the package's own files — e.g. chatgpt-el ships a top-level
 the real llama on the shared profile load-path.  The M5 `:pname'-directory
 restriction only separates copies in *different* directories; an `:el-exclude'
 entry is the recipe-level escape hatch for same-directory vendoring.")
-
-(defvar nelix-build--extra-files nil
-  "List of additional non-.el files to copy during an Emacs-package install.
-Bound from the recipe install plist's `:extra-files'.  Each entry is copied
-relative to the build directory into the same relative path under `$out'.")
-
-(defvar nelix-build--data-dirs nil
-  "List of additional data directories to copy during an Emacs-package install.
-Bound from the recipe install plist's `:data-dirs'.  Each entry is copied
-recursively relative to the build directory into the same relative path under
-`$out'.")
 
 ;;;###autoload
 (defun nelix-package-name ()
@@ -144,39 +144,25 @@ which removes same-directory vendored copies of other packages' libraries."
           (push f result))))
     (nreverse result)))
 
-(defun nelix-build-package-resource-paths ()
-  "Return additional resource paths to copy for an Emacs-package install.
-The returned paths are relative to `nelix-build--dir' and include explicit
-`nelix-build--extra-files' entries plus `nelix-build--data-dirs'."
-  (append (delq nil
-                (mapcar (lambda (path)
-                          (and (stringp path)
-                               (> (length path) 0)
-                               path))
-                        nelix-build--extra-files))
-          (delq nil
-                (mapcar (lambda (dir)
-                          (and (stringp dir)
-                               (> (length dir) 0)
-                               dir))
-                        nelix-build--data-dirs))))
-
-(defun nelix-build-copy-package-resources (out-dir &optional dir)
-  "Copy extra package resources from DIR into OUT-DIR.
-Copies the paths named by `nelix-build--extra-files' and
-`nelix-build--data-dirs', preserving relative path layout.  Missing
-resources are ignored."
-  (let ((root (file-name-as-directory (or dir nelix-build--dir)))
-        (out (file-name-as-directory (nelix-build--stringify out-dir))))
-    (dolist (path (nelix-build-package-resource-paths))
-      (let* ((src (expand-file-name path root))
-             (dst (expand-file-name path out)))
-        (when (file-exists-p src)
-          (if (file-directory-p src)
-              (nelix-copy-recursively src dst)
-            (nelix-mkdir-p (file-name-directory dst))
-            (nelix-copy-file src dst)))))
-    out-dir))
+;;;###autoload
+(defun nelix-build-package-extra-files (&optional dir)
+  "Return absolute paths listed by `nelix-build--extra-data-paths' under DIR
+\(default the build dir\).  Each entry may be a file or a directory; a
+directory is expanded to every non-hidden file under it, recursively.  An
+entry that does not exist in this checkout is silently skipped, so a
+recipe can list a path that only appears in some upstream versions."
+  (let ((root (or dir nelix-build--dir))
+        result)
+    (dolist (rel nelix-build--extra-data-paths (nreverse result))
+      (let ((abs (expand-file-name rel root)))
+        (cond
+         ((file-directory-p abs)
+          (dolist (f (directory-files-recursively abs ".*" nil))
+            (unless (or (file-directory-p f)
+                        (string-prefix-p "." (file-name-nondirectory f)))
+              (push f result))))
+         ((file-exists-p abs)
+          (push abs result)))))))
 
 (defvar nelix-build-tool-paths nil
   "Extra absolute bin directories prepended to the build PATH.
@@ -224,13 +210,20 @@ Tilde-prefixed values are expanded so HOME-scrubbed builds still resolve them."
 
 (defun nelix-build--env ()
   "Return the deterministic environment KV list for `nelix-invoke' (Tier-1).
-Sets a minimal PATH, scrubs HOME to the build dir, exports `out', and pins
-SOURCE_DATE_EPOCH/TZ/LC_ALL.  Passed to env(1) so no shell is needed."
+Scrubs HOME to the build dir, exports `out', pins SOURCE_DATE_EPOCH/TZ/
+LC_ALL, and appends the recipe's build-tool variables.
+
+PATH is POSIX-only.  On Windows there is no env(1) and no /usr/bin:/bin,
+and build tools such as tar and git live on the ambient PATH, so it is
+left to `nelix-invoke's `process-environment' fallback.  On POSIX the
+hermetic /usr/bin:/bin tail stands, with `nelix-build-tool-paths'
+prepended so a recipe can reach a toolchain outside it."
   (append
-   (list (concat "out=" (or nelix-build--out ""))
-         (concat "PATH=" (nelix-build--path))
-         (concat "HOME=" (or nelix-build--dir ""))
-         "SOURCE_DATE_EPOCH=1"
+   (list (concat "out=" (or nelix-build--out "")))
+   (unless (eq system-type 'windows-nt)
+     (list (concat "PATH=" (nelix-build--path))))
+   (list (concat "HOME=" (or nelix-build--dir ""))
+         "SOURCE_DATE_EPOCH=0"
          "TZ=UTC"
          "LC_ALL=C")
    (nelix-build--tool-env-pairs)))
@@ -246,15 +239,21 @@ SOURCE_DATE_EPOCH/TZ/LC_ALL.  Passed to env(1) so no shell is needed."
 (defun nelix-invoke (program &rest args)
   "Run PROGRAM with ARGS in the build dir with the deterministic build env.
 Signals `nelix-build-error' on a non-zero exit (with captured output).
-Uses env(1) to set the env without a shell, so it behaves identically on
-host Emacs and the standalone NeLisp runtime."
+On POSIX, uses env(1) to set the env without a shell, so it behaves
+identically on host Emacs and the standalone NeLisp runtime.  Windows
+has neither /usr/bin/env nor a shell(1) worth shelling out through for
+this, so there `process-environment' is let-bound directly around
+`call-process' instead — same KV pins, no env(1) hop."
   (let* ((prog (nelix-build--stringify program))
          (argv (mapcar #'nelix-build--stringify args))
          (env-kv (nelix-build--env))
          exit out)
     (with-temp-buffer
-      (setq exit (apply #'call-process "/usr/bin/env" nil t nil
-                        (append env-kv (cons prog argv))))
+      (if (eq system-type 'windows-nt)
+          (let ((process-environment (append env-kv process-environment)))
+            (setq exit (apply #'call-process prog nil t nil argv)))
+        (setq exit (apply #'call-process "/usr/bin/env" nil t nil
+                          (append env-kv (cons prog argv)))))
       (setq out (buffer-string)))
     (unless (eq exit 0)
       (signal 'nelix-build-error

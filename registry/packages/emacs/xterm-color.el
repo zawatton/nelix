@@ -7,10 +7,6 @@
 
 (require 'nelix-registry)
 
-(nelix-package
- :name "xterm-color"
- :version "2.0"
- :class 'emacs-package
- :systems '((x86_64-linux :source (:type url :url "https://codeload.github.com/atomontage/xterm-color/tar.gz/ffdad85e584dfc0857f2a1fb970f5ef0f5d31ba3" :sha256 "sha256-70311e5b24b10fc2fe07f403aa81a12afce875f47ef17817e1200f55def330d5") :dependencies nil :install (:type build :build-system emacs-package :pname "xterm-color" :load-paths (".") :features (xterm-color)))))
+(nelix-package :name "xterm-color" :version "2.0" :class 'emacs-package :systems '((x86_64-linux :source (:type url :url "https://codeload.github.com/atomontage/xterm-color/tar.gz/ffdad85e584dfc0857f2a1fb970f5ef0f5d31ba3" :sha256 "sha256-70311e5b24b10fc2fe07f403aa81a12afce875f47ef17817e1200f55def330d5") :dependencies nil :install (:type build :build-system emacs-package :pname "xterm-color" :load-paths (".") :features (xterm-color))) (x86_64-windows :source (:type url :url "https://codeload.github.com/atomontage/xterm-color/tar.gz/ffdad85e584dfc0857f2a1fb970f5ef0f5d31ba3" :sha256 "sha256-70311e5b24b10fc2fe07f403aa81a12afce875f47ef17817e1200f55def330d5") :dependencies nil :install (:type build :build-system emacs-package :pname "xterm-color" :load-paths (".") :features (xterm-color)))))
 
 ;;; xterm-color.el ends here

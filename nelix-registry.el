@@ -102,11 +102,21 @@ packaged recipes for isolated tests or fully private registries."
          (not (member env '("0" "false" "FALSE" "no" "NO"))))))
 
 (defun nelix-registry--library-directory ()
-  "Return the directory containing the installed Nelix Lisp files."
+  "Return the directory containing the installed Nelix Lisp files.
+
+`locate-library' is tried first because it resolves via `load-path' and
+is stable regardless of caller context.  `load-file-name' is a dynamic
+variable scoped to the outermost in-progress `load': if some caller
+script does e.g. \\='(require (quote nelix-registry))\\=' and this
+function later runs from a nested call, `load-file-name' has already
+reverted to that *caller's* file, not nelix-registry.el's, silently
+pointing `nelix-registry-packaged-root' at the wrong directory (and
+therefore loading zero packaged recipes) whenever Nelix is required
+from inside a `load'ed file rather than evaluated directly."
   (file-name-directory
    (expand-file-name
-    (or load-file-name
-        (locate-library "nelix-registry")
+    (or (locate-library "nelix-registry")
+        load-file-name
         buffer-file-name
         "nelix-registry.el"))))
 

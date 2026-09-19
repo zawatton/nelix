@@ -7,10 +7,6 @@
 
 (require 'nelix-registry)
 
-(nelix-package
- :name "elfeed"
- :version "3.4.2"
- :class 'emacs-package
- :systems '((x86_64-linux :source (:type url :url "https://codeload.github.com/skeeto/elfeed/tar.gz/2c4f03158a3bf410d95c57851de284a1f88537ca" :sha256 "sha256-d4b5bfb123a5d34381f3b0278dcac12559010958408bfc2059b846b593879686") :dependencies nil :install (:type build :build-system emacs-package :pname "elfeed" :load-paths (".") :features (elfeed)))))
+(nelix-package :name "elfeed" :version "3.4.2" :class 'emacs-package :systems '((x86_64-linux :source (:type url :url "https://codeload.github.com/skeeto/elfeed/tar.gz/2c4f03158a3bf410d95c57851de284a1f88537ca" :sha256 "sha256-d4b5bfb123a5d34381f3b0278dcac12559010958408bfc2059b846b593879686") :dependencies nil :install (:type build :build-system emacs-package :pname "elfeed" :load-paths (".") :features (elfeed))) (x86_64-windows :source (:type url :url "https://codeload.github.com/skeeto/elfeed/tar.gz/2c4f03158a3bf410d95c57851de284a1f88537ca" :sha256 "sha256-d4b5bfb123a5d34381f3b0278dcac12559010958408bfc2059b846b593879686") :dependencies nil :install (:type build :build-system emacs-package :pname "elfeed" :load-paths (".") :features (elfeed)))))
 
 ;;; elfeed.el ends here

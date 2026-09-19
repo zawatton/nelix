@@ -116,7 +116,8 @@ and loads from the store.  Network-gated (NELIX_NET_TESTS)."
                     ("math-symbol-lists" . nil)
                     ("parseclj" . nil)
                     ("parseedn" . ("parseclj"))
-                    ("org-node" . ("cond-let" "llama" "org-mem"))
+                    ;; main's recipe is the superset: it adds magit.
+                    ("org-node" . ("cond-let" "llama" "magit" "org-mem"))
                     ("xelb" . nil)
                     ("eat" . ("compat"))
                     ("company-math" . ("math-symbol-lists"))
@@ -128,7 +129,9 @@ and loads from the store.  Network-gated (NELIX_NET_TESTS)."
                     ("emojify" . ("ht"))
                     ("elisp-lint" . ("dash" "package-lint"))
                     ("org-node-fakeroam" . ("org-node" "emacsql" "org-roam"))
-                    ("eat-windows-pty" . ("eat"))))
+                    ;; 8c9b540 corrected this from "eat" against a full
+                    ;; Windows install run: the recipe is emacs-eat.
+                    ("eat-windows-pty" . ("emacs-eat"))))
       (let* ((name (car spec))
              (deps (cdr spec))
              (r (nelix-registry-get name))
@@ -136,8 +139,12 @@ and loads from the store.  Network-gated (NELIX_NET_TESTS)."
         (should r)
         (should (eq 'emacs-package (plist-get r :class)))
         (should (equal deps (plist-get sys :dependencies)))
+        ;; The two resource-copy designs converged on main's
+        ;; `:extra-data-paths'; the branch's `:data-dirs' is gone.
         (when (member name '("package-lint" "emojify"))
-          (should (equal '("data") (plist-get (plist-get sys :install) :data-dirs))))))))
+          (should (equal '("data")
+                         (plist-get (plist-get sys :install)
+                                    :extra-data-paths))))))))
 
 (ert-deftest nelix-import-flake-emacs-parse ()
   "Doc 33 M3: parse melpaBuild blocks (pname/owner/repo/rev/deps) from flake.nix."

@@ -7,10 +7,6 @@
 
 (require 'nelix-registry)
 
-(nelix-package
- :name "pcre2el"
- :version "1.12"
- :class 'emacs-package
- :systems '((x86_64-linux :source (:type url :url "https://codeload.github.com/joddie/pcre2el/tar.gz/b4d846d80dddb313042131cf2b8fbf647567e000" :sha256 "sha256-6141625d10ae2ed5342d22da8bd43e57dc0d4f58a5c07d7bb408665bb3f0f839") :dependencies nil :install (:type build :build-system emacs-package :pname "pcre2el" :load-paths (".") :features (pcre2el)))))
+(nelix-package :name "pcre2el" :version "1.12" :class 'emacs-package :systems '((x86_64-linux :source (:type url :url "https://codeload.github.com/joddie/pcre2el/tar.gz/b4d846d80dddb313042131cf2b8fbf647567e000" :sha256 "sha256-6141625d10ae2ed5342d22da8bd43e57dc0d4f58a5c07d7bb408665bb3f0f839") :dependencies nil :install (:type build :build-system emacs-package :pname "pcre2el" :load-paths (".") :features (pcre2el))) (x86_64-windows :source (:type url :url "https://codeload.github.com/joddie/pcre2el/tar.gz/b4d846d80dddb313042131cf2b8fbf647567e000" :sha256 "sha256-6141625d10ae2ed5342d22da8bd43e57dc0d4f58a5c07d7bb408665bb3f0f839") :dependencies nil :install (:type build :build-system emacs-package :pname "pcre2el" :load-paths (".") :features (pcre2el)))))
 
 ;;; pcre2el.el ends here

@@ -106,31 +106,46 @@ NAME=VALUE strings with tilde expansion."
                                  (expand-file-name "~/.rustup"))
                          "EMPTY=")))))
 
-(ert-deftest nelix-build-test-copy-package-resources ()
-  "Package resources are copied selectively and preserve relative paths."
+(ert-deftest nelix-build-test-extra-data-paths-expands-files-and-dirs ()
+  "`:extra-data-paths' entries resolve to files, directories expanding whole.
+
+Carried over from the branch-side resource-copy test when the two
+designs converged on main's `:extra-data-paths'.  main shipped the key
+and ten recipes use it, but nothing covered the expansion itself."
   (let* ((tmpdir (make-temp-file "nelix-build-resource-" t))
-         (outdir (expand-file-name "out" tmpdir))
          (nelix-build--dir tmpdir)
-         (nelix-build--out outdir)
-         (nelix-build--extra-files '("README.txt"))
-         (nelix-build--data-dirs '("data")))
+         (nelix-build--extra-data-paths '("README.txt" "data")))
     (unwind-protect
         (progn
           (make-directory (expand-file-name "data/sub" tmpdir) t)
           (write-region "alpha" nil (expand-file-name "README.txt" tmpdir))
           (write-region "beta" nil (expand-file-name "data/emoji.json" tmpdir))
           (write-region "gamma" nil (expand-file-name "data/sub/more.json" tmpdir))
-          (nelix-build-copy-package-resources outdir)
-          (should (equal "alpha" (with-temp-buffer
-                                   (insert-file-contents (expand-file-name "README.txt" outdir))
-                                   (buffer-string))))
-          (should (equal "beta" (with-temp-buffer
-                                  (insert-file-contents (expand-file-name "data/emoji.json" outdir))
-                                  (buffer-string))))
-          (should (equal "gamma" (with-temp-buffer
-                                   (insert-file-contents (expand-file-name "data/sub/more.json" outdir))
-                                   (buffer-string))))
-          (should (file-directory-p (expand-file-name "data/sub" outdir))))
+          (let ((got (sort (mapcar (lambda (f) (file-relative-name f tmpdir))
+                                   (nelix-build-package-extra-files))
+                           #'string<)))
+            ;; A named file comes through as itself; a named directory
+            ;; expands to every file under it, recursively.
+            (should (equal '("README.txt" "data/emoji.json" "data/sub/more.json")
+                           got))))
+      (delete-directory tmpdir t))))
+
+(ert-deftest nelix-build-test-extra-data-paths-skips-hidden-and-missing ()
+  "Hidden files are left out and a path absent from this checkout is skipped.
+
+The skip matters: a recipe may list a path that only exists in some
+upstream versions, and that must not fail the build."
+  (let* ((tmpdir (make-temp-file "nelix-build-resource-" t))
+         (nelix-build--dir tmpdir)
+         (nelix-build--extra-data-paths '("data" "not-in-this-version.json")))
+    (unwind-protect
+        (progn
+          (make-directory (expand-file-name "data" tmpdir) t)
+          (write-region "keep" nil (expand-file-name "data/keep.json" tmpdir))
+          (write-region "hide" nil (expand-file-name "data/.hidden" tmpdir))
+          (should (equal '("data/keep.json")
+                         (mapcar (lambda (f) (file-relative-name f tmpdir))
+                                 (nelix-build-package-extra-files)))))
       (delete-directory tmpdir t))))
 
 (provide 'nelix-build-test)
