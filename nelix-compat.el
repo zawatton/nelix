@@ -643,21 +643,27 @@ Tries Emacs `getenv', then NeLisp Layer-2 alternatives."
      (t (error "no read-file backend available for %S" path))))))
 
 (defun nelix-compat--read-file-binary (path)
-  "Return PATH contents as a raw byte string where the host supports it."
+  "Return PATH contents as a raw byte string where the host supports it.
+
+Both branches make the buffer unibyte before reading, so `buffer-string'
+already returns raw bytes; the `string-as-unibyte' that used to wrap it
+was the identity here.  It has been obsolete since Emacs 26.1, and with
+`byte-compile-error-on-warn' that made `make compile' -- and `make lint'
+through it -- fail outright."
   (cond
    ((and (fboundp 'with-temp-buffer)
          (fboundp 'insert-file-contents-literally))
     (with-temp-buffer
       (set-buffer-multibyte nil)
       (insert-file-contents-literally path)
-      (string-as-unibyte (buffer-string))))
+      (buffer-string)))
    ((and (fboundp 'with-temp-buffer)
          (fboundp 'insert-file-contents))
     (let ((coding-system-for-read 'binary))
       (with-temp-buffer
         (set-buffer-multibyte nil)
         (insert-file-contents path)
-        (string-as-unibyte (buffer-string)))))
+        (buffer-string))))
    (t
     (nelix-compat-read-file path))))
 

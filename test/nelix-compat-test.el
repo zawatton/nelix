@@ -565,6 +565,27 @@
             (should (equal '(0 127 128 200 255) (append bytes nil)))))
       (delete-file file))))
 
+(ert-deftest nelix-compat-test-read-file-binary-fallback-is-unibyte ()
+  "The `insert-file-contents' fallback also returns raw bytes.
+
+`nelix-compat--read-file-binary' has two reading branches and the host
+only ever takes the first, so the second went unexercised -- including
+when the obsolete `string-as-unibyte' was dropped from both.  Hide
+`insert-file-contents-literally' to reach it."
+  (let ((file (make-temp-file "nelix-compat-binary-fallback-")))
+    (unwind-protect
+        (progn
+          (let ((coding-system-for-write 'binary))
+            (with-temp-file file
+              (set-buffer-multibyte nil)
+              (insert (unibyte-string 0 127 128 200 255))))
+          (cl-letf (((symbol-function 'insert-file-contents-literally) nil))
+            (should-not (fboundp 'insert-file-contents-literally))
+            (let ((bytes (nelix-compat--read-file-binary file)))
+              (should-not (multibyte-string-p bytes))
+              (should (equal '(0 127 128 200 255) (append bytes nil))))))
+      (delete-file file))))
+
 (ert-deftest nelix-compat-test-write-file-lazy-requires-nelisp-fileio ()
   "Text writes probe NeLisp fileio before falling back or failing."
   (let ((loaded nil)
