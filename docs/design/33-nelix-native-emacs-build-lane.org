@@ -4,20 +4,42 @@
 
 * Status
 :PROPERTIES:
-:STATE: M1-M4-IMPLEMENTED-2026-09-19 (M5 init.el cutover NOT done)
+:STATE: M1-M5-SHIPPED-2026-09-20 (cutover live on linux-debian)
 :END:
 
-*Status 2026-09-19:* M1-M4 are implemented -- the =emacs-package= recipe
-class, the build phase, the flake->native converter and the dependency
-closure -- with 197 recipes under =registry/packages/emacs/=.  Doc 34 then
-added the external build lane for packages that are not pure =.el=.
+*Status 2026-09-20:* M1-M4 were implemented on 2026-09-19 -- the
+=emacs-package= recipe class, the build phase, the flake->native converter
+and the dependency closure -- with recipes under
+=registry/packages/emacs/=.  Doc 34 then added the external build lane for
+packages that are not pure =.el=.
 
-*M5 (init.el cutover) is NOT done.*  =nelix-package-activate-emacs= has no
-native code path (§4.6), and this machine's profile is still the Nix one:
-=~/.local/state/nelix/profile -> /nix/store/...-profile=, with every package
-resolving from =~/.emacs.d/elpa= because it precedes the Nix paths on
-=load-path=.  =native-build-trial= profiles exist but are trials.  So the
-build lane is real while the cutover it was built for has not happened.
+*M5 (init.el cutover) is now done and live.*  =nelix-emacs-activate-native=
+(§4.6) prepends each profile entry's own directory to =load-path= and loads
+its autoloads; =custom-lisp/nelix-activate.el=, tangled from =init.org=,
+calls it from =init.el=.  On this machine the running daemon reports
+=profile "default" / paths 201 / autoloads 201 / missing 0 / errors 0=, and
+magit, org-roam and arduino-mode all resolve from
+=~/.local/share/nelix/store/= rather than from =~/.emacs.d/elpa=.
+
+The whole init.org manifest now resolves: 197 profile entries, no package
+left without a recipe.  Getting there needed several fixes recorded in the
+same branch -- git-archive unpacking, a stale source hash, recognising
+Emacs built-ins as satisfied dependencies, and building libtool from source
+so emacs-ffi's C module has libltdl without an OS package.
+
+Two things the cutover exposed are worth keeping in view.  The activation
+entry point lived in a hand-maintained =nelix-package.el= that =init.org=
+never tangled, so it could not be reproduced on a fresh machine; it now
+tangles as =nelix-activate.el=.  And that file called
+=anvil-pkg--rollback-replay-emacs-hooks=, from the namespace Nelix retired
+without aliases -- bound only because the distro-packaged Nelix still
+shipped =anvil-pkg-*.el=.  The moment =nelix= resolved to a current
+checkout it was void-function, and since the call sits near the top of
+=init.el= it took the rest of the file with it.
+
+This status is about the build lane and its cutover, not about the project:
+Doc 30's daily-use and release-candidate definitions are separate and not
+yet met.
 
 Design for fetching, building, and installing Emacs Lisp packages
 through the =nelix-native= backend with *no Nix dependency*, closing the gap
@@ -37,7 +59,7 @@ declared as a nelix manifest, locked, and installed into a Nix-store profile
 however, cannot yet build or install Emacs packages — so the "Nix-free" promise
 is unmet for the daily Emacs environment.
 
-* 2. Current state (verified 2026-06-24)
+* 2. State at design time (verified 2026-06-24, superseded -- see Status)
 
 | Capability                              | Status today                                  |
 |-----------------------------------------+-----------------------------------------------|

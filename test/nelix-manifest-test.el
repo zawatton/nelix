@@ -2467,7 +2467,19 @@
       (delete-directory dir t))))
 
 (ert-deftest nelix-manifest-test-upgrade-plan-adds-manifest-context ()
-  "Manifest-aware nelix-upgrade-plan keeps profile plan data and adds drift."
+  "Manifest-aware nelix-upgrade-plan plans declared packages and reports drift.
+
+Changed 2026-09-20.  This used to assert =:count= 2 here -- the size of
+the profile -- because the host walked the profile while the standalone
+NeLisp lane walked the manifest's declared targets.  The two only agree
+while the profile holds exactly one element per declared package, and a
+real profile did not: twelve packages appeared twice (`dash' and
+`dash-1', same attrPath, same store path), so the operational gate found
+216 planned upgrades on one runtime and 204 on the other.
+
+The declared-target reading is the one kept: an upgrade plan for a
+manifest should cover what the manifest asks for.  Undeclared profile
+entries are still reported, as =:extra= -- which is what `fd' is here."
   (let ((dir (make-temp-file "nelix-manifest-upgrade-" t)))
     (unwind-protect
         (nelix-manifest-test--with-state
@@ -2495,7 +2507,13 @@
               (let ((plan (nelix-upgrade-plan
                            (expand-file-name "manifest.el" dir))))
                 (should (eq 'upgrade (plist-get plan :operation)))
-                (should (= 2 (plist-get plan :count)))
+                ;; One declared package (ripgrep), so one planned upgrade --
+                ;; not two, which was the profile's size.
+                (should (= 1 (plist-get plan :count)))
+                (should (equal '("ripgrep")
+                               (mapcar (lambda (row)
+                                         (if (stringp row) row (plist-get row :name)))
+                                       (plist-get plan :upgrade))))
                 (should (equal '("fd")
                                (mapcar (lambda (row) (plist-get row :name))
                                        (plist-get plan :extra))))

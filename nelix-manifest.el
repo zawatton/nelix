@@ -4436,6 +4436,32 @@ profile metadata for read-only review."
        (nelix-compat-file-exists-p (expand-file-name path))))
 
 ;;;###autoload
+(defun nelix-upgrade-plan--manifest-base (manifest-file)
+  "Return the upgrade/pinned/missing base for MANIFEST-FILE.
+
+Both runtimes have to answer the same question here.  The standalone
+NeLisp lane routes through `nelix-fast', which walks the manifest's
+targets and reports one row per declared package; host Emacs used to
+call `pkg-upgrade-plan', which walks the profile instead.  Those agree
+only while the profile holds exactly one element per declared package.
+
+This machine's Nix profile does not: twelve packages (dash, s, compat,
+vertico, ...) appear twice, as `dash' and `dash-1', with identical
+attrPath and identical storePaths -- the same package registered twice.
+Host Emacs then planned to upgrade 216 entries where NeLisp planned
+204, and the operational gate failed comparing the two.
+
+`nelix-fast--direct-json-enabled-p' scopes the direct JSON *writer* to
+NeLisp deliberately, which is fine; what was not intended is two
+different computations behind the two writers.  So the computation is
+shared here and only the encoding differs, with `pkg-upgrade-plan' kept
+as the fallback for when the fast lane is unavailable."
+  (or (and (fboundp 'nelix-fast-upgrade-plan)
+           (condition-case nil
+               (nelix-fast-upgrade-plan manifest-file)
+             (error nil)))
+      (pkg-upgrade-plan)))
+
 (defun nelix-upgrade-plan (&optional manifest-or-name)
   "Return a read-only upgrade plan.
 
@@ -4446,7 +4472,7 @@ compatibility."
   (if (nelix-manifest--existing-file-p manifest-or-name)
       (if (nelix-compat--standalone-nelisp-p)
           (nelix-upgrade-plan--nelisp manifest-or-name)
-        (let* ((base (pkg-upgrade-plan))
+        (let* ((base (nelix-upgrade-plan--manifest-base manifest-or-name))
                (manifest (nelix-manifest-load manifest-or-name))
                (audit (nelix-audit manifest-or-name)))
           (append (list :manifest (plist-get manifest :file)
