@@ -608,7 +608,13 @@ cons cell.")
       ;; materialize on Windows (e.g. a broken symlink left over from a
       ;; git worktree, such as plz.el's NOTES.org -> worktrees/... link)
       ;; without failing the whole unpack over an entry nothing needs.
-      . (apply #'nelix-invoke "tar" "xzf" (nelix-source-archive)
+      ;; "xf", not "xzf": a (:type git) source is `git archive
+      ;; --format=tar' output -- an uncompressed tar whose name is the
+      ;; repository basename, so there is no extension to switch on.
+      ;; GNU tar and bsdtar both auto-detect compression on extract, so
+      ;; one form covers the .tar.gz elpa/codeload shape and the plain
+      ;; tar git shape alike.
+      . (apply #'nelix-invoke "tar" "xf" (nelix-source-archive)
                "--strip-components=1" "--force-local"
                (mapcar (lambda (pat) (concat "--exclude=" pat))
                        nelix-build--tar-exclude)))

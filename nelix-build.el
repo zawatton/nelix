@@ -107,6 +107,12 @@ the real llama on the shared profile load-path.  The M5 `:pname'-directory
 restriction only separates copies in *different* directories; an `:el-exclude'
 entry is the recipe-level escape hatch for same-directory vendoring.")
 
+(defvar nelix-build--tar-exclude nil
+  "List of archive entry patterns to skip during an Emacs-package unpack.
+Bound from the recipe install plist's `:tar-exclude'.  Defined here, next
+to its siblings, so the unpack phase form stays evaluable when a caller
+does not bind it -- `nelix-builder' only forward-declares it.")
+
 ;;;###autoload
 (defun nelix-package-name ()
   "Return the package name for the current Emacs-package build phase.
