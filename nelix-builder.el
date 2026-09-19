@@ -1002,12 +1002,33 @@ SOURCE_DATE_EPOCH, TZ, LC_ALL, ulimit -t) is applied by
             (list (format "nelix-native-install-recipe: invalid dependency %S"
                           dependency))))))
 
-(defun nelix-builder--profile-has-entry-p (profile-name name)
-  "Return non-nil when PROFILE-NAME already contains NAME."
+(defun nelix-builder--profile-entry-named (profile-name name)
+  "Return PROFILE-NAME's installed entry for NAME, or nil."
   (let (found)
     (dolist (entry (nelix-builder--profile-current-entries profile-name) found)
-      (when (equal name (plist-get entry :name))
-        (setq found t)))))
+      (when (and (null found) (equal name (plist-get entry :name)))
+        (setq found entry)))))
+
+(defun nelix-builder--installed-dependency-report (profile-name name)
+  "Return a report plist for NAME if PROFILE-NAME already has it, else nil.
+
+Nothing is built, but the dependency still has to be reported: the
+caller turns dependency reports into the `nelix-input' alist, so
+dropping an already-installed one makes (nelix-input \"libtool\")
+resolve on the run that installs libtool and fail on every run after
+that -- a build whose success depends on when it is run."
+  (let ((entry (nelix-builder--profile-entry-named profile-name name)))
+    (when entry
+      (list :status 'ok
+            :backend 'nelix-native
+            :name name
+            :version (plist-get entry :version)
+            :store-path (plist-get entry :store-path)
+            :already-installed t))))
+
+(defun nelix-builder--profile-has-entry-p (profile-name name)
+  "Return non-nil when PROFILE-NAME already contains NAME."
+  (and (nelix-builder--profile-entry-named profile-name name) t))
 
 (defvar nelix-builder-allow-missing-dependencies nil
   "When non-nil, a dependency with no registry recipe is logged and skipped
@@ -1067,8 +1088,9 @@ package.el), only `nelix-builder-host-provided-dependencies' applies."
           (signal 'nelix-error
                   (list (format "nelix-native-install-recipe: dependency cycle at %s"
                                 name))))
-         ((nelix-builder--profile-has-entry-p profile-name name)
-          nil)
+         ((nelix-builder--installed-dependency-report profile-name name)
+          (push (nelix-builder--installed-dependency-report profile-name name)
+                reports))
          ((and (null recipe)
                (nelix-builder--host-provided-dependency-p name))
           nil)
@@ -1118,8 +1140,9 @@ package.el), only `nelix-builder-host-provided-dependencies' applies."
           (signal 'nelix-error
                   (list (format "nelix-native-install-lock-package: dependency cycle at %s"
                                 name))))
-         ((nelix-builder--profile-has-entry-p profile-name name)
-          nil)
+         ((nelix-builder--installed-dependency-report profile-name name)
+          (push (nelix-builder--installed-dependency-report profile-name name)
+                reports))
          ((null package)
           (signal 'nelix-error
                   (list (format "nelix-native-install-lock-package: missing dependency lock row %s"
