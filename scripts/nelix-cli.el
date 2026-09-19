@@ -1105,19 +1105,41 @@ results never contain)."
         (mapconcat #'identity result "\n"))
        (t (nelix-cli--print-to-string result))))))
 
+(defconst nelix-cli--verdict-commands '("lock-check")
+  "Commands whose result is a verdict, not just a report.
+
+`lock-check' exists to answer whether the lock still matches the
+manifest.  It reported drift in its JSON and still exited 0, so a
+caller doing the obvious thing -- run it, test $? -- was told the lock
+was fine while `\"ok\":null' sat in the output it never read.")
+
+(defun nelix-cli--verdict-exit-code (command result)
+  "Return the exit code for COMMAND given its RESULT.
+
+Non-zero only for a command in `nelix-cli--verdict-commands' that
+answered negatively.  1, not 2: 2 means the command failed, while this
+means the command worked and the answer is no -- the distinction grep
+and diff make."
+  (if (and (member command nelix-cli--verdict-commands)
+           (listp result)
+           (not (eq (plist-get result :ok) t)))
+      1
+    0))
+
 (defun nelix-cli-main (&optional args)
   "Run Nelix CLI with ARGS and exit the process."
   (let* ((raw (or args command-line-args-left))
          (parsed (nelix-cli-parse-args raw))
          (json (plist-get parsed :json)))
     (condition-case err
-        (let ((text (nelix-cli-format-result
-                     (nelix-cli-dispatch parsed)
-                     json)))
+        (let* ((result (nelix-cli-dispatch parsed))
+               (text (nelix-cli-format-result result json)))
           (princ text)
           (unless (string-suffix-p "\n" text)
             (princ "\n"))
-          (kill-emacs 0))
+          ;; The report is printed either way; only the exit code differs.
+          (kill-emacs (nelix-cli--verdict-exit-code
+                       (plist-get parsed :command) result)))
       (error
        (let ((message (error-message-string err)))
          (if json

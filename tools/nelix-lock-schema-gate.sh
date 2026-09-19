@@ -62,6 +62,34 @@ exit 2
 EOF
 chmod +x "$FAKE_NIX"
 
+run_nelix_expect_failure() {
+  # For commands whose whole job is to answer a question: `lock-check'
+  # exits non-zero when the lock does not match, so a bad-lock fixture
+  # must not be run through `run_nelix', which treats any non-zero exit
+  # as the gate itself failing.
+  local label="$1"
+  shift
+  local out_file="$TMP_DIR/$label.out"
+  local err_file="$TMP_DIR/$label.err"
+  set +e
+  env \
+    "PATH=$TMP_DIR/bin:$PATH" \
+    "HOME=$TMP_DIR/home" \
+    "XDG_STATE_HOME=$TMP_DIR/state" \
+    "NELIX_RUNTIME=emacs" \
+    "NELIX_LISPDIR=$REPO_ROOT" \
+    "NELIX_FAKE_NIX_LOG=$FAKE_LOG" \
+    "$REPO_ROOT/bin/nelix" --json "$@" >"$out_file" 2>"$err_file"
+  local rc=$?
+  set -e
+  printf 'nelix_lock_schema_gate_result label=%s rc=%s\n' "$label" "$rc"
+  if [ "$rc" -eq 0 ]; then
+    echo "nelix lock schema gate: expected non-zero exit for $label" >&2
+    sed 's/^/nelix_lock_schema_gate_stdout /' "$out_file" >&2
+    exit 1
+  fi
+}
+
 run_nelix() {
   local label="$1"
   shift
@@ -154,7 +182,7 @@ EOF
 run_nelix bad_lock lock "$BAD_MANIFEST"
 perl -0pi -e 's/[[:space:]]+:source nixpkgs//' "$BAD_MANIFEST.nelix-lock"
 run_nelix bad_lock_validate lock validate "$BAD_MANIFEST"
-run_nelix bad_lock_check lock-check "$BAD_MANIFEST"
+run_nelix_expect_failure bad_lock_check lock-check "$BAD_MANIFEST"
 expect_out bad_lock_validate '"ok":null'
 expect_out bad_lock_validate '"shape-ok":null'
 expect_out bad_lock_validate \

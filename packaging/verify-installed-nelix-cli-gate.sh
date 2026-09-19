@@ -851,7 +851,7 @@ expect_json bad_lock_validate '"ok":null'
 expect_json bad_lock_validate '"shape-ok":null'
 expect_json bad_lock_validate \
   'lock package row 1 is missing schema-required key :source'
-run_json bad_lock_check lock-check "$bad_lock_manifest"
+run_failing_json bad_lock_check __never__ lock-check "$bad_lock_manifest"
 expect_json bad_lock_check '"ok":null'
 expect_json bad_lock_check \
   'lock package row 1 is missing schema-required key :source'
@@ -881,7 +881,7 @@ expect_json bad_source_lock_validate '"ok":null'
 expect_json bad_source_lock_validate '"shape-ok":null'
 expect_json bad_source_lock_validate \
   'lock package row 1 has invalid source registry for nix backend'
-run_json bad_source_lock_check lock-check "$bad_source_lock_manifest"
+run_failing_json bad_source_lock_check __never__ lock-check "$bad_source_lock_manifest"
 expect_json bad_source_lock_check '"ok":null'
 expect_json bad_source_lock_check \
   'lock package row 1 has invalid source registry for nix backend'
@@ -900,7 +900,7 @@ expect_json bad_attr_lock_validate '"ok":null'
 expect_json bad_attr_lock_validate '"shape-ok":null'
 expect_json bad_attr_lock_validate \
   'lock package row 1 is missing nix schema-required key :attr-path'
-run_json bad_attr_lock_check lock-check "$bad_attr_lock_manifest"
+run_failing_json bad_attr_lock_check __never__ lock-check "$bad_attr_lock_manifest"
 expect_json bad_attr_lock_check '"ok":null'
 expect_json bad_attr_lock_check \
   'lock package row 1 is missing nix schema-required key :attr-path'
