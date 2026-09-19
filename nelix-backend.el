@@ -18,6 +18,14 @@
 (require 'nelix-registry)
 (require 'nelix-builder)
 
+;; Raised when a `system' row names an OS-provided prerequisite that is
+;; neither supplied by an acquisition provider nor already present.  Declared
+;; via the compat helper rather than `define-error' so the condition chain
+;; also works on the NeLisp standalone reader.
+(nelix-compat-define-error-symbol
+ 'nelix-external-dependency
+ "nelix external dependency is not satisfied"
+ 'nelix-error)
 
 (defgroup nelix-backend nil
   "Nelix backend dispatch."
@@ -65,7 +73,11 @@ requiring a separate OS package-manager integration yet."
        :store t
        :generations t
        :rollback t
-       :build nil
+       ;; Doc 34 shipped the external build lane: `nelix-builder' carries
+       ;; the make / cmake / cargo / trivial phase presets, so the native
+       ;; backend does build from source.  This flag read `nil' long after
+       ;; that landed and was misreported as "native cannot build".
+       :build t
        :binary-substitutes t)
      table)
     (puthash
@@ -181,6 +193,64 @@ requiring a separate OS package-manager integration yet."
                  (not (eq backend 'system))
                  (nelix-backend-available-p backend system*))
         (setq found backend)))))
+
+(defun nelix-backend--system-program-names (targets)
+  "Return TARGETS as the list of OS program names they name."
+  (delq nil
+        (mapcar (lambda (target)
+                  (cond
+                   ((stringp target) target)
+                   ((symbolp target) (symbol-name target))
+                   ((consp target)
+                    (let ((name (or (plist-get target :system)
+                                    (plist-get target :name))))
+                      (cond ((stringp name) name)
+                            ((symbolp name) (symbol-name name))
+                            (t nil))))
+                   (t nil)))
+                (if (listp targets) targets (list targets)))))
+
+(defun nelix-backend--system-missing-programs (targets)
+  "Return the subset of TARGETS' program names absent from PATH."
+  (let (missing)
+    (dolist (name (nelix-backend--system-program-names targets)
+                  (nreverse missing))
+      (unless (nelix-compat-executable-find name)
+        (push name missing)))))
+
+(defun nelix-backend--external-dependency-message (missing system)
+  "Build the operator-facing message for MISSING programs on SYSTEM."
+  (format (concat "nelix: %s must be provided by the operating system (%s). "
+                  "No acquisition provider in `nelix-system-backend-policy' %S "
+                  "is available. Install %s with the OS package manager, or add "
+                  "an available provider to that list.")
+          (mapconcat (lambda (n) (format "`%s'" n)) missing ", ")
+          system
+          nelix-system-backend-policy
+          (if (cdr missing) "them" "it")))
+
+(defun nelix-backend--system-verify (targets system)
+  "Verify TARGETS are present on SYSTEM, or signal an external dependency.
+
+This is the Nix-free lane for `system' rows: when no acquisition
+provider is configured or available, Nelix does not install the
+prerequisite itself.  It checks whether the OS already provides it and
+reports an explicit, actionable dependency when it does not -- which is
+what Doc 34 asks for instead of silently falling back to another
+package universe."
+  (let ((missing (nelix-backend--system-missing-programs targets)))
+    (when missing
+      (signal 'nelix-external-dependency
+              (list (nelix-backend--external-dependency-message missing system)
+                    :programs missing
+                    :system system
+                    :policy nelix-system-backend-policy)))
+    (list :backend 'system
+          :provider nil
+          :satisfied-by 'os
+          :programs (nelix-backend--system-program-names targets)
+          :targets targets
+          :system system)))
 
 (defun nelix-backend--string-list (items)
   "Return ITEMS normalized to strings."
@@ -364,7 +434,11 @@ Emacs's `version<' is unavailable."
   "Return non-nil when BACKEND is usable for SYSTEM."
   (let ((system* (or system (nelix-current-system))))
     (if (eq backend 'system)
-        (and (nelix-backend--system-provider-backend system*) t)
+        ;; Usable with or without a provider: without one the backend still
+        ;; verifies OS presence and reports an explicit dependency, which is
+        ;; the Nix-free lane.  Reporting it unavailable here would make
+        ;; `nelix-backend-select' skip `system' rows entirely.
+        t
       (let ((caps (nelix-backend-capabilities backend)))
         (and caps
              (nelix-backend--supports-system-p caps system*)
@@ -402,16 +476,14 @@ PROFILE-NAME and SYSTEM are used by backends with native profiles."
     ('nix (nelix-install targets))
     ('system
      (let ((provider (nelix-backend--system-provider-backend system)))
-       (unless provider
-         (signal 'nelix-error
-                 (list (format "nelix-backend-install: no system provider available for %S"
-                               targets))))
-       (list :backend 'system
-             :provider provider
-             :targets targets
-             :profile profile-name
-             :system system
-             :result (nelix-backend-install provider targets profile-name system))))
+       (if (null provider)
+           (nelix-backend--system-verify targets system)
+         (list :backend 'system
+               :provider provider
+               :targets targets
+               :profile profile-name
+               :system system
+               :result (nelix-backend-install provider targets profile-name system)))))
     ('nelix-native
      (mapcar (lambda (target)
                (nelix-native-install target profile-name system))
@@ -449,12 +521,18 @@ PROFILE-NAME and SYSTEM are used by backends with native profiles."
             (nelix-upgrade-plan)))
     ('system
      (let ((provider (nelix-backend--system-provider-backend)))
-       (unless provider
-         (signal 'nelix-error
-                 (list "nelix-backend-upgrade-plan: no system provider available")))
-       (list :backend 'system
-             :provider provider
-             :provider-plan (nelix-backend-upgrade-plan provider targets))))
+       (if (null provider)
+           ;; An OS-provided prerequisite is not Nelix's to upgrade.  Report
+           ;; that plainly rather than signalling, so one `system' row cannot
+           ;; abort an upgrade plan covering every other backend.
+           (list :backend 'system
+                 :provider nil
+                 :external-dependency t
+                 :targets targets
+                 :provider-plan nil)
+         (list :backend 'system
+               :provider provider
+               :provider-plan (nelix-backend-upgrade-plan provider targets)))))
     ('nelix-native
      (nelix-backend--native-upgrade-plan targets))
     (_
