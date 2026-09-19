@@ -18,6 +18,7 @@
 (require 'nelix-registry)
 (require 'nelix-builder)
 
+
 (defgroup nelix-backend nil
   "Nelix backend dispatch."
   :group 'nelix-core
@@ -29,6 +30,16 @@
     (windows-nt . (nelix-native scoop winget git elpa)))
   "Ordered backend policy by `system-type'."
   :type '(alist :key-type symbol :value-type (repeat symbol))
+  :group 'nelix-backend)
+
+(defcustom nelix-system-backend-policy
+  '(nix)
+  "Preferred acquisition backends for `system' package rows.
+
+The default keeps OS-level prerequisites Nix-backed when possible.  This
+lets Nelix use Nix substituters for packages such as `mu' without
+requiring a separate OS package-manager integration yet."
+  :type '(repeat symbol)
   :group 'nelix-backend)
 
 (defvar nelix-backend--capabilities
@@ -54,6 +65,17 @@
        :store t
        :generations t
        :rollback t
+       :build nil
+       :binary-substitutes t)
+     table)
+    (puthash
+     'system
+     '(:backend system
+       :systems t
+       :fetchers (nixpkgs)
+       :store nil
+       :generations nil
+       :rollback nil
        :build nil
        :binary-substitutes t)
      table)
@@ -149,6 +171,16 @@
   (let ((systems (plist-get capabilities :systems)))
     (or (eq systems t)
         (memq system systems))))
+
+(defun nelix-backend--system-provider-backend (&optional system)
+  "Return the first available backend for system-package acquisition."
+  (let ((system* (or system (nelix-current-system)))
+        found)
+    (dolist (backend nelix-system-backend-policy found)
+      (when (and (null found)
+                 (not (eq backend 'system))
+                 (nelix-backend-available-p backend system*))
+        (setq found backend)))))
 
 (defun nelix-backend--string-list (items)
   "Return ITEMS normalized to strings."
@@ -330,13 +362,15 @@ Emacs's `version<' is unavailable."
 ;;;###autoload
 (defun nelix-backend-available-p (backend &optional system)
   "Return non-nil when BACKEND is usable for SYSTEM."
-  (let ((caps (nelix-backend-capabilities backend))
-        (system* (or system (nelix-current-system))))
-    (and caps
-         (nelix-backend--supports-system-p caps system*)
-         (let ((program (plist-get caps :requires-program)))
-           (or (null program)
-               (nelix-compat-executable-find program))))))
+  (let ((system* (or system (nelix-current-system))))
+    (if (eq backend 'system)
+        (and (nelix-backend--system-provider-backend system*) t)
+      (let ((caps (nelix-backend-capabilities backend)))
+        (and caps
+             (nelix-backend--supports-system-p caps system*)
+             (let ((program (plist-get caps :requires-program)))
+               (or (null program)
+                   (nelix-compat-executable-find program))))))))
 
 ;;;###autoload
 (defun nelix-backend-select (&optional target system policy)
@@ -366,6 +400,18 @@ registry recipes to choose target-specific backends."
 PROFILE-NAME and SYSTEM are used by backends with native profiles."
   (pcase backend
     ('nix (nelix-install targets))
+    ('system
+     (let ((provider (nelix-backend--system-provider-backend system)))
+       (unless provider
+         (signal 'nelix-error
+                 (list (format "nelix-backend-install: no system provider available for %S"
+                               targets))))
+       (list :backend 'system
+             :provider provider
+             :targets targets
+             :profile profile-name
+             :system system
+             :result (nelix-backend-install provider targets profile-name system))))
     ('nelix-native
      (mapcar (lambda (target)
                (nelix-native-install target profile-name system))
@@ -380,6 +426,12 @@ PROFILE-NAME and SYSTEM are used by backends with native profiles."
   "List installed entries for BACKEND."
   (pcase backend
     ('nix (nelix-list))
+    ('system
+     (let ((provider (nelix-backend--system-provider-backend)))
+       (list :backend 'system
+             :provider provider
+             :provider-list (and provider
+                                 (nelix-backend-list provider)))))
     ('nelix-native
      (list :store (nelix-store-list)
            :profiles-root (nelix-profile-root)))
@@ -395,6 +447,14 @@ PROFILE-NAME and SYSTEM are used by backends with native profiles."
     ('nix (if targets
               (mapcar #'nelix-upgrade-plan targets)
             (nelix-upgrade-plan)))
+    ('system
+     (let ((provider (nelix-backend--system-provider-backend)))
+       (unless provider
+         (signal 'nelix-error
+                 (list "nelix-backend-upgrade-plan: no system provider available")))
+       (list :backend 'system
+             :provider provider
+             :provider-plan (nelix-backend-upgrade-plan provider targets))))
     ('nelix-native
      (nelix-backend--native-upgrade-plan targets))
     (_

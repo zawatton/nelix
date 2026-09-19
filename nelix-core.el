@@ -457,6 +457,21 @@ so the child process reduces it to one package name per line first."
 (defvar nelix-core--registry) ; defined in nelix-dsl.el
 (declare-function nelix-emacs-derive-deps "nelix-emacs")
 
+(defun nelix-core--source-placeholder-sha256-p (sha256)
+  "Return non-nil when SHA256 is one of the imported placeholder hashes."
+  (and (stringp sha256)
+       (string-match-p "\\`sha256-PLACEHOLDER" sha256)))
+
+(defun nelix-core--ensure-installable-symbol (name)
+  "Signal when registry symbol NAME still carries placeholder source hashes."
+  (let* ((ir (nelix-core--registry-get name))
+         (source (plist-get ir :source))
+         (sha256 (plist-get source :sha256)))
+    (when (nelix-core--source-placeholder-sha256-p sha256)
+      (signal 'nelix-error
+              (list (format "pkg-install: %s still has placeholder sha256 %S; resolve the source hash before installing"
+                            name sha256))))))
+
 (defun nelix-core--maybe-derive-deps (name no-auto-deps)
   "Phase 4-C L18 hook: pre-fetch `:depends-on' for NAME's IR.
 
@@ -882,6 +897,10 @@ when NAMES contains only strings (no IR to render)."
       ;; do not invoke nix on a half-broken bulk).
       (dolist (sym symbols)
         (nelix-core--registry-get sym))
+      ;; Reject imported placeholder hashes before flake rendering so
+      ;; cold-start installs fail fast with a actionable message.
+      (dolist (sym symbols)
+        (nelix-core--ensure-installable-symbol sym))
       ;; Derive deps per-symbol before the single render pass.
       (dolist (sym symbols)
         (nelix-core--maybe-derive-deps sym no-auto-deps)))
@@ -997,6 +1016,7 @@ process object.  Signals `nelix-nix-failed' /
         (require 'nelix-dsl)
         (nelix-core--ensure-nix)
         (nelix-core--registry-get name)
+        (nelix-core--ensure-installable-symbol name)
         ;; Phase 4-C L18: derive :depends-on from the upstream
         ;; `Package-Requires' header before flake render so the
         ;; resulting derivation has the correct `packageRequires'.
@@ -1021,6 +1041,7 @@ process object.  Signals `nelix-nix-failed' /
         ;; Phase 4-C L18: pre-fetch + IR augmentation BEFORE
         ;; `nelix-core--install-symbol' so the rendered flake.nix
         ;; carries the derived `packageRequires'.
+        (nelix-core--ensure-installable-symbol name)
         (nelix-core--maybe-derive-deps name (plist-get plist :no-auto-deps))
         (let* ((require-supplied (nelix-core--plist-has-key-p plist :require))
                (require-sym (plist-get plist :require))

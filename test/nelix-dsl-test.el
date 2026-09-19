@@ -577,6 +577,33 @@ Phase 4-E L28: default :files comes from
                     "}")))
     (should (equal expected (nelix-core-render-nix ir)))))
 
+(ert-deftest nelix-dsl-test-render-flake-uses-local-epkgs ()
+  "Rendered flake binds local emacs packages into epkgs for dependency closure."
+  (nelix-dsl-test--with-clean-registry
+    (puthash 'xelb
+             '(:name xelb
+               :version "0.0.0"
+               :source (:type url-fetch
+                        :url "https://example.invalid/xelb.tar.gz"
+                        :sha256 "sha256-xelb")
+               :build-system (:type emacs-package))
+             nelix-core--registry)
+    (puthash 'gcmh
+             '(:name gcmh
+               :version "0.0.0"
+               :source (:type url-fetch
+                        :url "https://example.invalid/gcmh.tar.gz"
+                        :sha256 "sha256-gcmh")
+               :build-system (:type emacs-package)
+               :depends-on (xelb))
+             nelix-core--registry)
+    (let ((flake (nelix-core--render-flake)))
+      (should (string-match-p
+               "packages.x86_64-linux = let[[:space:]\n]+pkgs = nixpkgs\\.legacyPackages\\.x86_64-linux;"
+               flake))
+      (should (not (string-match-p "epkgs = pkgs\\.emacsPackages // local;" flake)))
+      (should (string-match-p "packageRequires = with pkgs\\.emacsPackages; \\[ xelb \\];" flake)))))
+
 (ert-deftest nelix-dsl-test-render-emacs-package-ignore-compilation-error ()
   "Renderer emits ignoreCompilationError for emacs-package builders."
   (let* ((ir '(:name noisy-elisp

@@ -13,6 +13,16 @@ native profile Nix-free by using OS-provided development libraries and build
 tools where needed, while preserving the existing hermetic defaults for pure
 Elisp packages.
 
+For the current scope, the recommended backend order is:
+
+1. =nelix-native= for source-built packages and resource-copy packages
+2. =nix= for packages that are not yet practical to build natively
+3. =system= for OS-provided prerequisites such as =mu=
+
+`apt` / `dnf` are intentionally not part of the baseline here.  If they become
+necessary later, they should be introduced as explicit backends rather than as
+an assumed installation mechanism.
+
 * 1. Goal
 
 The native backend must be able to build the packages that the user actually
@@ -36,6 +46,10 @@ The boundary is the system development library set, not the store.
   present on the host system or in a declared build-tool path.
 - Runtime activation still uses the native profile only; Nix remains a fallback
   backend for packages that cannot be built natively.
+- The =system= backend does not copy or build the package.  It records that the
+  manifest depends on an OS-provided program or library, and the current
+  implementation resolves that request through the configured acquisition
+  providers before falling back to a hard external-dependency block.
 
 Examples of the boundary:
 
@@ -96,6 +110,62 @@ The policy is deliberately split by package class.
 The implementation intentionally prefers system libraries to fetching
 additional source during build time.
 
+* 5.1 Backend policy
+
+The manifest should treat backend choice as an ordered preference list, not as
+an exclusive switch.
+
+#+begin_src elisp
+;; Recommended default for mixed Emacs profiles.
+(:backend-policy (nelix-native nix system))
+#+end_src
+
+Semantics:
+
+- =nelix-native= is tried first and should cover the normal Emacs package path.
+- =nix= is the fallback for packages that are still easier to obtain through the
+  existing Nix package set.
+- =system= is the last resort for OS-provided dependencies such as =mu=.  In
+  the current implementation, the default provider chain prefers =nix= first,
+  so a system dependency can still be satisfied from the Nix cache when that
+  package exists there.
+
+Package rows may also declare =:source-policy= to make the acquisition order
+explicit for runtime use.  Nelix resolves the first available backend from the
+declared order, so =mu4e= can say =:source-policy (nix system)= to prefer the
+Nix cache before the OS package manager while keeping the OS fallback visible
+in the manifest.
+
+This keeps the manifest honest about the package source without forcing the user
+to adopt a new package server.
+
+* 5.2 Example: mu4e
+
+#+begin_src elisp
+(:name "mu4e"
+ :class emacs-package
+ :backend-policy (nelix-native nix system)
+ :source-policy (nix system)
+ :systems
+ ((x86_64-linux
+   :dependencies ("mu")
+   :source (:type url
+            :url "https://codeload.github.com/djcb/mu/tar.gz/<rev>"
+            :sha256 "sha256-...")
+   :install (:type build
+             :build-system emacs-package
+             :pname "mu4e"
+             :load-paths (".")
+             :features (mu4e)))))
+#+end_src
+
+In this model:
+
+- =mu4e= is a native Emacs package when the Elisp sources are available
+- =mu= is a system dependency provided by the OS
+- if =mu= is absent, the audit should report an explicit system dependency
+  rather than silently falling back to a different package universe
+
 * 6. Verification
 
 The lane is considered working when the following hold:
@@ -105,6 +175,8 @@ The lane is considered working when the following hold:
   profile without file-missing errors
 - non-source resources are present in the native store entry
 - a profile-wide require sweep has no =MISSING-DEP= entries
+- the manifest can classify packages into =nelix-native= / =nix= / =system=
+  without requiring a custom package server
 
 The current verification set includes:
 
@@ -113,6 +185,7 @@ The current verification set includes:
 - a direct native-install smoke test for =emojify=, =package-lint=, and
   =elisp-lint=
 - a require sweep over the current =native-full= profile
+- a full native sweep showing the current profile has no missing dependencies
 
 * 7. Status summary
 
@@ -126,7 +199,9 @@ The remaining gaps are now operational, not architectural:
 - future C/Rust packages may need additional external toolchain entries
 - if a recipe needs a new non-source resource pattern, it should extend the
   declarative copy knobs instead of hard-coding paths in the builder
+- if the user later wants an explicit =apt= or =dnf= integration, it should be
+  added as an additional backend only after the =nix= fallback has been fully
+  exercised and judged insufficient
 
 The lane is therefore ready to be used as the default path for Nix-free native
 Emacs package builds.
-

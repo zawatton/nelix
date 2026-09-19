@@ -167,7 +167,7 @@
             (nix-channel "nixpkgs")
             (imports "custom-lisp/nelix-linux.el"
                      "custom-lisp/nelix-package-index.el")
-            (backend-policy (gnu/linux nix nelix-native)
+            (backend-policy (gnu/linux nix nelix-native system)
                             (darwin nix nelix-native)
                             (windows-nt nix))
             (emacs-packages emacs-list)
@@ -184,7 +184,7 @@
       (should (equal '("custom-lisp/nelix-linux.el"
                        "custom-lisp/nelix-package-index.el")
                      (plist-get manifest :imports)))
-      (should (equal '(nix nelix-native)
+      (should (equal '(nix nelix-native system)
                      (nelix-manifest-backend-policy
                       manifest 'gnu/linux))))))
 
@@ -196,18 +196,21 @@
           (nelix-environment
            (name "rows")
            (profile "desktop")
-           (backend-policy nix nelix-native)
+           (backend-policy nix nelix-native system)
            (emacs-packages base-emacs)
            (linux-packages base-linux)
            (package magit :backend elpa :group editor :feature git)
            (package vertico :backend elpa :pin t
                     :version "1.0" :profile desktop)
+           (package mu4e :backend system :system mu
+                    :source-policy (nix system)
+                    :feature mail)
            (linux-package ripgrep :backend nix :pin t
                           :platform (gnu/linux darwin)
                           :when (featurep 'fixture))
            (version-pin fd "10.2.0")
            (remove-policy confirm))))
-    (should (equal '(consult magit vertico)
+    (should (equal '(consult magit vertico mu4e)
                    (plist-get manifest :emacs)))
     (should (equal '("fd" "ripgrep")
                    (plist-get manifest :linux)))
@@ -217,7 +220,10 @@
     (should (equal '((:kind package :name magit :backend elpa
                             :group editor :feature git)
                      (:kind package :name vertico :backend elpa :pin t
-                            :version "1.0" :profile desktop))
+                            :version "1.0" :profile desktop)
+                     (:kind package :name mu4e :backend system
+                            :system mu :source-policy (nix system)
+                            :feature mail))
                    (plist-get manifest :package-rows)))
     (should (equal '((:kind linux-package :name ripgrep :backend nix
                             :pin t :platform (gnu/linux darwin)
@@ -225,6 +231,84 @@
                    (plist-get manifest :linux-package-rows)))
     (should (equal '((:name fd :version "10.2.0"))
                    (plist-get manifest :version-pins)))))
+
+(ert-deftest nelix-manifest-test-lock-package-row-carries-source-policy ()
+  "Lock rows preserve the declared source preference order."
+  (cl-letf (((symbol-function 'nelix-registry-get)
+             (lambda (&rest _args) nil))
+            ((symbol-function 'nelix-backend-available-p)
+             (lambda (backend &optional _system)
+               (memq backend '(nix system))))
+            ((symbol-function 'nelix-current-system)
+             (lambda () 'x86_64-linux)))
+    (let ((row (nelix-manifest--lock-package-row
+                (nelix-manifest :name "rows")
+                'nelix-native
+                '(:name "mu4e"
+                  :target "mu4e"
+                  :entry nil
+                  :backend system
+                  :source-policy (nix native)))))
+      (should (eq 'nix (plist-get row :backend)))
+      (should (eq 'system (plist-get row :requested-backend)))
+      (should (equal '(nix native)
+                     (plist-get row :source-policy))))))
+
+(ert-deftest nelix-manifest-test-installation-report-honors-source-policy-backends ()
+  "Installation reports resolve source-policy to the first available backend."
+  (cl-letf (((symbol-function 'nelix-backend-available-p)
+             (lambda (backend &optional _system)
+               (memq backend '(nix nelix-native system))))
+            ((symbol-function 'nelix-current-system)
+             (lambda () 'x86_64-linux)))
+    (let* ((manifest
+            (nelix-manifest
+             :name "rows"
+             :emacs '(mu4e)
+             :package-rows '((:kind package :name mu4e
+                              :backend system
+                              :source-policy (nix system)))))
+           (report (nelix-manifest-installation-report manifest 'nelix-native))
+           (row (car report)))
+      (should (eq 'nix (plist-get row :backend)))
+      (should (eq 'system (plist-get row :requested-backend)))
+      (should (equal '(nix system) (plist-get row :source-policy))))))
+
+(ert-deftest nelix-manifest-test-system-backend-delegates-to-nix-provider ()
+  "The system backend uses the first available acquisition provider."
+  (let (called)
+    (cl-letf (((symbol-function 'nelix-backend--system-provider-backend)
+               (lambda (&optional _system) 'nix))
+              ((symbol-function 'nelix-install)
+               (lambda (targets)
+                 (setq called targets)
+                 (list :status 'ok :targets targets))))
+      (let ((report (nelix-backend-install 'system '("mu") "default"
+                                           'x86_64-linux)))
+        (should (equal '("mu") called))
+        (should (eq 'system (plist-get report :backend)))
+        (should (eq 'nix (plist-get report :provider)))
+        (should (equal '("mu") (plist-get report :targets)))
+        (should (equal '(:status ok :targets ("mu"))
+                       (plist-get report :result)))))))
+
+(ert-deftest nelix-manifest-test-system-plan-uses-provider ()
+  "System plan rows record the chosen provider instead of hard-blocking."
+  (cl-letf (((symbol-function 'nelix-backend-available-p)
+             (lambda (backend &optional _system)
+               (memq backend '(system nix))))
+            ((symbol-function 'nelix-backend--system-provider-backend)
+             (lambda (&optional _system) 'nix))
+            ((symbol-function 'nelix-current-system)
+             (lambda () 'x86_64-linux)))
+    (let ((action (nelix-manifest--plan-install-action
+                   nil nil
+                   '(:name "mu" :target "mu" :backend system
+                     :source-policy (system))
+                   'system
+                   (list :system 'x86_64-linux))))
+      (should (eq 'system (plist-get action :backend)))
+      (should-not (plist-get action :blocked)))))
 
 (ert-deftest nelix-manifest-test-dsl-entrypoint-provides-environment-v1 ()
   "`nelix-dsl' is the public require boundary for the DSL v1 contract."
@@ -371,6 +455,18 @@
     (should (string-match-p "unsupported backend imaginary-backend"
                             (cadr err)))))
 
+(ert-deftest nelix-manifest-test-environment-dsl-v1-package-row-system-option ()
+  "Package rows can declare system prerequisites alongside backend metadata."
+  (let ((manifest
+         (nelix-environment
+          (name "system-row")
+          (backend-policy nelix-native nix system)
+          (package mu4e :backend system :system mu :feature mail))))
+    (should (equal '((:kind package :name mu4e
+                     :backend system :system mu :feature mail))
+                   (plist-get manifest :package-rows)))
+    (should (equal '(mu4e) (plist-get manifest :emacs)))))
+
 (ert-deftest nelix-manifest-test-environment-dsl-v1-validates-package-option-types ()
   "Package row metadata options have a stable DSL v1 type contract."
   (let ((bad-pin (should-error
@@ -393,6 +489,14 @@
                    :type 'nelix-error)))
     (should (string-match-p ":when must be a symbol or list"
                             (cadr bad-when)))))
+  (should
+   (string-match-p
+    "unsupported source-policy apt"
+    (cadr (should-error
+           (eval '(nelix-environment
+                   (name "bad-source-policy")
+                   (package magit :source-policy apt)))
+           :type 'nelix-error))))
 
 (ert-deftest nelix-manifest-test-environment-dsl-v1-loads-imported-package-vars ()
   "Manifest-file DSL imports are loaded before package variable forms."
@@ -731,6 +835,30 @@
                             (list (list :name "fixture-a"
                                         :store-path "/tmp/fixture-a")))
                            (list (list :status 'ok :name name)))
+                          ((equal name "fixture-b")
+                           (nelix-profile-create-generation
+                            "dev" system
+                            (list (list :name "fixture-a"
+                                        :store-path "/tmp/fixture-a")
+                                  (list :name "fixture-b"
+                                        :store-path "/tmp/fixture-b")))
+                           (error "native install failed"))
+                          (t
+                           (error "unexpected native target %s" name))))))
+                    ((symbol-function 'nelix-native-install-lock-package)
+                     (lambda (package profile system &optional lock-packages)
+                       (should (equal "dev" profile))
+                       (should (eq system 'x86_64-linux))
+                       (should (or (null lock-packages) (listp lock-packages)))
+                       (let ((name (plist-get package :name)))
+                         (push name install-calls)
+                         (cond
+                          ((equal name "fixture-a")
+                           (nelix-profile-create-generation
+                            "dev" system
+                            (list (list :name "fixture-a"
+                                        :store-path "/tmp/fixture-a")))
+                           (list :status 'ok :name name))
                           ((equal name "fixture-b")
                            (nelix-profile-create-generation
                             "dev" system
@@ -1209,7 +1337,7 @@
         (progn
           (nelix-manifest-test--write
            dir "manifest.el"
-           "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(fixture-tool) :backend-policy '(nelix-native nix))\n")
+           "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(fixture-tool) :backend-policy '(nelix-native nix system))\n")
           (cl-letf (((symbol-function 'nelix-compat-executable-find)
                      (lambda (_program) nil))
                     ((symbol-function 'nelix-list-pins)
@@ -1281,7 +1409,7 @@
                (store-orphan (nelix-store-write-entry entry-orphan)))
           (nelix-manifest-test--write
            dir "manifest.el"
-           "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(fixture-tool) :backend-policy '(nelix-native nix))\n")
+           "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(fixture-tool) :backend-policy '(nelix-native nix system))\n")
           (nelix-profile-create-generation
            "default" 'x86_64-linux
            (list (list :name "fixture-tool" :store-path store-a)

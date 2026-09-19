@@ -586,10 +586,10 @@ auto-synthesis of a postUnpack block writing recipes/<pname>.
                           (t (signal 'nelix-dsl-error
                                      (list (format "render: unsupported emacs-package :format %S"
                                                    format-str))))))
-         (epkgs-set (if native-comp
-                        "(pkgs.emacsPackagesFor pkgs.emacs)"
-                      "pkgs.emacsPackages"))
-         (builder (format "%s.%s" epkgs-set builder-suffix))
+         (builder-set (if native-comp
+                          "(pkgs.emacsPackagesFor pkgs.emacs)"
+                        "pkgs.emacsPackages"))
+         (builder (format "%s.%s" builder-set builder-suffix))
          (depends-on (plist-get ir :depends-on))
          (post-unpack (and (equal format-str "melpa")
                            (nelix-core--render-melpa-post-unpack ir))))
@@ -597,8 +597,7 @@ auto-synthesis of a postUnpack block writing recipes/<pname>.
      builder
      (append (nelix-core--render-pre-bs-fields ir)
              (when depends-on
-               (list (format "  packageRequires = with %s; [ %s ];"
-                             epkgs-set
+               (list (format "  packageRequires = with pkgs.emacsPackages; [ %s ];"
                              (mapconcat #'symbol-name depends-on " "))))
              (when post-unpack (list post-unpack))
              (nelix-core--render-post-bs-fields ir)))))
@@ -796,17 +795,20 @@ Unknown symbols fall back to a quoted string literal.")
      "  description = \"nelix-core generated flake\";\n"
      "  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixpkgs-unstable\";\n"
      "  outputs = { self, nixpkgs }: {\n"
-     "    packages.x86_64-linux = let pkgs = nixpkgs.legacyPackages.x86_64-linux; in {\n"
+     "    packages.x86_64-linux = let\n"
+     "      pkgs = nixpkgs.legacyPackages.x86_64-linux;\n"
+     "      local = {\n"
      (mapconcat (lambda (entry)
                   (let* ((sym (car entry))
                          (ir (cdr entry))
                          (drv (nelix-core-render-nix ir)))
-                    (format "      %s = %s;\n"
+                    (format "        %s = %s;\n"
                             (symbol-name sym)
                             (nelix-core--shift-tail-lines drv 6))))
                 entries
                 "")
-     "    };\n"
+     "      };\n"
+     "    in local;\n"
      "  };\n"
      "}\n")))
 
@@ -843,6 +845,8 @@ Path: registry lookup -> regenerate flake.nix -> nix profile
 install path:STATE_DIR#SYM."
   (nelix-core--ensure-nix)
   (nelix-core--registry-get sym)
+  (when (fboundp 'nelix-core--ensure-installable-symbol)
+    (nelix-core--ensure-installable-symbol sym))
   (let* ((flake-path (funcall nelix-core--write-flake-fn))
          (flake-dir (directory-file-name (file-name-directory flake-path)))
          (flakeref (format "path:%s#%s" flake-dir sym))

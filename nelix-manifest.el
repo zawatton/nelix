@@ -18,6 +18,8 @@
 (require 'nelix-backend)
 (require 'nelix-registry)
 
+(declare-function nelix-backend--system-provider-backend "nelix-backend")
+
 ;; Forward declaration (the real defvar lives in nelix-builder, which the apply
 ;; path requires at runtime).  Declaring it special here lets the apply install
 ;; loop dynamically bind it to enable the profile-entries cache.
@@ -100,19 +102,26 @@ an apply.")
   "Stable mapping from Nelix environment DSL v1 forms to manifest keys.")
 
 (defconst nelix-environment-dsl-backends
-  '(nelix-native nix apt dnf git elpa homebrew scoop winget)
+  '(nelix-native nix system apt dnf git elpa homebrew scoop winget)
   "Stable backend names accepted in `nelix-environment' backend-policy forms.")
+
+(defconst nelix-environment-dsl-source-policies
+  '(nix native system)
+  "Stable source preference names accepted in DSL v1 package rows.")
 
 (defconst nelix-environment-dsl-repeated-forms
   '(package linux-package version-pin)
   "DSL v1 forms that may appear more than once in `nelix-environment'.")
 
 (defconst nelix-environment-dsl-package-option-keys
-  '(:backend :pin :version :profile :group :feature :platform :when)
+  '(:backend :system :source-policy :pin :version :profile :group :feature
+    :platform :when)
   "Stable keyword options accepted by DSL v1 package rows.")
 
 (defconst nelix-environment-dsl-package-option-types
   '((:backend . "backend-symbol")
+    (:system . "string-or-symbol")
+    (:source-policy . "source-policy-symbols")
     (:pin . "boolean")
     (:version . "string-or-symbol")
     (:profile . "string-or-symbol")
@@ -543,6 +552,8 @@ NAME may be nil, \"all\", \"manifest-dsl-v1\", \"lock-v2\", or
             (signal 'nelix-error
                     (list (format "%s: :pin must be t or nil, got %S"
                                   caller value)))))
+        (when (eq key :source-policy)
+          (nelix-environment--validate-source-policy caller value))
         (when (memq key '(:version :profile :group :feature))
           (unless (or (symbolp value) (stringp value))
             (signal 'nelix-error
@@ -625,6 +636,23 @@ NAME may be nil, \"all\", \"manifest-dsl-v1\", \"lock-v2\", or
     (signal 'nelix-error
             (list (format "nelix-environment backend-policy: unsupported backend %S"
                           backend)))))
+
+(defun nelix-environment--validate-source-policy (caller value)
+  "Validate source POLICY VALUE for CALLER."
+  (let ((values (if (listp value) value (list value))))
+    (unless values
+      (signal 'nelix-error
+              (list (format "%s: :source-policy requires at least one source"
+                            caller))))
+    (dolist (source values)
+      (unless (symbolp source)
+        (signal 'nelix-error
+                (list (format "%s: :source-policy must be symbols, got %S"
+                              caller source))))
+      (unless (memq source nelix-environment-dsl-source-policies)
+        (signal 'nelix-error
+                (list (format "%s: unsupported source-policy %S"
+                              caller source)))))))
 
 (defun nelix-environment--validate-backend-policy-row (row)
   "Validate one OS-specific backend policy ROW."
@@ -1226,13 +1254,18 @@ inspection is not available yet."
         (targets (or targets (nelix-manifest-targets manifest backend)))
         (rows nil))
     (dolist (target targets (nreverse rows))
-      (let ((entry (if index
-                       (nelix-manifest--installed-entry-by-name target index)
-                     (nelix-manifest--installed-entry target installed))))
+      (let* ((package-row (nelix-manifest--package-row-by-target manifest target))
+             (row-backend (nelix-manifest--row-backend package-row backend))
+             (entry (if index
+                        (nelix-manifest--installed-entry-by-name target index)
+                      (nelix-manifest--installed-entry target installed))))
         (push (list :target target
                     :name (nelix-manifest--target-name target)
                     :installed (and entry t)
-                    :backend backend
+                    :backend row-backend
+                    :requested-backend (plist-get package-row :backend)
+                    :source-policy (nelix-manifest--source-policy
+                                    package-row row-backend)
                     :entry entry
                     :attr-path (plist-get entry :attr-path)
                     :original-url (plist-get entry :original-url))
@@ -1386,7 +1419,7 @@ manifest targets."
           (signal 'nelix-error
                   (list (format "nelix locked mode: missing lock package row for %s"
                                 (plist-get row :name)))))
-        (unless (eq backend (plist-get package :backend))
+        (unless (eq (plist-get row :backend) (plist-get package :backend))
           (signal 'nelix-error
                   (list (format "nelix locked mode: package backend drift for %s"
                                 (plist-get row :name)))))
@@ -1491,13 +1524,22 @@ manifest targets."
           (if (and locked-plan (eq backend 'nelix-native))
               (dolist (package installed-locked)
                 (let* ((name (plist-get package :name))
-                       (result
-                        (nelix-native-install-lock-package
-                         package profile system
-                         (plist-get locked-plan :all-packages))))
+                       (package-row (nelix-manifest--report-row-by-target
+                                     report (plist-get package :target)))
+                       (backend* (or (plist-get package-row :backend)
+                                     backend))
+                      (result
+                       (if (and (eq backend* 'nelix-native)
+                                package)
+                           (nelix-native-install-lock-package
+                            package profile system
+                            (plist-get locked-plan :all-packages))
+                         (nelix-backend-install
+                          backend* (list (plist-get package :target))
+                          profile system))))
                   (push (list :action 'install
                               :name name
-                              :backend backend
+                              :backend backend*
                               :ok t
                               :result result)
                         executed)
@@ -1507,12 +1549,23 @@ manifest targets."
                          (nreverse (copy-sequence executed))))))
             (dolist (target missing)
               (let* ((name (nelix-manifest--target-name target))
+                     (row (nelix-manifest--report-row-by-target report target))
+                     (backend* (or (plist-get row :backend) backend))
+                     (lock-package
+                      (nelix-manifest--lock-package-list-find
+                       (plist-get locked-plan :all-packages) name))
                      (result
-                      (nelix-backend-install
-                       backend (list target) profile system)))
+                      (if (and (eq backend* 'nelix-native)
+                               lock-package)
+                          (nelix-native-install-lock-package
+                           lock-package
+                           profile system
+                           (plist-get locked-plan :all-packages))
+                        (nelix-backend-install
+                         backend* (list target) profile system))))
                 (push (list :action 'install
                             :name name
-                            :backend backend
+                            :backend backend*
                             :ok t
                             :result result)
                       executed)
@@ -3224,6 +3277,69 @@ uses the same `:allow-remove' and `:allow-remove-count' options as
   "Return selected backend for MANIFEST, or nil when unavailable."
   (plist-get (nelix-manifest-select-backend manifest) :backend))
 
+(defun nelix-manifest--default-source-policy (backend)
+  "Return the default source preference list for BACKEND."
+  (pcase backend
+    ('nelix-native '(native nix))
+    ('system '(nix system))
+    ('nix '(nix))
+    (_ nil)))
+
+(defun nelix-manifest--source-policy (row backend)
+  "Return source preference list for ROW and BACKEND."
+  (or (plist-get row :source-policy)
+      (nelix-manifest--default-source-policy backend)))
+
+(defun nelix-manifest--source-policy-backend (source)
+  "Return backend symbol corresponding to source preference SOURCE."
+  (pcase source
+    ('native 'nelix-native)
+    (_ source)))
+
+(defun nelix-manifest--package-row-by-target (manifest target)
+  "Return the declared package row for TARGET in MANIFEST."
+  (let ((name (nelix-manifest--target-name target))
+        found)
+    (dolist (row (append (plist-get manifest :package-rows)
+                         (plist-get manifest :linux-package-rows))
+                    found)
+      (when (and (null found)
+                 (equal name (nelix-manifest--target-name
+                              (plist-get row :name))))
+        (setq found row)))))
+
+(defun nelix-manifest--report-row-by-target (report target)
+  "Return the report row for TARGET."
+  (let ((name (nelix-manifest--target-name target))
+        found)
+    (dolist (row report found)
+      (when (and (null found)
+                 (equal name (nelix-manifest--target-name
+                              (plist-get row :name))))
+        (setq found row)))))
+
+(defun nelix-manifest--row-candidate-backends (row backend)
+  "Return backend preference order for ROW under BACKEND."
+  (let* ((declared (or (plist-get row :backend) backend))
+         (policy (nelix-manifest--source-policy row declared))
+         (candidates (delq nil
+                           (mapcar #'nelix-manifest--source-policy-backend
+                                   policy))))
+    (unless (member declared candidates)
+      (setq candidates (append candidates (list declared))))
+    candidates))
+
+(defun nelix-manifest--row-backend (row backend)
+  "Return the effective backend for ROW under BACKEND."
+  (let ((system (nelix-current-system))
+        selected)
+    (dolist (candidate (nelix-manifest--row-candidate-backends
+                        row backend)
+                       (or selected backend))
+      (when (and (null selected)
+                 (nelix-backend-available-p candidate system))
+        (setq selected candidate)))))
+
 (defun nelix-manifest--lock-package-row (manifest backend row)
   "Return one strict package lock row for MANIFEST BACKEND and install ROW."
   (let* ((target (plist-get row :target))
@@ -3231,8 +3347,10 @@ uses the same `:allow-remove' and `:allow-remove-count' options as
          (name (plist-get row :name))
          (pins (plist-get manifest :pins))
          (system (nelix-current-system))
-         (native-entry (and (eq backend 'nelix-native) entry))
-         (recipe (and (eq backend 'nelix-native)
+         (declared-backend (plist-get row :backend))
+         (effective-backend (nelix-manifest--row-backend row backend))
+         (native-entry (and (eq effective-backend 'nelix-native) entry))
+         (recipe (and (eq effective-backend 'nelix-native)
                       (nelix-registry-get name)))
          (recipe-system-entry
           (and recipe
@@ -3243,10 +3361,16 @@ uses the same `:allow-remove' and `:allow-remove-count' options as
            :resolved-target target
            :installed-name (plist-get entry :name)
            :pinned (and (member name pins) t)
-           :backend backend
+           :backend effective-backend
+           :requested-backend declared-backend
            :system system
-           :source (if (eq backend 'nelix-native) 'registry 'nixpkgs)
-           :nix-channel (and (eq backend 'nix)
+           :source (pcase effective-backend
+                     ('nelix-native 'registry)
+                     ('nix 'nixpkgs)
+                     ('system 'system)
+                     (_ effective-backend))
+           :source-policy (nelix-manifest--source-policy row effective-backend)
+           :nix-channel (and (eq effective-backend 'nix)
                              (plist-get manifest :nix-channel))
            :attr-path (plist-get row :attr-path)
            :original-url (plist-get row :original-url))
@@ -4119,7 +4243,9 @@ v2 S-expression lock at `nelix-manifest-lock-file-name'."
                      (plist-get package :target)
                      (plist-get row :target)))
          (system (plist-get selection :system))
-         (recipe (and (eq backend* 'nelix-native)
+         (row-declared-backend (plist-get row :backend))
+         (effective-backend (nelix-manifest--row-backend row backend*))
+         (recipe (and (eq effective-backend 'nelix-native)
                       (nelix-registry-get name)))
          (recipe-system-entry
           (and recipe
@@ -4127,13 +4253,15 @@ v2 S-expression lock at `nelix-manifest-lock-file-name'."
     (append
      (list :action 'install
            :name name
-           :backend backend*
+           :backend effective-backend
+           :requested-backend row-declared-backend
            :target target
            :resolved-target target
            :installed-name nil
            :pinned (and (member name (plist-get manifest :pins)) t)
+           :source-policy (nelix-manifest--source-policy row backend*)
            :lock package)
-     (pcase backend*
+     (pcase effective-backend
        ('nix
         (list :argv (nelix-manifest--nix-install-argv manifest target)))
        ('nelix-native
@@ -4153,6 +4281,14 @@ v2 S-expression lock at `nelix-manifest-lock-file-name'."
           ((null recipe-system-entry)
            (list :blocked :unsupported-system))
           (t nil))))
+       ('system
+        (let ((provider (nelix-backend--system-provider-backend system)))
+          (append
+           (list :system system
+                 :source 'system
+                 :provider provider)
+           (when (null provider)
+             (list :blocked :external-dependency)))))
        (_ nil)))))
 
 (defun nelix-manifest--plan-remove-action

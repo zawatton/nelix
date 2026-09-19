@@ -188,6 +188,7 @@
       "const": [
         "nelix-native",
         "nix",
+        "system",
         "apt",
         "dnf",
         "git",
@@ -200,6 +201,7 @@
         "enum": [
           "nelix-native",
           "nix",
+          "system",
           "apt",
           "dnf",
           "git",
@@ -230,6 +232,8 @@
       "type": "array",
       "const": [
         ":backend",
+        ":system",
+        ":source-policy",
         ":pin",
         ":version",
         ":profile",
@@ -241,6 +245,8 @@
       "items": {
         "enum": [
           ":backend",
+          ":system",
+          ":source-policy",
           ":pin",
           ":version",
           ":profile",
@@ -257,6 +263,14 @@
         {
           "option": ":backend",
           "type": "backend-symbol"
+        },
+        {
+          "option": ":system",
+          "type": "string-or-symbol"
+        },
+        {
+          "option": ":source-policy",
+          "type": "source-policy-symbols"
         },
         {
           "option": ":pin",
@@ -413,6 +427,8 @@
         "option": {
           "enum": [
             ":backend",
+            ":system",
+            ":source-policy",
             ":pin",
             ":version",
             ":profile",
@@ -426,6 +442,7 @@
           "enum": [
             "backend-symbol",
             "boolean",
+            "source-policy-symbols",
             "string-or-symbol",
             "string-or-symbol-or-list",
             "symbol-or-list"

@@ -103,6 +103,26 @@ in-process state cache is reset between tests."
                              :type 'nelix-nix-failed)))
       (should (string-match-p "cannot resolve" (cadr err))))))
 
+(ert-deftest nelix-core-test-install-placeholder-hash-blocks ()
+  "Registry packages with placeholder sha256 stop before invoking nix."
+  (nelix-core-test--with-mock
+      (lambda (_args)
+        (error "nix should not be called for placeholder hashes"))
+    (let ((nelix-core--registry (make-hash-table :test 'eq)))
+      (puthash 'broken
+               '(:name broken
+                 :version "1.0.0"
+                 :source (:type github-fetch
+                          :owner "example"
+                          :repo "broken"
+                          :rev "deadbeef"
+                          :sha256 "sha256-PLACEHOLDER-fill-in-from-nix")
+                 :build-system (:type emacs-package))
+               nelix-core--registry)
+      (let ((err (should-error (pkg-install 'broken)
+                               :type 'nelix-error)))
+        (should (string-match-p "placeholder sha256" (cadr err)))))))
+
 ;;;; --- search ----------------------------------------------------------------
 
 (ert-deftest nelix-core-test-search-happy ()
