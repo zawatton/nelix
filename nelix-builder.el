@@ -1011,9 +1011,49 @@ SOURCE_DATE_EPOCH, TZ, LC_ALL, ulimit -t) is applied by
 
 (defvar nelix-builder-allow-missing-dependencies nil
   "When non-nil, a dependency with no registry recipe is logged and skipped
-instead of signaling an error.  Used for bulk imports where some deps are
-Emacs built-ins (org, transient, magit-section, ...) or come from other
-fetchers not yet in the registry.")
+instead of signaling an error.  Used for bulk imports where deps come from
+fetchers not yet in the registry.
+
+Prefer leaving this nil: it silences EVERY missing dependency, so a
+genuine gap in the registry installs a package that cannot work and says
+nothing.  Emacs built-ins no longer need it -- see
+`nelix-builder--host-provided-dependency-p'.")
+
+(defcustom nelix-builder-host-provided-dependencies nil
+  "Dependency names the host Emacs supplies, beyond the ones detected.
+Recipes name Emacs built-ins among their dependencies (org, seq,
+project, ...), and those have no registry recipe by design.  Detection
+covers what `package.el' knows about; add anything it misses here."
+  :type '(repeat string)
+  :group 'nelix)
+
+(defun nelix-builder--host-provided-dependency-p (name)
+  "Return non-nil when the host Emacs already provides NAME.
+
+A recipe like evil-org lists \"org\" among its dependencies, and org
+ships with Emacs -- there is no registry recipe for it and there should
+not be.  Such a dependency is satisfied, not missing, and saying so here
+is what lets `nelix-builder-allow-missing-dependencies' stay nil so a
+real gap still fails loudly.
+
+Detection uses `package-built-in-p', which answers from Emacs\='s own
+manifest rather than from `load-path' -- important, because a copy in
+~/.emacs.d/elpa or in the profile would otherwise make any package look
+built in.  Where that is unavailable (the standalone runtime has no
+package.el), only `nelix-builder-host-provided-dependencies' applies."
+  (or (member name nelix-builder-host-provided-dependencies)
+      (and (fboundp 'package-built-in-p)
+           (condition-case nil
+               (package-built-in-p (intern name))
+             (error nil)))
+      ;; `package-built-in-p' needs package.el loaded; it is autoloaded on
+      ;; host Emacs but `fboundp' is nil until something pulls it in.
+      (and (null (fboundp 'package-built-in-p))
+           (condition-case nil
+               (progn (require 'package nil t)
+                      (and (fboundp 'package-built-in-p)
+                           (package-built-in-p (intern name))))
+             (error nil)))))
 
 (defun nelix-builder--install-dependencies
     (dependencies profile-name system)
@@ -1028,6 +1068,9 @@ fetchers not yet in the registry.")
                   (list (format "nelix-native-install-recipe: dependency cycle at %s"
                                 name))))
          ((nelix-builder--profile-has-entry-p profile-name name)
+          nil)
+         ((and (null recipe)
+               (nelix-builder--host-provided-dependency-p name))
           nil)
          ((null recipe)
           (if nelix-builder-allow-missing-dependencies
