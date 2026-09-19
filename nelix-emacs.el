@@ -68,6 +68,12 @@
 
 (require 'nelix-compat)
 (require 'nelix-state)
+;; `nelix-store' is required, not merely declared: the activation entry
+;; points below are called from init.el, where nothing else has loaded it
+;; yet.  A `declare-function' satisfies the compiler and still leaves
+;; `nelix-profile-read' void at runtime -- which is how this first showed
+;; up outside the test suite, where another test had already pulled it in.
+(require 'nelix-store)
 
 ;; `url' is loaded lazily by `nelix-compat-http-get'; declare so
 ;; byte-compile keeps quiet.
@@ -840,7 +846,6 @@ user already has the package cloned locally)."
 ;; build lane fills was never the thing Emacs actually loaded from.  These
 ;; entry points read a native profile and activate it directly.
 
-(declare-function nelix-profile-read "nelix-store" (profile-name &optional generation))
 
 (defcustom nelix-emacs-activate-profile "default"
   "Native profile name `nelix-emacs-activate-native' activates."
