@@ -396,13 +396,49 @@ because async tests exercise that path directly."
                         (nelix-compat-runtime)
                       'unknown)))))
 
+(defun nelix-nelisp-smoke--resolve-suite-file (file)
+  "Return the path to load for suite entry FILE.
+
+FILE is written source-tree relative, so one entry carries a
+\"scripts/\" prefix.  An installed package has no such directory:
+dh_elpa flattens everything into elpa-src/nelix-VERSION/, so
+scripts/nelix-core-render.el arrives as nelix-core-render.el beside the
+rest and the prefixed path is a file-missing error.  Fall back to the
+basename in that case, and leave anything still unfound to `load\=' so
+the failure names the file the list actually asked for."
+  (cond
+   ((file-exists-p file) file)
+   ((let ((flat (file-name-nondirectory file)))
+      (and (not (equal flat file))
+           (file-exists-p flat)
+           flat)))
+   (t file)))
+
+(defun nelix-nelisp-smoke--load-suite-file (file)
+  "Load suite entry FILE, tolerating the flattened installed layout.
+
+Two resolutions are needed because `load\=' and `file-exists-p\=' do not
+look in the same places.  `nelix-nelisp-smoke--resolve-suite-file\='
+covers the case where the suite root is the current directory, as in a
+checkout.  An installed package instead reaches its files through
+`load-path\=', where `file-exists-p\=' on a relative name finds nothing --
+so the listed path is attempted first and the flattened basename is
+tried only if that load fails."
+  (let ((resolved (nelix-nelisp-smoke--resolve-suite-file file))
+        (flat (file-name-nondirectory file)))
+    (if (equal flat resolved)
+        (load resolved)
+      (condition-case _err
+          (load resolved)
+        (error (load flat))))))
+
 (defun nelix-nelisp-smoke--load-suite-files (files)
   "Load each path in FILES for a standalone suite run."
   (let ((cur files))
     (while cur
       (nelix-nelisp-smoke--write-progress
        (list :loading (car cur)))
-      (load (car cur))
+      (nelix-nelisp-smoke--load-suite-file (car cur))
       (setq cur (cdr cur)))))
 
 (defun nelix-nelisp-smoke-preload-suite-runtime ()

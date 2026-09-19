@@ -5,4 +5,5 @@ scripts/nelix-aot-manifest-engine.el
 scripts/nelix-aot-native-cli-proof.el
 scripts/nelix-aot-native-subset.el
 scripts/nelix-cli.el
+scripts/nelix-core-render.el
 registry/packages/system/*.el registry/packages/system
