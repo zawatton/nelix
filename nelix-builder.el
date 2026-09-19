@@ -608,19 +608,25 @@ cons cell.")
       ;; materialize on Windows (e.g. a broken symlink left over from a
       ;; git worktree, such as plz.el's NOTES.org -> worktrees/... link)
       ;; without failing the whole unpack over an entry nothing needs.
-      ;; "xf", not "xzf": a (:type git) source is `git archive
-      ;; --format=tar' output -- an uncompressed tar whose name is the
-      ;; repository basename, so there is no extension to switch on.
-      ;; GNU tar and bsdtar both auto-detect compression on extract, so
-      ;; one form covers the .tar.gz elpa/codeload shape and the plain
-      ;; tar git shape alike.
-      . (apply #'nelix-invoke "tar" "xf" (nelix-source-archive)
-               "--strip-components=1" "--force-local"
-               (mapcar (lambda (pat) (concat "--exclude=" pat))
-                       nelix-build--tar-exclude)))
+      ;; `nelix-build-unpack-source-archive' handles both archive
+      ;; shapes that reach here -- the wrapped .tar.gz of an elpa /
+      ;; codeload release and the unwrapped, uncompressed tar that
+      ;; `git archive' produces for a (:type git) source -- and carries
+      ;; the --force-local and :tar-exclude notes.
+      . (apply #'nelix-build-unpack-source-archive nelix-build--tar-exclude))
      (install
       . (let ((files (append (nelix-build-package-el-files)
                              (nelix-build-package-extra-files))))
+          ;; An Emacs package with no .el is never what was meant: it is
+          ;; an unpack that put the tree somewhere else, or a recipe
+          ;; pointing at the wrong subdirectory.  Copying zero files and
+          ;; reporting success installs an empty store entry that the
+          ;; profile then activates, so every `require' silently keeps
+          ;; resolving to whatever older copy is still on `load-path'.
+          (unless files
+            (signal 'nelix-build-error
+                    (list (format "emacs-package install: no .el files under %s for %s"
+                                  nelix-build--dir (nelix-package-name)))))
           ;; Keep each package's directory structure (lisp/ subdirs) so load
           ;; paths stay separate and names never collide.  Install .el only
           ;; (plus any :extra-data-paths the recipe lists): byte-compiling

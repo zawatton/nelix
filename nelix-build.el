@@ -371,5 +371,54 @@ in the standalone runtime (NeLisp may lack the 2-arg `delete-directory')."
   "Rename A to B."
   (rename-file (nelix-build--stringify a) (nelix-build--stringify b) t))
 
+(defun nelix-build--plain-files (dir)
+  "Return DIR's entries, excluding \".\" and \"..\" (dotfiles kept)."
+  (let (out)
+    (dolist (f (directory-files dir) (nreverse out))
+      (unless (or (equal f ".") (equal f ".."))
+        (push f out)))))
+
+;;;###autoload
+(defun nelix-build-unpack-source-archive (&rest excludes)
+  "Unpack `nelix-source-archive' into the build directory.
+EXCLUDES are archive entry patterns tar should skip.
+
+Two archive shapes reach this.  A release tarball (elpa, codeload)
+wraps everything in one top-level directory named after the package and
+its rev; `git archive --format=tar' output has no wrapper at all, and
+its file name is no help either -- `nelix-fetch-source' names the
+destination after the source URL, so a git source lands as e.g.
+arduino-mode.git.
+
+So the shape is not guessed, it is looked at: extract into a scratch
+directory, and treat a lone top-level directory as the wrapper to
+unwrap.  Anything else is already the source tree.
+
+Guessing wrong here is silent, which is why this is worth the extra
+step: a fixed `tar --strip-components=1' over an unwrapped archive
+discards every member, and the emacs-package install phase then copies
+nothing and still reports success."
+  (let* ((archive (nelix-source-archive))
+         (scratch (expand-file-name "..nelix-unpack" nelix-build--dir)))
+    (nelix-delete-directory scratch)
+    (nelix-mkdir-p scratch)
+    (apply #'nelix-invoke "tar" "xf" archive "-C" scratch
+           ;; --force-local: on Windows, GNU tar (as shipped by Git
+           ;; Bash/MSYS2) otherwise reads a "c:/..." path as a
+           ;; "host:path" remote archive spec (tar's rmt(8) syntax) and
+           ;; fails connecting to a host named "c".  Harmless elsewhere.
+           "--force-local"
+           (mapcar (lambda (pat) (concat "--exclude=" pat)) excludes))
+    (let* ((top (nelix-build--plain-files scratch))
+           (root (if (and top (null (cdr top))
+                          (file-directory-p (expand-file-name (car top) scratch)))
+                     (expand-file-name (car top) scratch)
+                   scratch)))
+      (dolist (f (nelix-build--plain-files root))
+        (rename-file (expand-file-name f root)
+                     (expand-file-name f nelix-build--dir)
+                     t))
+      (nelix-delete-directory scratch))))
+
 (provide 'nelix-build)
 ;;; nelix-build.el ends here

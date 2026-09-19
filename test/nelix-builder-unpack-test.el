@@ -5,15 +5,20 @@
 
 ;;; Commentary:
 
-;; The `emacs-package' preset claims to build "any elpa/git Emacs package".
-;; A git source does not arrive as a .tar.gz: `nelix-fetch--fetch-git-source'
-;; produces `git archive --format=tar' output, an UNCOMPRESSED tar whose name
-;; is the repository basename (arduino-mode.git), with no extension to go on.
+;; The `emacs-package' preset claims to build "any elpa/git Emacs package",
+;; and two different archive shapes reach its unpack phase:
 ;;
-;; So the unpack phase is exercised here against both shapes.  The plain-tar
-;; case is the one that mattered: with a gzip-forcing `tar xzf' it fails with
-;; "gzip: stdin: not in gzip format", which is what a real `(:type git)'
-;; recipe hit.
+;;   - a release tarball (elpa, codeload) -- gzipped, everything under one
+;;     top-level directory named for the package and its rev;
+;;   - `git archive --format=tar' output for a (:type git) source --
+;;     uncompressed, NO top-level directory, and named after the source URL
+;;     (so it arrives as e.g. arduino-mode.git, with no useful extension).
+;;
+;; Both are built here from a real git repository rather than hand-rolled,
+;; because the first version of this test invented the git case by gzip-less
+;; analogy to the tarball -- same wrapper directory, just uncompressed -- and
+;; so asserted the shape the code already assumed.  It passed while a real
+;; git source unpacked to nothing.
 
 ;;; Code:
 
@@ -26,47 +31,89 @@
   (let ((preset (cdr (assq 'emacs-package nelix-builder--build-system-presets))))
     (cdr (assq 'unpack preset))))
 
-(defun nelix-builder-unpack-test--make-archive (dir name compress)
-  "Create an archive of a one-file package tree under DIR, named NAME.
-With COMPRESS non-nil the archive is gzipped.  Returns the archive path.
+(defun nelix-builder-unpack-test--git-repo (dir)
+  "Create a one-commit git repository under DIR and return its path."
+  (let* ((repo (expand-file-name "repo" dir))
+         (default-directory (file-name-as-directory repo)))
+    (make-directory (expand-file-name "lisp" repo) t)
+    (write-region "(provide 'pkg)\n" nil (expand-file-name "pkg.el" repo))
+    (write-region "(provide 'pkg-extra)\n" nil
+                  (expand-file-name "lisp/pkg-extra.el" repo))
+    (dolist (args '(("init" "--quiet")
+                    ("config" "user.email" "test@example.invalid")
+                    ("config" "user.name" "test")
+                    ("add" "-A")
+                    ("-c" "commit.gpgsign=false" "commit" "--quiet" "-m" "x")))
+      (apply #'call-process "git" nil nil nil args))
+    repo))
 
-The tree has a top directory so that the phase's --strip-components=1
-has something to strip, exactly as a real source archive does."
-  (let* ((top (expand-file-name "pkg-1.0" dir))
-         (archive (expand-file-name name dir)))
-    (make-directory top t)
-    (write-region "(provide 'pkg)\n" nil (expand-file-name "pkg.el" top))
-    (let ((default-directory (file-name-as-directory dir)))
-      (nelix-invoke "tar" (if compress "czf" "cf") archive "pkg-1.0"))
-    archive))
+(defun nelix-builder-unpack-test--git-archive (repo dest)
+  "Write `git archive --format=tar' of REPO's HEAD to DEST.
+This is exactly what `nelix-fetch--fetch-git-source' produces."
+  (let ((default-directory (file-name-as-directory repo)))
+    (call-process "git" nil nil nil "archive" "--format=tar"
+                  "--output" (expand-file-name dest) "HEAD")))
 
-(defun nelix-builder-unpack-test--run (name compress)
-  "Unpack an archive named NAME (COMPRESS: gzipped) and return the build dir."
+(defun nelix-builder-unpack-test--release-tarball (repo dest)
+  "Write a release-style .tar.gz of REPO's tree to DEST.
+Wrapped in one top directory, the way codeload and elpa serve one."
+  (let ((default-directory (file-name-as-directory repo)))
+    (call-process "git" nil nil nil "archive" "--format=tar.gz"
+                  "--prefix=pkg-1.0/"
+                  "--output" (expand-file-name dest) "HEAD")))
+
+(defun nelix-builder-unpack-test--unpack (make-archive name)
+  "Build an archive with MAKE-ARCHIVE named NAME, unpack it, assert contents."
   (let* ((staging (make-temp-file "nelix-unpack-src-" t))
-         (build (make-temp-file "nelix-unpack-build-" t))
-         (archive (nelix-builder-unpack-test--make-archive staging name compress)))
+         (build (make-temp-file "nelix-unpack-build-" t)))
     (unwind-protect
-        (let ((nelix-build--source-archive archive)
-              (nelix-build--tar-exclude nil))
-          (nelix-builder--run-phase-elisp
-           'unpack (nelix-builder-unpack-test--preset-form) build build)
-          ;; --strip-components=1 drops the pkg-1.0 prefix.
+        (let* ((repo (nelix-builder-unpack-test--git-repo staging))
+               (archive (expand-file-name name staging)))
+          (funcall make-archive repo archive)
+          (let ((nelix-build--source-archive archive)
+                (nelix-build--tar-exclude nil))
+            (nelix-builder--run-phase-elisp
+             'unpack (nelix-builder-unpack-test--preset-form) build build))
+          ;; The source tree itself, not its wrapper, ends up in the build dir.
           (should (file-exists-p (expand-file-name "pkg.el" build)))
-          build)
+          (should (file-exists-p (expand-file-name "lisp/pkg-extra.el" build)))
+          (should-not (file-directory-p (expand-file-name "pkg-1.0" build))))
       (delete-directory staging t)
       (delete-directory build t))))
 
-(ert-deftest nelix-builder-unpack-test-gzipped-tarball ()
-  "A .tar.gz source archive unpacks (the elpa/codeload shape)."
-  (nelix-builder-unpack-test--run "pkg-1.0.tar.gz" t))
+(ert-deftest nelix-builder-unpack-test-wrapped-release-tarball ()
+  "A .tar.gz wrapped in one top directory unpacks with the wrapper removed."
+  (nelix-builder-unpack-test--unpack
+   #'nelix-builder-unpack-test--release-tarball "pkg-1.0.tar.gz"))
 
-(ert-deftest nelix-builder-unpack-test-plain-tar-from-git ()
-  "An uncompressed tar unpacks (the `git archive' shape).
+(ert-deftest nelix-builder-unpack-test-unwrapped-git-archive ()
+  "A `git archive' tar with no wrapper unpacks intact.
 
-Named like a bare repo -- no .tar suffix -- because that is what
-`nelix-fetch-source' writes: the destination basename comes from the
-source URL, so a git source lands as e.g. arduino-mode.git."
-  (nelix-builder-unpack-test--run "arduino-mode.git" nil))
+The failure this pins down is silent: strip a component off an archive
+that has no wrapper and every member is discarded, leaving an empty
+build directory."
+  (nelix-builder-unpack-test--unpack
+   #'nelix-builder-unpack-test--git-archive "pkg.git"))
+
+(ert-deftest nelix-builder-unpack-test-empty-install-signals ()
+  "The emacs-package install phase refuses to install zero .el files.
+
+Without this the unpack failure above stays invisible: an empty store
+entry is created, the profile activates it, and every `require' keeps
+resolving to whatever older copy sits further down `load-path'."
+  (let* ((build (make-temp-file "nelix-install-empty-" t))
+         (out (make-temp-file "nelix-install-out-" t))
+         (preset (cdr (assq 'emacs-package nelix-builder--build-system-presets)))
+         (form (cdr (assq 'install preset))))
+    (unwind-protect
+        (let ((nelix-build--pname "pkg")
+              (nelix-build--el-exclude nil)
+              (nelix-build--extra-data-paths nil))
+          (should-error
+           (nelix-builder--run-phase-elisp 'install form build out)
+           :type 'nelix-error))
+      (delete-directory build t)
+      (delete-directory out t))))
 
 (provide 'nelix-builder-unpack-test)
 ;;; nelix-builder-unpack-test.el ends here

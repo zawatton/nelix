@@ -17,7 +17,12 @@ NELISP_REPO ?= $(abspath ../nelisp)
 LDB_REPO ?= $(abspath ../lisp-dialect-bridge)
 NELISP_BIN ?= $(abspath ../nelisp/target/nelisp)
 
-EMACS_BATCH = $(EMACS) -Q --batch -L . -L test -L scripts
+# load-prefer-newer: batch Emacs defaults to nil, so a .elc left over from
+# `make compile' silently wins over a newer .el and the suite then tests
+# the previous build.  Cost a confusing red here on 2026-09-19: three
+# tests failed against a stale nelix-builder.elc while the sources were
+# already fixed.  .elc files are gitignored, so this cannot be assumed away.
+EMACS_BATCH = $(EMACS) -Q --batch --eval '(setq load-prefer-newer t)' -L . -L test -L scripts
 prefix ?= /usr/local
 bindir ?= $(prefix)/bin
 datarootdir ?= $(prefix)/share
