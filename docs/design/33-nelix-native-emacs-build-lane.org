@@ -4,10 +4,22 @@
 
 * Status
 :PROPERTIES:
-:STATE: DRAFT-2026-06-24
+:STATE: M1-M4-IMPLEMENTED-2026-09-19 (M5 init.el cutover NOT done)
 :END:
 
-DRAFT.  Design for fetching, building, and installing Emacs Lisp packages
+*Status 2026-09-19:* M1-M4 are implemented -- the =emacs-package= recipe
+class, the build phase, the flake->native converter and the dependency
+closure -- with 197 recipes under =registry/packages/emacs/=.  Doc 34 then
+added the external build lane for packages that are not pure =.el=.
+
+*M5 (init.el cutover) is NOT done.*  =nelix-package-activate-emacs= has no
+native code path (§4.6), and this machine's profile is still the Nix one:
+=~/.local/state/nelix/profile -> /nix/store/...-profile=, with every package
+resolving from =~/.emacs.d/elpa= because it precedes the Nix paths on
+=load-path=.  =native-build-trial= profiles exist but are trials.  So the
+build lane is real while the cutover it was built for has not happened.
+
+Design for fetching, building, and installing Emacs Lisp packages
 through the =nelix-native= backend with *no Nix dependency*, closing the gap
 that currently forces all 203 =init.el= packages onto the Nix store.
 

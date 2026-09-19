@@ -5,10 +5,20 @@
 
 * Status
 :PROPERTIES:
-:STATE: DRAFT-2026-06-23 (hermeticity target LOCKED = Tier 0/1)
+:STATE: M1-M4-SHIPPED-2026-09-19 (M5 out of scope; hermeticity target LOCKED = Tier 0/1)
 :END:
 
-DRAFT.  Design for a *NeLisp-hosted, Nix-free build executor* that runs
+*Status 2026-09-19:* M0-M4 are implemented and verified.  The M1 acceptance
+gate =make smoke-native-build= passes, as do =smoke-native-build-elisp=,
+=smoke-native-build-make=, =smoke-guix-to-native=, =smoke-guix-to-native-rich=
+and =smoke-deps-inputs= -- all six with =nix= shadowed by a stub that exits
+127 on any call, so the Nix-free claim is measured rather than asserted.
+(The smoke targets print "no nix on PATH" but do not themselves remove it;
+that string is not evidence.)  M5 (Tier 2 isolation) stays out of scope --
+Doc 32 was CLOSED 2026-06-24.  This doc read DRAFT long after the work
+landed.
+
+Design for a *NeLisp-hosted, Nix-free build executor* that runs
 Lisp-defined build phases and deposits outputs into the existing
 =nelix-native= content store.  Fed at the front end by the
 =lisp-dialect-bridge= (ldb) Guix importer.
