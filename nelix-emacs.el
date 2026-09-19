@@ -832,5 +832,104 @@ user already has the package cloned locally)."
                (nelix-emacs--parse-package-requires-header
                 (nelix-compat-read-file main-el)))))))
 
+
+;;;; --- Doc 33 M5: native profile activation ------------------------------
+
+;; The init.el cutover.  Until now `nelix-package-activate-emacs' could only
+;; put the Nix profile's site-lisp on `load-path', so the native store the
+;; build lane fills was never the thing Emacs actually loaded from.  These
+;; entry points read a native profile and activate it directly.
+
+(declare-function nelix-profile-read "nelix-store" (profile-name &optional generation))
+
+(defcustom nelix-emacs-activate-profile "default"
+  "Native profile name `nelix-emacs-activate-native' activates."
+  :type 'string
+  :group 'nelix-emacs)
+
+(defun nelix-emacs--entry-load-paths (entry)
+  "Return the existing Emacs load paths ENTRY contributes.
+
+A path recorded in the profile can be gone -- the store was garbage
+collected, or the profile came from another machine -- so each is
+checked rather than trusted.  Putting a missing directory on
+`load-path' costs a stat on every `require' for the rest of the
+session."
+  (let (out)
+    (dolist (dir (plist-get entry :emacs-load-paths) (nreverse out))
+      (when (and (stringp dir) (nelix-compat-file-exists-p dir))
+        (push dir out)))))
+
+(defun nelix-emacs-native-load-paths (&optional profile-name generation)
+  "Return the load paths a native profile contributes, in profile order."
+  (let ((profile (nelix-profile-read (or profile-name
+                                         nelix-emacs-activate-profile)
+                                     generation))
+        out)
+    (dolist (entry (plist-get profile :entries) (nreverse out))
+      (setq out (nconc (nreverse (nelix-emacs--entry-load-paths entry)) out)))))
+
+(defun nelix-emacs--autoloads-file (entry dir)
+  "Return ENTRY's autoloads file under DIR, or nil when absent."
+  (let* ((name (plist-get entry :name))
+         (file (and (stringp name)
+                    (expand-file-name (concat name "-autoloads.el") dir))))
+    (and file (nelix-compat-file-exists-p file) file)))
+
+;;;###autoload
+(defun nelix-emacs-activate-native (&optional profile-name generation)
+  "Activate a native profile: extend `load-path' and load autoloads.
+
+Returns a plist reporting what happened -- `:paths' added, `:autoloads'
+loaded, `:missing' entries that contributed no existing path, and
+`:errors' as (NAME . MESSAGE) for autoload files that failed to load.
+
+An autoloads file that throws does not abort activation.  One broken
+package would otherwise leave `load-path' half-built with no report of
+which package did it, and the caller is init.el.
+
+Paths are added with `add-to-list' so re-running is idempotent, and
+prepended so the native profile wins over a same-named package sitting
+in `package-user-dir'.  That precedence is the point of the cutover: on
+this machine everything currently resolves from ~/.emacs.d/elpa."
+  (interactive)
+  (let ((profile (nelix-profile-read (or profile-name
+                                         nelix-emacs-activate-profile)
+                                     generation))
+        (added nil) (autoloads nil) (missing nil) (errors nil))
+    (dolist (entry (plist-get profile :entries))
+      (let ((dirs (nelix-emacs--entry-load-paths entry))
+            (name (plist-get entry :name)))
+        (if (null dirs)
+            (push name missing)
+          (dolist (dir dirs)
+            (add-to-list 'load-path dir)
+            (push dir added)
+            (let ((file (nelix-emacs--autoloads-file entry dir)))
+              (when file
+                (condition-case err
+                    (progn (load file nil t t) (push name autoloads))
+                  (error (push (cons name (error-message-string err))
+                               errors)))))))))
+    (list :profile (plist-get profile :name)
+          :generation (plist-get profile :generation)
+          :paths (nreverse added)
+          :autoloads (nreverse autoloads)
+          :missing (nreverse missing)
+          :errors (nreverse errors))))
+
+;;;###autoload
+(defun nelix-emacs-native-profile-available-p (&optional profile-name)
+  "Return non-nil when a native profile exists and carries entries.
+
+The cutover is conditional on this: a caller keeps its old path when
+the native profile is absent or empty, rather than activating nothing
+and reporting success."
+  (condition-case nil
+      (let ((profile (nelix-profile-read (or profile-name
+                                             nelix-emacs-activate-profile))))
+        (and (plist-get profile :entries) t))
+    (error nil)))
+
 (provide 'nelix-emacs)
 ;;; nelix-emacs.el ends here
