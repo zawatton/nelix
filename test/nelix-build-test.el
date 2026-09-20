@@ -23,6 +23,13 @@
     (unwind-protect
         (progn
           (write-region "hello" nil target)
+          ;; Probe host privileges separately so product failures still fail.
+          (condition-case err
+              (make-symbolic-link target link)
+            (file-error
+             (ert-skip (format "symbolic links are not permitted here: %s"
+                               (error-message-string err)))))
+          (delete-file link)
           (nelix-symlink target link)
           (should (file-symlink-p link))
           (should (equal "hello" (with-temp-buffer
@@ -93,7 +100,8 @@ NAME=VALUE strings with tilde expansion."
                                 nil)))
     (should (equal (nelix-build--path)
                    (mapconcat #'identity
-                              (list (directory-file-name "/opt/extra/bin")
+                              (list (directory-file-name
+                                     (expand-file-name "/opt/extra/bin"))
                                     (directory-file-name
                                      (expand-file-name "~/.cargo/bin"))
                                     "/usr/bin"

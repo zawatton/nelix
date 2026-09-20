@@ -156,9 +156,10 @@
          (public-key (expand-file-name "public.pem" dir))
          (message-file (expand-file-name "message.txt" dir))
          (signature-file (expand-file-name "signature.bin" dir)))
-    (with-temp-file message-file
-      (set-buffer-multibyte nil)
-      (insert message))
+    (let ((coding-system-for-write 'binary))
+      (with-temp-file message-file
+        (set-buffer-multibyte nil)
+        (insert message)))
     (unless (eq 0 (call-process "openssl" nil nil nil
                                 "genpkey" "-algorithm" "RSA"
                                 "-pkeyopt" "rsa_keygen_bits:2048"
@@ -822,8 +823,9 @@
   (let ((file (make-temp-file "nelix-fetch-sha-")))
     (unwind-protect
         (progn
-          (with-temp-file file
-            (insert "hello\n"))
+          (let ((coding-system-for-write 'utf-8-unix))
+            (with-temp-file file
+              (insert "hello\n")))
           (should (equal (concat "sha256-"
                                  "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03")
                          (nelix-fetch-sha256-file file)))
@@ -1215,6 +1217,12 @@
 (ert-deftest nelix-store-test-native-script-shim-installs-posix-shim ()
   "nelix-native-install-recipe can generate a POSIX script-shim package."
   (nelix-store-test--with-temp-roots
+    (let ((probe (expand-file-name "exec-probe"
+                                   (file-name-directory nelix-store-root))))
+      (with-temp-file probe (insert "#!/bin/sh\n"))
+      (set-file-modes probe #o755)
+      (unless (file-executable-p probe)
+        (ert-skip "host does not support POSIX executable bits on shell scripts")))
     (let* ((recipe (list
                     :name "fixture-shim"
                     :version "1.0.0"
@@ -1293,7 +1301,11 @@
   (nelix-store-test--with-temp-roots
     (let* ((bin-dir (expand-file-name "bin" (file-name-directory
                                              nelix-store-root)))
-           (tool (expand-file-name "fixture-required-tool" bin-dir))
+           (tool (expand-file-name
+                  (if (eq system-type 'windows-nt)
+                      "fixture-required-tool.cmd"
+                    "fixture-required-tool")
+                  bin-dir))
            (old-path (getenv "PATH"))
            (recipe (list
                     :name "fixture-required-shim"
@@ -1316,7 +1328,9 @@
                (nelix-native-install-recipe recipe "default" 'x86_64-linux)
                :type 'nelix-error))
             (with-temp-file tool
-              (insert "#!/bin/sh\n")
+              (insert (if (eq system-type 'windows-nt)
+                          "@echo off\n"
+                        "#!/bin/sh\n"))
               (insert "echo fixture-required-tool\n"))
             (set-file-modes tool #o755)
             (let ((exec-path (cons bin-dir exec-path)))
@@ -1373,7 +1387,8 @@
                      "fixture-tool"))
            (recipe (nelix-store-test--fixture-recipe "fixture-tool" archive)))
       (nelix-registry-add recipe)
-      (let* ((reports (nelix-backend-install 'nelix-native "fixture-tool"))
+      (let* ((reports (nelix-backend-install
+                       'nelix-native "fixture-tool" nil 'x86_64-linux))
              (report (car reports)))
         (should (eq 'ok (plist-get report :status)))
         (should (file-exists-p
@@ -1863,8 +1878,9 @@
            (shim (expand-file-name "bin/fixture-runtime" active-dir))
            (path-fragment (expand-file-name "path.sh" active-dir))
            (marker (expand-file-name "marker.txt" active-dir)))
-      (with-temp-file marker
-        (insert "keep me\n"))
+      (let ((coding-system-for-write 'utf-8-unix))
+        (with-temp-file marker
+          (insert "keep me\n")))
       (cl-letf (((symbol-function 'nelix-profile--activate-link-file)
                  (lambda (&rest _args)
                    (signal 'nelix-error
