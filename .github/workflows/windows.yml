@@ -59,4 +59,5 @@ jobs:
           git --version
 
       - name: Run all checks
-        run: make check
+        # Report every failing gate in one CI run; any failed target still fails the job.
+        run: make -k check

@@ -143,6 +143,15 @@ printf '\n'
 EOF
 chmod +x "$packaged_bin/rg"
 
+# Windows executable lookup does not recognize the extensionless shell fixture.
+case "$(uname -s)" in
+  MINGW*|MSYS*)
+    printf '@echo off\r\n"%s" "%s" %%*\r\n' \
+      "$(cygpath -w "$(command -v bash)")" "$(cygpath -m "$packaged_bin/rg")" \
+      >"$packaged_bin/rg.cmd"
+    ;;
+esac
+
 sha256="sha256-$(sha256sum "$payload" | awk '{print $1}')"
 sha256_extra="sha256-$(sha256sum "$payload_extra" | awk '{print $1}')"
 sha256_dep="sha256-$(sha256sum "$payload_dep" | awk '{print $1}')"
