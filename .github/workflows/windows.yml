@@ -1,0 +1,62 @@
+name: windows
+
+on:
+  push:
+    branches: [main, 'fix/**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: Preserve LF line endings
+        shell: bash
+        run: |
+          git config --global core.autocrlf input
+          git config --global core.eol lf
+
+      - uses: actions/checkout@v4
+
+      - name: Set up MSYS2 MinGW64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          # make: runs check; git: creates repository/archive test fixtures.
+          # mingw-w64-x86_64-emacs: native Windows lint and ERT runtime.
+          # mingw-w64-x86_64-python: python3 -m json.tool schema validation.
+          # perl: edits lock fixtures; openssl: signs/verifies test payloads.
+          # diffutils: cmp checks copied profile files in the native CLI gate.
+          # https://packages.msys2.org/packages/base lists GNU tar, sed, gawk,
+          # coreutils (sha256sum), grep, findutils and shell utilities as dependencies.
+          install: >-
+            make
+            git
+            mingw-w64-x86_64-emacs
+            mingw-w64-x86_64-python
+            perl
+            openssl
+            diffutils
+
+      - name: Show tool paths and versions
+        run: |
+          command -v emacs make python3 tar openssl git
+          emacs --version
+          make --version
+          python3 --version
+          tar --version
+          openssl version
+          git --version
+
+      - name: Run all checks
+        run: make check
