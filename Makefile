@@ -3,7 +3,7 @@ SRC = nelix-compat.el nelix-state.el nelix-core.el nelix-dsl.el nelix-import.el 
 PKG_METADATA = nelix-pkg.el
 TEST_SRC = test/nelix-core-test.el test/nelix-core-uninstall-test.el test/nelix-core-upgrade-test.el test/nelix-core-pin-test.el test/nelix-core-info-test.el test/nelix-core-doctor-test.el test/nelix-dsl-test.el test/nelix-core-buildsys-test.el test/nelix-import-test.el test/nelix-compat-test.el test/nelix-emacs-test.el test/nelix-state-test.el test/nelix-manifest-test.el test/nelix-store-test.el test/nelix-cli-test.el test/nelix-emacs-package-test.el test/nelix-build-test.el test/nelix-backend-system-nixfree-test.el test/nelix-emacs-activate-test.el test/nelix-builder-unpack-test.el test/nelix-builder-builtin-dep-test.el test/nelix-builder-input-test.el test/nelix-fetch-cache-test.el test/nelix-upgrade-plan-parity-test.el test/nelix-cli-verdict-exit-test.el test/nelix-smoke-suite-path-test.el
 # Host-Emacs-only tests stay separate to preserve NeLisp suite counts.
-EMACS_ONLY_TEST_SRC = test/nelix-tar-test.el
+EMACS_ONLY_TEST_SRC = test/nelix-tar-test.el test/nelix-test-isolate-test.el
 NELISP_EXEC_TEST_SRC ?= test/nelix-core-test.el test/nelix-core-uninstall-test.el test/nelix-core-upgrade-test.el test/nelix-core-pin-test.el test/nelix-core-info-test.el test/nelix-core-doctor-test.el test/nelix-dsl-test.el test/nelix-core-buildsys-test.el test/nelix-import-test.el
 SCRIPT_SRC = scripts/nelix-core-render.el scripts/nelix-nelisp-smoke.el scripts/nelix-nelisp-ert-shim.el scripts/nelix-cli.el scripts/nelix-aot-manifest-engine.el scripts/nelix-aot-native-subset.el scripts/nelix-aot-native-cli-proof.el
 BIN_SRC = bin/nelix
@@ -879,7 +879,7 @@ nix-check:
 	NIX_CONFIG="$(NIX_CONFIG)" $(NIX) flake check
 
 test:
-	$(EMACS_BATCH) -l ert \
+	$(EMACS_BATCH) -l test/nelix-test-isolate.el -l ert \
 	  $(foreach f,$(TEST_SRC) $(EMACS_ONLY_TEST_SRC),-l $(f)) \
 	  -f ert-run-tests-batch-and-exit
 
@@ -888,11 +888,11 @@ compile:
 	  -f batch-byte-compile $(SRC) $(SCRIPT_SRC)
 
 compile-tests:
-	$(EMACS_BATCH) --eval "(setq byte-compile-error-on-warn t)" \
-	  -f batch-byte-compile $(TEST_SRC) $(EMACS_ONLY_TEST_SRC)
+	$(EMACS_BATCH) -l test/nelix-test-isolate.el --eval "(setq byte-compile-error-on-warn t)" \
+	  -f batch-byte-compile test/nelix-test-isolate.el $(TEST_SRC) $(EMACS_ONLY_TEST_SRC)
 
 check-declare:
-	$(EMACS_BATCH) \
+	$(EMACS_BATCH) -l test/nelix-test-isolate.el \
 	  $(foreach f,$(SRC),-l $(f)) \
 	  $(foreach f,$(SCRIPT_SRC),-l $(f)) \
 	  $(foreach f,$(SRC) $(SCRIPT_SRC) $(TEST_SRC) $(EMACS_ONLY_TEST_SRC),--eval "(check-declare-file \"$(f)\")")
@@ -1160,7 +1160,7 @@ smoke-nelix-cli-nelisp:
 
 smoke-nelix-manifest-dsl-schema:
 	python3 -m json.tool docs/schema/nelix-manifest-dsl-v1.schema.json >/dev/null
-	$(EMACS_BATCH) -l ert -l test/nelix-cli-test.el \
+	$(EMACS_BATCH) -l test/nelix-test-isolate.el -l ert -l test/nelix-cli-test.el \
 	  --eval '(ert-run-tests-batch-and-exit "nelix-cli-test-schema-\\(json-exposes-dsl-and-lock-contracts\\|manifest-dsl-contract-matches-json-schema-file\\|selects-single-contract\\)")'
 
 # --- static registry publication (GitHub Pages) ------------------------------

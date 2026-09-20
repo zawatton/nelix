@@ -32,6 +32,12 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
+# Native Windows Emacs needs a Windows-readable path; Unix ignores LOCALAPPDATA.
+isolated_localappdata="$tmp/data"
+if command -v cygpath >/dev/null 2>&1; then
+  isolated_localappdata="$(cygpath -m "$isolated_localappdata")"
+fi
+
 home="$tmp/home"
 data="$tmp/data"
 state="$tmp/state"
@@ -231,6 +237,7 @@ fi
 env_args=(
   "HOME=$home"
   "XDG_DATA_HOME=$data"
+  "LOCALAPPDATA=$isolated_localappdata"
   "XDG_STATE_HOME=$state"
   "NELIX_REGISTRY_INCLUDE_PACKAGED=0"
   "${nelix_lisp_env[@]}"
@@ -240,6 +247,7 @@ packaged_env_args=(
   "PATH=$packaged_bin:${PATH:-}"
   "HOME=$home"
   "XDG_DATA_HOME=$data"
+  "LOCALAPPDATA=$isolated_localappdata"
   "XDG_STATE_HOME=$state"
   "NELIX_REGISTRY_INCLUDE_PACKAGED=1"
   "${nelix_lisp_env[@]}"

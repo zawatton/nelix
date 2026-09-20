@@ -11,6 +11,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Native Windows Emacs needs a Windows-readable path; Unix ignores LOCALAPPDATA.
+isolated_localappdata="$TMP_DIR/data"
+if command -v cygpath >/dev/null 2>&1; then
+  isolated_localappdata="$(cygpath -m "$isolated_localappdata")"
+fi
+
 mkdir -p "$TMP_DIR/bin" "$TMP_DIR/home" "$TMP_DIR/state" "$TMP_DIR/profile"
 
 MANIFEST="$TMP_DIR/manifest.el"
@@ -83,6 +89,7 @@ run_nelix() {
   env \
     "PATH=$TMP_DIR/bin:$PATH" \
     "HOME=$TMP_DIR/home" \
+    "LOCALAPPDATA=$isolated_localappdata" \
     "XDG_STATE_HOME=$TMP_DIR/state" \
     "NELIX_LISPDIR=$REPO_ROOT" \
     "NELIX_FAKE_NIX_LOG=$FAKE_LOG" \
@@ -107,6 +114,7 @@ run_nelix_runtime() {
   env \
     "PATH=$TMP_DIR/bin:$PATH" \
     "HOME=$TMP_DIR/home" \
+    "LOCALAPPDATA=$isolated_localappdata" \
     "XDG_STATE_HOME=$TMP_DIR/state" \
     "NELIX_LISPDIR=$REPO_ROOT" \
     "NELIX_RUNTIME=$runtime" \
@@ -131,6 +139,7 @@ run_nelix_expect_fail() {
   env \
     "PATH=$TMP_DIR/bin:$PATH" \
     "HOME=$TMP_DIR/home" \
+    "LOCALAPPDATA=$isolated_localappdata" \
     "XDG_STATE_HOME=$TMP_DIR/state" \
     "NELIX_LISPDIR=$REPO_ROOT" \
     "NELIX_FAKE_NIX_LOG=$FAKE_LOG" \
