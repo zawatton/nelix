@@ -2064,7 +2064,13 @@
     (should
      (equal
       "1;/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-ripgrep-14.1.1;sha256:nar;123;/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-lib,/nix/store/cccccccccccccccccccccccccccccccc-zlib"
-      fingerprint))))
+      fingerprint))
+    (should (equal "/custom/store/ref"
+                   (nelix-substitute--narinfo-reference-path
+                    "ref" "/custom/store/")))
+    (should (equal "/nix/store/ref"
+                   (nelix-substitute--narinfo-reference-path
+                    "/nix/store/ref" "/custom/store")))))
 
 (ert-deftest nelix-store-test-substitute-from-narinfo-normalizes-metadata ()
   "Narinfo metadata can be mapped into a Nix-cache substitute descriptor."

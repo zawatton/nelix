@@ -597,7 +597,8 @@ enforced by the signature key and `nelix-substitute-trusted-signers'."
   (let ((root (or store-dir "/nix/store")))
     (if (string-prefix-p "/" reference)
         reference
-      (expand-file-name reference root))))
+      ;; These are signed Nix paths, not paths on the verifier's host.
+      (concat (directory-file-name root) "/" reference))))
 
 ;;;###autoload
 (defun nelix-substitute-parse-narinfo (text)
