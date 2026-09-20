@@ -7,3 +7,5 @@ scripts/nelix-aot-native-subset.el
 scripts/nelix-cli.el
 scripts/nelix-core-render.el
 registry/packages/system/*.el registry/packages/system
+registry/packages/emacs/*.el registry/packages/emacs
+registry/packages/lib/*.el registry/packages/lib

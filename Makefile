@@ -458,6 +458,15 @@ verify-deb-contents:
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/registry/packages/system/fd.el'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/registry/packages/system/jq.el'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/registry/packages/system/tree.el'
+# The Emacs recipes are the archive: without them the installed package is a
+# package manager that can install almost nothing.  They shipped as zero files
+# until 2026-09-20 because debian/elpa-nelix.elpa listed only the system
+# directory, and nothing noticed -- the recipe checks above are all system
+# ones, and a checkout resolves its registry from the source tree.  Assert a
+# count, not a name, so adding or renaming one recipe does not edit this gate.
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -c '^\./usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/registry/packages/emacs/.*\.el$$' | awk '{ if ($$1 < 100) { printf "packaged emacs recipes: %s (expected at least 100)\n", $$1 > "/dev/stderr"; exit 1 } }'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/registry/packages/emacs/magit.el'
+	dpkg-deb --fsys-tarfile "$(DEB)" | tar -tf - | grep -Fxq './usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0/registry/packages/lib/libtool.el'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-native-cli-gate.sh | grep -Fq 'registry list --system x86_64-linux'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-native-cli-gate.sh | grep -Fq 'packaged_install native install ripgrep'
 	dpkg-deb --fsys-tarfile "$(DEB)" | tar -xO ./usr/share/doc/elpa-nelix/packaging/verify-nelix-native-cli-gate.sh | grep -Fq 'packaged-rg-ok --nelix-gate'
