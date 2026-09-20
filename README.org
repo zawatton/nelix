@@ -438,21 +438,63 @@ See =docs/design/01-overview.org= for the full Phase 1 contract.
 
 * Install
 
+Two routes.  Install the Debian package if you want to *use* Nelix;
+clone the repository if you want to work *on* it.  Both give you the
+same bundled registry.
+
+** Debian / Ubuntu package
+
 #+begin_src shell
-git clone https://github.com/zawatton/nelix ~/nelix
+sudo dpkg -i elpa-nelix_0.1.0-5_all.deb
 #+end_src
 
-In your Emacs init:
+Nothing else is needed: =emacsen-common= puts Nelix on =load-path= and
+byte-compiles it for each installed Emacs flavour.
 
 #+begin_src elisp
-(add-to-list 'load-path "~/nelix")
 (require 'nelix)
-(require 'nelix-dsl)        ; Phase 2 — pkg-define macro
-;; To register pkg-* MCP tools (requires anvil.el loaded):
+(require 'nelix-dsl)
+(nelix-install "ripgrep")
+#+end_src
+
+*A locally built Emacs will not see it.*  The package reaches
+=load-path= through =/etc/emacs/site-start.d=, which is distro
+machinery; an Emacs built from source and installed under =/usr/local=
+does not read it.  If =command -v emacs= points at such a build,
+=(require 'nelix)= fails there while succeeding under
+=/usr/bin/emacs=.  Add the directory yourself in that case:
+
+#+begin_src elisp
+(dolist (dir (file-expand-wildcards "/usr/share/emacs/site-lisp/elpa/nelix-*" t))
+  (when (file-directory-p dir)
+    (add-to-list 'load-path dir)))
+#+end_src
+
+** From a Git clone (development)
+
+#+begin_src shell
+git clone https://github.com/zawatton/nelix ~/src/nelix
+cd ~/src/nelix
+make check        # lint + ERT + schema/render/CLI smokes; no Nix needed
+#+end_src
+
+Point Emacs at the checkout:
+
+#+begin_src elisp
+(add-to-list 'load-path "~/src/nelix")
+(require 'nelix)
+(require 'nelix-dsl)
+;; Register the pkg-* MCP tools (requires anvil.el loaded):
 (nelix-core-enable)
 #+end_src
 
-Command-line wrapper from a checkout:
+=add-to-list= prepends, so if the Debian package is also installed,
+adding the checkout *after* it is what makes the checkout win.  Nelix
+then resolves its registry from the checkout as well — see below — so a
+recipe you add under =registry/packages/= is live without reinstalling
+anything.
+
+The CLI runs straight from the tree:
 
 #+begin_src shell
 bin/nelix --help
@@ -462,12 +504,75 @@ bin/nelix sync ~/.config/nelix/manifest.el --prune
 bin/nelix --runtime nelisp --json version
 #+end_src
 
-Local install:
+Or install the wrapper without touching system directories:
 
 #+begin_src shell
 make install prefix=$HOME/.local
 ~/.local/bin/nelix --help
 #+end_src
+
+Working on Nelix itself, the useful gates are:
+
+#+begin_src shell
+make check                             # the everyday gate
+make compile                           # byte-compile, warnings as errors
+make deb-local-gate                    # build the .deb and verify its contents
+make verify-source-operational-gate    # the real manifest against this checkout
+make verify-installed-operational-gate # the same against the installed package
+#+end_src
+
+=verify-installed-operational-gate= tests a *distro-installed* Nelix,
+so it runs =/usr/bin/emacs= by default; set =EMACS= to override.
+
+** The bundled registry
+
+Both routes ship the same recipes — 200 Emacs packages, 6 system
+commands and 1 library:
+
+#+begin_src shell
+bin/nelix --json registry list | head
+#+end_src
+
+#+begin_src elisp
+(require 'nelix-registry)
+(nelix-registry-update)
+(length (nelix-registry-list))        ; => 207
+(nelix-registry-packaged-root)        ; where they were found
+#+end_src
+
+=nelix-registry-packaged-root= follows the loaded library, so a
+checkout reports its own =registry/= and an installed package reports
+=/usr/share/emacs/site-lisp/elpa/nelix-*/registry=.  That is how a
+checkout picks up recipes you are editing.
+
+This is a starter archive, not a curated index: the Emacs recipes were
+generated from one user's init and cover widely used packages.  Add
+your own under =registry/packages/emacs/=, point
+=nelix-registry-roots= at another directory, or — once one is published
+— subscribe to a remote index through =nelix-registry-remotes=, which
+hash- and signature-verifies what it fetches.
+
+** Installing without Nix
+
+The =nelix-native= backend builds into Nelix's own store and needs no
+Nix at all:
+
+#+begin_src elisp
+(nelix-install "dash" :backend-policy '(nelix-native))
+#+end_src
+
+A manifest can declare the same thing once:
+
+#+begin_src elisp
+(nelix-manifest
+ :name "my-emacs"
+ :backend-policy '(nelix-native)
+ :emacs '(dash s f magit))
+#+end_src
+
+Source builds need the usual tools on =PATH= (=git=, =curl=, =tar=,
+=make=, a C compiler); a package that needs a C library can depend on
+one built the same way, as =emacs-ffi= does with =libtool=.
 
 ** Examples
 
@@ -737,7 +842,7 @@ make check      # local no-Nix gate: lint + test + smoke-pairs-check + smoke-ren
 make verify-local  # full local gate: check + repository flake + real Nix + NeLisp + whitespace
 make check-whitespace  # git diff --check
 make nix-check  # same top-level Nix flake check via Makefile
-make test       # 221 ERT tests, no nix binary required (all mocked)
+make test       # ERT suite, no nix binary required (all mocked)
 make compile    # byte-compile runtime source/scripts, warnings-as-errors
 make compile-tests  # byte-compile ERT files, warnings-as-errors
 make check-declare  # check declarations in runtime source/scripts + ERT files
@@ -787,11 +892,13 @@ silently downgrade — it fails loudly with a clear instruction to re-run at
 =:hermeticity 'tier1=.  Requirements for Tier 2: Linux, =bubblewrap=
 installed, and unprivileged user namespaces enabled.
 
-* Requirements (planned)
+* Requirements
 
-- Emacs 29+ (anvil runtime requirement)
-- Nix 2.18+ with flakes enabled (Phase 1 backend)
-- =anvil.el= loaded
+- Emacs 29+
+- For source builds with =nelix-native=: =git=, =curl=, =tar=, =make=
+  and a C compiler on =PATH=.  No Nix.
+- For the =nix= backend: Nix 2.18+ with flakes enabled
+- =anvil.el= loaded, if you want the =pkg-*= MCP tools
 
 * Naming
 
