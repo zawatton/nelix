@@ -668,7 +668,8 @@ through it -- fail outright."
     (nelix-compat-read-file path))))
 
 (defun nelix-compat-write-file (path content)
-  "Write CONTENT (string) to PATH, overwriting."
+  "Write CONTENT (string) to PATH, overwriting.
+The Emacs backend writes UTF-8 without host newline conversion."
   (cond
    ((and (nelix-compat--runtime-nelisp-p)
          (progn
@@ -677,8 +678,9 @@ through it -- fail outright."
     ;; nelisp-ec-write-region is the Layer-2 equivalent
     (nelisp-ec-write-region content nil path nil 'silent))
    ((fboundp 'with-temp-file)
-    (with-temp-file path
-      (insert content)))
+    (let ((coding-system-for-write 'utf-8-unix))
+      (with-temp-file path
+        (insert content))))
    (t
     (nelix-compat--try-require-nelisp-emacs-compat)
     (cond

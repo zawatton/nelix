@@ -306,8 +306,16 @@
                        :system 'x86_64-linux
                        :hash "sha256-fixture-ripgrep"
                        :runtime-paths '("bin")))
-           (path (nelix-store-write-entry entry))
+           (path (let ((coding-system-for-write 'utf-8-dos))
+                   (nelix-store-write-entry entry)))
            (read-entry (nelix-store-read-entry path)))
+      ;; Metadata must have stable LF bytes even with a DOS write default.
+      (should-not (string-match-p
+                   "\r" (nelix-store-test--read-binary-file
+                          (nelix-store--metadata-file path))))
+      (should (string-match-p
+               "\n" (nelix-store-test--read-binary-file
+                      (nelix-store--metadata-file path))))
       (should (string-match-p "sha256-fixture-ripgrep-ripgrep-14.1.1\\'"
                               path))
       (should (equal "ripgrep" (plist-get read-entry :name)))
