@@ -5,6 +5,22 @@ expected_version="${1:-0.1.0-5}"
 expected_profile="${NELIX_EXPECTED_PROFILE:-$HOME/.local/state/nelix/profile}"
 elpa_src_dir="/usr/share/emacs/site-lisp/elpa-src/nelix-0.1.0"
 
+# The Emacs to verify against.  This gate checks a distro-packaged Nelix,
+# which reaches `load-path' through /etc/emacs/site-start.d -- machinery a
+# locally built Emacs does not read.  On a machine where such a build comes
+# first on PATH, a plain `emacs' here fails `(require \'nelix)' no matter how
+# correct the package is, which reads as a packaging failure and is not one.
+# The Makefile already exposes EMACS; honour it, and default to the
+# distro binary rather than whatever PATH resolves to.
+EMACS="${EMACS:-}"
+if [ -z "$EMACS" ]; then
+  if [ -x /usr/bin/emacs ]; then
+    EMACS=/usr/bin/emacs
+  else
+    EMACS=emacs
+  fi
+fi
+
 if ! command -v dpkg-query >/dev/null 2>&1; then
   echo "dpkg-query not found; this verifier is for Debian-family packages" >&2
   exit 1
@@ -60,9 +76,9 @@ check_forms='
 export NELIX_EXPECTED_PROFILE="$expected_profile"
 export NELIX_INSTALLED_VERSION="$installed_version"
 
-emacs --batch --eval "(progn $check_forms)"
+"$EMACS" --batch --eval "(progn $check_forms)"
 
-emacs -Q --batch \
+"$EMACS" -Q --batch \
   -L "$elpa_src_dir" \
   --eval "(progn $check_forms)"
 
@@ -96,7 +112,7 @@ if [ -n "${NELIX_USER_MANIFEST:-}" ]; then
   json_array_count() {
     file="$1"
     key="$2"
-    emacs -Q --batch \
+    "$EMACS" -Q --batch \
       --eval '(require (quote json))' \
       --eval '(let* ((json-object-type (quote alist))
                      (json-array-type (quote list))
@@ -113,7 +129,7 @@ if [ -n "${NELIX_USER_MANIFEST:-}" ]; then
 
   json_top_level_count() {
     file="$1"
-    emacs -Q --batch \
+    "$EMACS" -Q --batch \
       --eval '(require (quote json))' \
       --eval '(let* ((json-object-type (quote alist))
                      (json-array-type (quote list))
