@@ -44,10 +44,10 @@
       (insert "#!/bin/sh\n")
       (insert "echo fixture\n"))
     (set-file-modes exe #o755)
-    (let ((exit (call-process "tar" nil nil nil
+    (let ((exit (apply #'call-process "tar" nil nil nil
                               "-cf" archive
                               "-C" root
-                              ".")))
+                              "." (nelix-compat-tar-extra-args))))
       (unless (eq exit 0)
         (ert-fail "tar fixture creation failed")))
     archive))
@@ -259,10 +259,10 @@
       (insert "(defun fixture-mode-version () \"1.0.0\")\n")
       (insert (format "(provide '%s)\n" feature))
       (insert ";;; fixture-mode.el ends here\n"))
-    (let ((exit (call-process "tar" nil nil nil
+    (let ((exit (apply #'call-process "tar" nil nil nil
                               "-cf" archive
                               "-C" root
-                              ".")))
+                              "." (nelix-compat-tar-extra-args))))
       (unless (eq exit 0)
         (ert-fail "tar elisp fixture creation failed")))
     archive))

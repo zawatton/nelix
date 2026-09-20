@@ -265,8 +265,9 @@ the raw bytes of the tarball as a unibyte string.  Skips with
               (make-directory (file-name-directory path) t)
               (with-temp-file path (insert content))))
           (let ((default-directory staging))
-            (let ((exit (call-process "tar" nil nil nil
-                                      "-czf" tarfile top-dir)))
+            (let ((exit (apply #'call-process "tar" nil nil nil
+                               "-czf" tarfile top-dir
+                               (nelix-compat-tar-extra-args))))
               (unless (eq 0 exit)
                 (error "tar -czf failed: %S" exit))))
           (with-temp-buffer

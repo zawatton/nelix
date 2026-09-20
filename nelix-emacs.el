@@ -623,7 +623,8 @@ otherwise) and returns deps or nil."
 (defun nelix-emacs--tar-list (tarfile)
   "Run `tar -tzf TARFILE' and return its stdout lines as a list of strings."
   (let* ((resp (nelix-compat-call-process
-                "tar" (list "-tzf" tarfile)))
+                "tar" (append (list "-tzf" tarfile)
+                              (nelix-compat-tar-extra-args))))
          (exit (plist-get resp :exit))
          (stdout (or (plist-get resp :stdout) "")))
     (cond
@@ -662,7 +663,8 @@ Trailing-slash entries (directories) are ignored."
 (defun nelix-emacs--tar-extract (tarfile entry)
   "Run `tar -xzOf TARFILE ENTRY' and return its stdout as a string."
   (let* ((resp (nelix-compat-call-process
-                "tar" (list "-xzOf" tarfile entry)))
+                "tar" (append (list "-xzOf" tarfile entry)
+                              (nelix-compat-tar-extra-args))))
          (exit (plist-get resp :exit)))
     (cond
      ((eq exit 0)

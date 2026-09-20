@@ -2,6 +2,8 @@ EMACS ?= emacs
 SRC = nelix-compat.el nelix-state.el nelix-core.el nelix-dsl.el nelix-import.el nelix-emacs.el nelix.el nelix-dsl.el nelix-import.el nelix-emacs.el nelix-manifest.el nelix-fast.el nelix-store.el nelix-registry.el nelix-fetch.el nelix-builder.el nelix-backend.el nelix-substitute.el
 PKG_METADATA = nelix-pkg.el
 TEST_SRC = test/nelix-core-test.el test/nelix-core-uninstall-test.el test/nelix-core-upgrade-test.el test/nelix-core-pin-test.el test/nelix-core-info-test.el test/nelix-core-doctor-test.el test/nelix-dsl-test.el test/nelix-core-buildsys-test.el test/nelix-import-test.el test/nelix-compat-test.el test/nelix-emacs-test.el test/nelix-state-test.el test/nelix-manifest-test.el test/nelix-store-test.el test/nelix-cli-test.el test/nelix-emacs-package-test.el test/nelix-build-test.el test/nelix-backend-system-nixfree-test.el test/nelix-emacs-activate-test.el test/nelix-builder-unpack-test.el test/nelix-builder-builtin-dep-test.el test/nelix-builder-input-test.el test/nelix-fetch-cache-test.el test/nelix-upgrade-plan-parity-test.el test/nelix-cli-verdict-exit-test.el test/nelix-smoke-suite-path-test.el
+# Host-Emacs-only tests stay separate to preserve NeLisp suite counts.
+EMACS_ONLY_TEST_SRC = test/nelix-tar-test.el
 NELISP_EXEC_TEST_SRC ?= test/nelix-core-test.el test/nelix-core-uninstall-test.el test/nelix-core-upgrade-test.el test/nelix-core-pin-test.el test/nelix-core-info-test.el test/nelix-core-doctor-test.el test/nelix-dsl-test.el test/nelix-core-buildsys-test.el test/nelix-import-test.el
 SCRIPT_SRC = scripts/nelix-core-render.el scripts/nelix-nelisp-smoke.el scripts/nelix-nelisp-ert-shim.el scripts/nelix-cli.el scripts/nelix-aot-manifest-engine.el scripts/nelix-aot-native-subset.el scripts/nelix-aot-native-cli-proof.el
 BIN_SRC = bin/nelix
@@ -836,7 +838,7 @@ help:
 	@echo "make nix-check    — run top-level 'nix flake check'"
 	@echo "make test         — run ERT suite (no nix required, mocked)"
 	@echo "make compile      — byte-compile runtime source/scripts, warnings-as-errors"
-	@echo "make compile-tests — byte-compile $(TEST_SRC), warnings-as-errors"
+	@echo "make compile-tests — byte-compile $(TEST_SRC) $(EMACS_ONLY_TEST_SRC), warnings-as-errors"
 	@echo "make check-declare — run check-declare over source/scripts/tests"
 	@echo "make lint         — byte-compile source/scripts/tests + check-declare"
 	@echo "make install      — install Nelix Elisp sources and docs under DESTDIR"
@@ -878,7 +880,7 @@ nix-check:
 
 test:
 	$(EMACS_BATCH) -l ert \
-	  $(foreach f,$(TEST_SRC),-l $(f)) \
+	  $(foreach f,$(TEST_SRC) $(EMACS_ONLY_TEST_SRC),-l $(f)) \
 	  -f ert-run-tests-batch-and-exit
 
 compile:
@@ -887,13 +889,13 @@ compile:
 
 compile-tests:
 	$(EMACS_BATCH) --eval "(setq byte-compile-error-on-warn t)" \
-	  -f batch-byte-compile $(TEST_SRC)
+	  -f batch-byte-compile $(TEST_SRC) $(EMACS_ONLY_TEST_SRC)
 
 check-declare:
 	$(EMACS_BATCH) \
 	  $(foreach f,$(SRC),-l $(f)) \
 	  $(foreach f,$(SCRIPT_SRC),-l $(f)) \
-	  $(foreach f,$(SRC) $(SCRIPT_SRC) $(TEST_SRC),--eval "(check-declare-file \"$(f)\")")
+	  $(foreach f,$(SRC) $(SCRIPT_SRC) $(TEST_SRC) $(EMACS_ONLY_TEST_SRC),--eval "(check-declare-file \"$(f)\")")
 
 lint: compile compile-tests check-declare
 

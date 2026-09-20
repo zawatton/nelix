@@ -725,6 +725,25 @@ plist."
     (nelix-compat--call-process-nelisp program args))
    (t (error "no call-process backend available"))))
 
+(defvar nelix-compat--tar-extra-args 'unknown
+  "Cached tar arguments, or `unknown' before the first version probe.")
+
+(defun nelix-compat-tar-extra-args ()
+  "Return arguments needed for local archive paths by the current tar.
+Probe tar once per process through the runtime process abstraction.
+GNU tar needs --force-local for Windows drive letters; bsdtar rejects
+that option.  Missing tar, failed probes and unknown versions yield nil."
+  (when (eq nelix-compat--tar-extra-args 'unknown)
+    (setq nelix-compat--tar-extra-args
+          (condition-case nil
+              (let ((resp (nelix-compat-call-process "tar" '("--version"))))
+                (when (and (eq (plist-get resp :exit) 0)
+                           (stringp (plist-get resp :stdout))
+                           (string-match "GNU tar" (plist-get resp :stdout)))
+                  '("--force-local")))
+            (error nil))))
+  nelix-compat--tar-extra-args)
+
 (defun nelix-compat--call-process-emacs (program args)
   "Emacs backend for `nelix-compat-call-process'.
 Buffer for stdout, temp file for stderr."

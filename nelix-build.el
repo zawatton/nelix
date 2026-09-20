@@ -403,12 +403,8 @@ nothing and still reports success."
     (nelix-delete-directory scratch)
     (nelix-mkdir-p scratch)
     (apply #'nelix-invoke "tar" "xf" archive "-C" scratch
-           ;; --force-local: on Windows, GNU tar (as shipped by Git
-           ;; Bash/MSYS2) otherwise reads a "c:/..." path as a
-           ;; "host:path" remote archive spec (tar's rmt(8) syntax) and
-           ;; fails connecting to a host named "c".  Harmless elsewhere.
-           "--force-local"
-           (mapcar (lambda (pat) (concat "--exclude=" pat)) excludes))
+           (append (nelix-compat-tar-extra-args)
+                   (mapcar (lambda (pat) (concat "--exclude=" pat)) excludes)))
     (let* ((top (nelix-build--plain-files scratch))
            (root (if (and top (null (cdr top))
                           (file-directory-p (expand-file-name (car top) scratch)))

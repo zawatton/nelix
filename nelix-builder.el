@@ -124,6 +124,7 @@ content-addressed toolchain pinned here.  Bound dynamically by callers.")
     ('tar
      (let ((args (append (list "-xf" (expand-file-name archive)
                                "-C" (expand-file-name dest))
+                         (nelix-compat-tar-extra-args)
                          (when (plist-get install :strip-components)
                            (list (format "--strip-components=%s"
                                          (plist-get install :strip-components)))))))
@@ -598,12 +599,8 @@ cons cell.")
      ;; `nelix-out' supply per-recipe specifics, so one preset builds any
      ;; elpa/git Emacs package (skipping hidden files like .dir-locals.el).
      (unpack
-      ;; --force-local: on Windows, GNU tar (as shipped by Git Bash/MSYS2)
-      ;; otherwise parses a "c:/..." absolute path as a "host:path" remote
-      ;; archive spec (tar's traditional rmt(8) syntax) and fails trying
-      ;; to "connect" to a host literally named "c". Harmless everywhere
-      ;; else (paths there never contain a drive-letter colon), so it is
-      ;; passed unconditionally rather than gated on `system-type'.
+      ;; The compat helper adds --force-local only for GNU tar, to keep
+      ;; Windows drive letters local.  bsdtar rejects that option.
       ;; :tar-exclude lets a recipe skip archive entries tar cannot
       ;; materialize on Windows (e.g. a broken symlink left over from a
       ;; git worktree, such as plz.el's NOTES.org -> worktrees/... link)
