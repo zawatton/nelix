@@ -20,6 +20,19 @@ fi
 
 mkdir -p "$TMP_DIR/bin" "$TMP_DIR/home" "$TMP_DIR/state"
 
+# These fixtures exercise Nix on Linux.  `lock' has no --system option;
+# pin only the gate's CLI processes when native Windows Emacs is in use.
+case "$(uname -s)" in
+  MINGW*|MSYS*)
+    {
+      printf '#!/usr/bin/env bash\nexec %q -Q --batch -L %q ' "$EMACS_BIN" "$REPO_ROOT"
+      printf '%s\n' "--eval \"(progn (require 'nelix-backend) (fset 'nelix-current-system (lambda () 'x86_64-linux)))\" \"\$@\""
+    } >"$TMP_DIR/gate-emacs"
+    chmod +x "$TMP_DIR/gate-emacs"
+    export EMACS="$TMP_DIR/gate-emacs"
+    ;;
+esac
+
 MANIFEST="$TMP_DIR/manifest.el"
 LEGACY_MANIFEST="$TMP_DIR/legacy-manifest.el"
 FAKE_NIX="$TMP_DIR/bin/nix"
@@ -67,6 +80,15 @@ printf 'fake nix: unsupported %s\n' "$*" >&2
 exit 2
 EOF
 chmod +x "$FAKE_NIX"
+
+# Windows executable lookup does not recognize the extensionless shell fixture.
+case "$(uname -s)" in
+  MINGW*|MSYS*)
+    printf '@echo off\r\n"%s" "%s" %%*\r\n' \
+      "$(cygpath -w "$(command -v bash)")" "$(cygpath -m "$FAKE_NIX")" \
+      >"$FAKE_NIX.cmd"
+    ;;
+esac
 
 run_nelix_expect_failure() {
   # For commands whose whole job is to answer a question: `lock-check'
@@ -203,6 +225,12 @@ perl -0pi -e 's/:schema-version 2/:schema-version 999/; s/:version 2/:version 99
 run_nelix future_schema_rejected lock validate "$MANIFEST"
 expect_out future_schema_rejected '"ok":null'
 expect_out future_schema_rejected '"schema-version":999'
+
+# Paths embedded in Lisp are not converted by MSYS argument translation.
+if command -v cygpath >/dev/null 2>&1; then
+  REPO_ROOT="$(cygpath -m "$REPO_ROOT")"
+  TMP_DIR="$(cygpath -m "$TMP_DIR")"
+fi
 
 "$EMACS_BIN" -Q --batch \
   --eval "(let ((repo-root \"$REPO_ROOT\")

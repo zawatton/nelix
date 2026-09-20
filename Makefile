@@ -149,7 +149,13 @@ NIX ?= $(shell command -v nix 2>/dev/null || \
     printf '%s\n' /nix/var/nix/profiles/default/bin/nix; } || \
   printf '%s\n' nix)
 NIX_CONFIG ?= experimental-features = nix-command flakes
-SMOKE_DIR ?= /tmp/nelix-core-smoke
+ifndef SMOKE_DIR
+# Use the same writable path in MSYS and native Emacs; expand only once.
+# The stable directory can be removed by a later `make smoke-clean'.
+SMOKE_DIR := $(shell if command -v cygpath >/dev/null 2>&1; then \
+  cygpath -m "$${TMPDIR:-$${TEMP:-/tmp}}/nelix-core-smoke"; \
+  else printf '%s\n' /tmp/nelix-core-smoke; fi)
+endif
 
 # Examples whose source/cargo/vendor hashes are real (Phase 4-H).
 # Format:  <example-file>:<nix-attr>
@@ -963,7 +969,7 @@ distclean: clean smoke-clean deb-clean
 	rm -f ../nelix_$(DEB_VERSION)_*.buildinfo ../nelix_$(DEB_VERSION)_*.changes
 
 smoke-clean:
-	rm -rf $(SMOKE_DIR)
+	rm -rf "$(SMOKE_DIR)"
 	rm -rf "$(NELISP_CACHE_DIR)"
 
 # Render every examples/*.el recipe without invoking Nix.  This is the
@@ -976,7 +982,7 @@ smoke-render:
 	}
 	@for ex in $(RENDER_EXAMPLES); do \
 	  name=$$(basename $$ex .el); \
-	  out=$(SMOKE_DIR)/$$name; \
+	  out="$(SMOKE_DIR)/$$name"; \
 	  echo "::group::smoke-render $$ex"; \
 	  $(EMACS_BATCH) -l scripts/nelix-core-render.el \
 	    --eval "(nelix-core-render-example \"$$ex\" \"$$out\")" \
@@ -1026,7 +1032,7 @@ smoke-eval-pairs-check:
 	    exit 1; \
 	  }; \
 	  name=$$(basename $$ex .el); \
-	  out=$(SMOKE_DIR)/pair-check/eval/$$name; \
+	  out="$(SMOKE_DIR)/pair-check/eval/$$name"; \
 	  $(EMACS_BATCH) -l scripts/nelix-core-render.el \
 	    --eval "(nelix-core-render-example-attr-batch \"$$ex\" \"$$attr\" \"$$out\")" \
 	    || exit 1; \
@@ -1058,7 +1064,7 @@ smoke-build-pairs-check:
 	    exit 1; \
 	  }; \
 	  name=$$(basename $$ex .el); \
-	  out=$(SMOKE_DIR)/pair-check/build/$$name; \
+	  out="$(SMOKE_DIR)/pair-check/build/$$name"; \
 	  $(EMACS_BATCH) -l scripts/nelix-core-render.el \
 	    --eval "(nelix-core-render-example-attr-batch \"$$ex\" \"$$attr\" \"$$out\")" \
 	    || exit 1; \
@@ -1075,7 +1081,7 @@ smoke-eval: smoke-eval-pairs-check
 	@for pair in $(SMOKE_EVAL_PAIRS); do \
 	  ex=$${pair%:*}; \
 	  name=$$(basename $$ex .el); \
-	  out=$(SMOKE_DIR)/$$name; \
+	  out="$(SMOKE_DIR)/$$name"; \
 	  echo "::group::smoke-eval $$ex"; \
 	  $(EMACS_BATCH) -l scripts/nelix-core-render.el \
 	    --eval "(nelix-core-render-example \"$$ex\" \"$$out\")" \
@@ -1095,7 +1101,7 @@ smoke-build: smoke-build-pairs-check
 	  ex=$${pair%:*}; \
 	  attr=$${pair#*:}; \
 	  name=$$(basename $$ex .el); \
-	  out=$(SMOKE_DIR)/$$name; \
+	  out="$(SMOKE_DIR)/$$name"; \
 	  echo "::group::smoke-build $$ex#$$attr"; \
 	  $(EMACS_BATCH) -l scripts/nelix-core-render.el \
 	    --eval "(nelix-core-render-example \"$$ex\" \"$$out\")" \

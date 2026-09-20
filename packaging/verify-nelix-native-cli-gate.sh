@@ -32,6 +32,19 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
+# Fixture recipes are Linux-only.  Unlike `native install', `lock' has no
+# --system option, so pin the gate's CLI processes on Windows as well.
+case "$(uname -s)" in
+  MINGW*|MSYS*)
+    {
+      printf '#!/usr/bin/env bash\nexec %q -Q --batch -L %q ' "${EMACS:-emacs}" "${NELIX_LISPDIR:-$repo_root}"
+      printf '%s\n' "--eval \"(progn (require 'nelix-backend) (fset 'nelix-current-system (lambda () 'x86_64-linux)))\" \"\$@\""
+    } >"$tmp/gate-emacs"
+    chmod +x "$tmp/gate-emacs"
+    export EMACS="$tmp/gate-emacs"
+    ;;
+esac
+
 # Native Windows Emacs needs a Windows-readable path; Unix ignores LOCALAPPDATA.
 isolated_localappdata="$tmp/data"
 if command -v cygpath >/dev/null 2>&1; then
@@ -44,6 +57,9 @@ state="$tmp/state"
 source_dir="$tmp/source"
 registry="$data/nelix/registry/packages/local"
 profile_root="$state/nelix/profiles"
+case "$(uname -s)" in
+  MINGW*|MSYS*) profile_root="$data/nelix/profiles" ;;
+esac
 packaged_bin="$tmp/packaged-bin"
 
 mkdir -p "$home" "$data" "$state" "$source_dir" "$registry" "$packaged_bin"
@@ -135,7 +151,12 @@ sha256_app="sha256-$(sha256sum "$payload_app" | awk '{print $1}')"
 sha256_archive="sha256-$(sha256sum "$archive" | awk '{print $1}')"
 
 quote_elisp_string() {
-  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/^/"/; s/$/"/'
+  local path="$1"
+  # These strings are fixture paths read directly by native Emacs.
+  if command -v cygpath >/dev/null 2>&1; then
+    path="$(cygpath -m "$path")"
+  fi
+  printf '%s' "$path" | sed 's/\\/\\\\/g; s/"/\\"/g; s/^/"/; s/$/"/'
 }
 
 cat >"$registry/fixture-tool.el" <<EOF
@@ -338,6 +359,25 @@ reject_json() {
     sed 's/^/nelix_native_cli_stderr /' "$tmp/$label.err" >&2
     exit 1
   fi
+}
+
+expect_profile_link() {
+  local label="$1" link="$2" target="$3"
+  if test -L "$link"; then
+    return
+  fi
+  case "$(uname -s)" in
+    MINGW*|MSYS*)
+      # Native Emacs may lack symlink privileges; auto activation records
+      # its supported copy fallback.  Verify both the mode and file bytes.
+      expect_json "$label" '"mode":"copy"'
+      cmp "$target" "$link"
+      ;;
+    *)
+      echo "nelix native CLI gate: activation profile tree file is not a symlink: $link" >&2
+      exit 1
+      ;;
+  esac
 }
 
 mvp_checkpoint() {
@@ -640,10 +680,7 @@ test -x "$profile_link" || {
   echo "nelix native CLI gate: activation profile tree file missing: $profile_link" >&2
   exit 1
 }
-test -L "$profile_link" || {
-  echo "nelix native CLI gate: activation profile tree file is not a symlink: $profile_link" >&2
-  exit 1
-}
+expect_profile_link activate "$profile_link" "$store_path/fixture-tool"
 shim_output="$("$shim" smoke)"
 test "$shim_output" = "fixture-tool-ok smoke" || {
   echo "nelix native CLI gate: activation shim output mismatch: $shim_output" >&2
@@ -753,10 +790,8 @@ test -x "$post_dependency_rollback_profile_link" || {
   echo "nelix native CLI gate: dependency rollback profile tree file missing: $post_dependency_rollback_profile_link" >&2
   exit 1
 }
-test -L "$post_dependency_rollback_profile_link" || {
-  echo "nelix native CLI gate: dependency rollback profile tree file is not a symlink: $post_dependency_rollback_profile_link" >&2
-  exit 1
-}
+expect_profile_link rollback_after_dependency \
+  "$post_dependency_rollback_profile_link" "$store_path/fixture-tool"
 test ! -e "$profile_root/default/active/bin/fixture-dep" || {
   echo "nelix native CLI gate: dependency rollback left dependency shim behind" >&2
   exit 1
