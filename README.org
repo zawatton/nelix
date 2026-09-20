@@ -595,16 +595,33 @@ make pages          # writes public/index.el plus the recipes it names
 The target prints the index SHA-256; that is what subscribers pin.
 Serve =public/= from any static host.  For GitHub Pages, publish it on
 an orphan =gh-pages= branch so generated files stay out of the source
-history:
+history — in a separate worktree, so the tree you are working in is
+never emptied:
 
 #+begin_src shell
 make pages
-git checkout --orphan gh-pages
-git rm -rf --cached .
-mv public/* . && rmdir public
-git add -A && git commit -m "publish registry index"
-git push -u origin gh-pages
+git worktree add --orphan -b gh-pages ../nelix-gh-pages
+cp public/index.el ../nelix-gh-pages/
+cp -r public/packages ../nelix-gh-pages/packages
+touch ../nelix-gh-pages/.nojekyll    # serve .el files as-is
+git -C ../nelix-gh-pages add -A
+git -C ../nelix-gh-pages commit -m "publish registry index"
+git -C ../nelix-gh-pages push -u origin gh-pages
+git worktree remove ../nelix-gh-pages
 #+end_src
+
+Check the tree before publishing it — the gate takes a directory:
+
+#+begin_src shell
+tools/nelix-registry-pages-gate.sh ../nelix-gh-pages
+#+end_src
+
+Then point Pages at the =gh-pages= branch root in the repository
+settings.
+
+Do not run =git checkout --orphan= in your working tree for this: the
+follow-up =git rm -rf= would also take untracked build output with it
+(=debian/.debhelper/=, =.cache/=, anything else not committed).
 
 Publish deliberately, not on every push: each new index invalidates the
 hash subscribers pinned, so automating it on commit would break them
