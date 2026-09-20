@@ -580,7 +580,10 @@
           (nelix-manifest-test--write
            dir "manifest.el"
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :emacs '(magit) :linux '(ripgrep) :pins '(ripgrep))\n")
-          (cl-letf (((symbol-function 'nelix-package-install-target)
+          ;; Pin the Linux system used by the fixture and backend selection.
+          (cl-letf (((symbol-function 'nelix-current-system)
+                     (lambda () 'x86_64-linux))
+                    ((symbol-function 'nelix-package-install-target)
                      (lambda (package)
                        (if (eq package 'magit) "emacsPackages.magit" package)))
                     ((symbol-function 'nelix-compat-executable-find)
@@ -669,7 +672,10 @@
           (nelix-manifest-test--write
            dir "manifest.el"
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep fd))\n")
-          (cl-letf (((symbol-function 'nelix-compat-executable-find)
+          ;; Pin the Linux system used by the fixture and backend selection.
+          (cl-letf (((symbol-function 'nelix-current-system)
+                     (lambda () 'x86_64-linux))
+                    ((symbol-function 'nelix-compat-executable-find)
                      (lambda (program)
                        (and (equal program "nix") "/usr/bin/nix")))
                     ((symbol-function 'nelix-list)
@@ -731,7 +737,10 @@
           (nelix-manifest-test--write
            dir "manifest.el"
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep fd))\n")
-          (cl-letf (((symbol-function 'nelix-compat-executable-find)
+          ;; Pin the Linux system used by the fixture and backend selection.
+          (cl-letf (((symbol-function 'nelix-current-system)
+                     (lambda () 'x86_64-linux))
+                    ((symbol-function 'nelix-compat-executable-find)
                      (lambda (program)
                        (and (equal program "nix") "/usr/bin/nix")))
                     ((symbol-function 'nelix-list)
@@ -799,7 +808,10 @@
           (nelix-manifest-test--write
            dir "manifest.el"
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :profile \"dev\" :linux '(fixture-a fixture-b) :backend-policy '(nelix-native))\n")
-          (cl-letf (((symbol-function 'nelix-manifest-installation-report)
+          ;; Pin the Linux system used by the fixture and backend selection.
+          (cl-letf (((symbol-function 'nelix-current-system)
+                     (lambda () 'x86_64-linux))
+                    ((symbol-function 'nelix-manifest-installation-report)
                      (lambda (_manifest backend)
                        (should (eq backend 'nelix-native))
                        (list (list :name "fixture-a"
@@ -910,7 +922,10 @@
           (nelix-manifest-test--write
            dir "manifest.el"
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep fd))\n")
-          (cl-letf (((symbol-function 'nelix-compat-executable-find)
+          ;; Pin the Linux system used by the fixture and backend selection.
+          (cl-letf (((symbol-function 'nelix-current-system)
+                     (lambda () 'x86_64-linux))
+                    ((symbol-function 'nelix-compat-executable-find)
                      (lambda (program)
                        (and (equal program "nix") "/usr/bin/nix")))
                     ((symbol-function 'nelix-list)
@@ -1046,7 +1061,10 @@
           (nelix-manifest-test--write
            dir "manifest.el"
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :emacs '(magit) :linux '(ripgrep) :pins '(ripgrep))\n")
-          (cl-letf (((symbol-function 'nelix-compat--standalone-nelisp-p)
+          ;; Pin the Linux system used by the fixture and backend selection.
+          (cl-letf (((symbol-function 'nelix-current-system)
+                     (lambda () 'x86_64-linux))
+                    ((symbol-function 'nelix-compat--standalone-nelisp-p)
                      (lambda () t))
                     ((symbol-function 'nelix-package-install-target)
                      (lambda (package)
@@ -1156,7 +1174,10 @@
           (nelix-manifest-test--write
            dir "manifest.el"
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep))\n")
-          (cl-letf (((symbol-function 'nelix-compat--standalone-nelisp-p)
+          ;; Pin the Linux system used by the fixture and backend selection.
+          (cl-letf (((symbol-function 'nelix-current-system)
+                     (lambda () 'x86_64-linux))
+                    ((symbol-function 'nelix-compat--standalone-nelisp-p)
                      (lambda () t))
                     ((symbol-function 'nelix-list)
                      (lambda ()
@@ -1305,7 +1326,10 @@
           (nelix-manifest-test--write
            dir "manifest.el"
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep fd) :pins '(ripgrep))\n")
-          (cl-letf (((symbol-function 'nelix-compat-executable-find)
+          ;; Pin the Linux system used by the fixture and backend selection.
+          (cl-letf (((symbol-function 'nelix-current-system)
+                     (lambda () 'x86_64-linux))
+                    ((symbol-function 'nelix-compat-executable-find)
                      (lambda (program)
                        (and (equal program "nix") "nix")))
                     ((symbol-function 'nelix-list)
@@ -1455,7 +1479,10 @@
           (nelix-manifest-test--write
            dir "manifest.el"
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep) :pins '(jq))\n")
-          (cl-letf (((symbol-function 'nelix-compat-executable-find)
+          ;; Pin the Linux system used by the fixture and backend selection.
+          (cl-letf (((symbol-function 'nelix-current-system)
+                     (lambda () 'x86_64-linux))
+                    ((symbol-function 'nelix-compat-executable-find)
                      (lambda (program)
                        (and (equal program "nix") "nix")))
                     ((symbol-function 'nelix-list)
@@ -1483,7 +1510,10 @@
           (nelix-manifest-test--write
            dir "manifest.el"
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep))\n")
-          (cl-letf (((symbol-function 'nelix-list)
+          ;; Pin the Linux system used by the fixture and backend selection.
+          (cl-letf (((symbol-function 'nelix-current-system)
+                     (lambda () 'x86_64-linux))
+                    ((symbol-function 'nelix-list)
                      (lambda ()
                        (list (list :name "ripgrep"
                                    :attr-path "legacyPackages.x86_64-linux.ripgrep"))))
@@ -1656,7 +1686,10 @@
           (nelix-manifest-test--write
            dir "manifest.el"
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep))\n")
-          (cl-letf (((symbol-function 'nelix-list)
+          ;; Pin the Linux system used by the fixture and backend selection.
+          (cl-letf (((symbol-function 'nelix-current-system)
+                     (lambda () 'x86_64-linux))
+                    ((symbol-function 'nelix-list)
                      (lambda ()
                        (list (list :name "ripgrep"
                                    :attr-path "legacyPackages.x86_64-linux.ripgrep"))))
@@ -1699,7 +1732,10 @@
           (nelix-manifest-test--write
            dir "manifest.el"
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep))\n")
-          (cl-letf (((symbol-function 'nelix-list)
+          ;; Pin the Linux system used by the fixture and backend selection.
+          (cl-letf (((symbol-function 'nelix-current-system)
+                     (lambda () 'x86_64-linux))
+                    ((symbol-function 'nelix-list)
                      (lambda ()
                        (list (list :name "ripgrep"
                                    :attr-path "legacyPackages.x86_64-linux.ripgrep"))))
@@ -2067,7 +2103,10 @@
           (nelix-manifest-test--write
            dir "manifest.el"
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(ripgrep))\n")
-          (cl-letf (((symbol-function 'nelix-list)
+          ;; Pin the Linux system used by the fixture and backend selection.
+          (cl-letf (((symbol-function 'nelix-current-system)
+                     (lambda () 'x86_64-linux))
+                    ((symbol-function 'nelix-list)
                      (lambda () nil))
                     ((symbol-function 'nelix-compat-executable-find)
                      (lambda (program)
@@ -2243,7 +2282,10 @@
                              :url "file:///tmp/fixture-v1.tar"
                              :sha256 "sha256-fixture-v1")
                     :install (:type unpack :bin ("bin/fixture-tool"))))))
-          (cl-letf (((symbol-function 'nelix-list)
+          ;; Pin the Linux system used by the fixture and backend selection.
+          (cl-letf (((symbol-function 'nelix-current-system)
+                     (lambda () 'x86_64-linux))
+                    ((symbol-function 'nelix-list)
                      (lambda () nil))
                     ((symbol-function 'nelix-registry-update)
                      (lambda (&optional _roots)
@@ -2300,7 +2342,10 @@
                     :install (:type script-shim
                               :command "fixture-shim"
                               :target "/usr/bin/fixture-real")))))
-          (cl-letf (((symbol-function 'nelix-list)
+          ;; Pin the Linux system used by the fixture and backend selection.
+          (cl-letf (((symbol-function 'nelix-current-system)
+                     (lambda () 'x86_64-linux))
+                    ((symbol-function 'nelix-list)
                      (lambda () nil))
                     ((symbol-function 'nelix-registry-update)
                      (lambda (&optional _roots)
@@ -2373,7 +2418,10 @@
                     :install (:type script-shim
                               :command "fixture-app"
                               :target "/usr/bin/fixture-app")))))
-          (cl-letf (((symbol-function 'nelix-list)
+          ;; Pin the Linux system used by the fixture and backend selection.
+          (cl-letf (((symbol-function 'nelix-current-system)
+                     (lambda () 'x86_64-linux))
+                    ((symbol-function 'nelix-list)
                      (lambda () nil))
                     ((symbol-function 'nelix-registry-update)
                      (lambda (&optional _roots)
@@ -2444,7 +2492,10 @@
                     :install (:type script-shim
                               :command "fixture-app"
                               :target "/usr/bin/fixture-app")))))
-          (cl-letf (((symbol-function 'nelix-list)
+          ;; Pin the Linux system used by the fixture and backend selection.
+          (cl-letf (((symbol-function 'nelix-current-system)
+                     (lambda () 'x86_64-linux))
+                    ((symbol-function 'nelix-list)
                      (lambda () nil))
                     ((symbol-function 'nelix-registry-update)
                      (lambda (&optional _roots)
@@ -2489,7 +2540,10 @@ entries are still reported, as =:extra= -- which is what `fd' is here."
           (let ((nelix-core--call-nix-fn
                  (lambda (_args)
                    (ert-fail "nelix-upgrade-plan must not invoke nix in this test"))))
-            (cl-letf (((symbol-function 'nelix-compat-executable-find)
+            ;; Pin the Linux system used by the fixture and backend selection.
+            (cl-letf (((symbol-function 'nelix-current-system)
+                       (lambda () 'x86_64-linux))
+                      ((symbol-function 'nelix-compat-executable-find)
                        (lambda (program)
                          (and (equal program "nix") "nix")))
                       ((symbol-function 'pkg-list)
@@ -2671,7 +2725,10 @@ entries are still reported, as =:extra= -- which is what `fd' is here."
           (nelix-manifest-test--write
            dir "manifest.el"
            "(require 'nelix-manifest)\n(nelix-manifest :name \"default\" :linux '(fixture-tool) :backend-policy '(nelix-native))\n")
-          (cl-letf (((symbol-function 'nelix-backend-available-p)
+          ;; Pin the Linux system used by the fixture and backend selection.
+          (cl-letf (((symbol-function 'nelix-current-system)
+                     (lambda () 'x86_64-linux))
+                    ((symbol-function 'nelix-backend-available-p)
                      (lambda (_backend &optional _system) t))
                     ((symbol-function 'nelix-outdated)
                      (lambda (manifest backend)

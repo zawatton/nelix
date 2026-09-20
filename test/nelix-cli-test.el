@@ -944,7 +944,10 @@
             (insert "(require 'nelix-manifest)\n"
                     "(nelix-manifest :name \"default\""
                     " :linux '(ripgrep))\n"))
-          (cl-letf (((symbol-function 'nelix-list)
+          ;; Pin the Linux system used by the fixture and backend selection.
+          (cl-letf (((symbol-function 'nelix-current-system)
+                     (lambda () 'x86_64-linux))
+                    ((symbol-function 'nelix-list)
                      (lambda ()
                        (list (list :name "ripgrep"
                                    :attr-path "legacyPackages.x86_64-linux.ripgrep"))))
@@ -1059,7 +1062,10 @@
                     "(nelix-manifest :name \"default\""
                     " :linux '(fixture-app)"
                     " :backend-policy '(nelix-native))\n"))
-          (cl-letf (((symbol-function 'nelix-list)
+          ;; Pin the Linux system used by the fixture and backend selection.
+          (cl-letf (((symbol-function 'nelix-current-system)
+                     (lambda () 'x86_64-linux))
+                    ((symbol-function 'nelix-list)
                      (lambda () nil))
                     ((symbol-function 'nelix-core--detect-nix-version)
                      (lambda () nil)))
@@ -1453,9 +1459,12 @@
                     " :emacs '(magit)"
                     " :linux '(\"ripgrep\")"
                     " :pins '(\"ripgrep\"))\n"))
-          (let ((payload (nelix-fast-aot-input
-                          manifest
-                          '("magit" "ripgrep" "fd"))))
+          (let ((payload
+                 (cl-letf (((symbol-function 'nelix-current-system)
+                            (lambda () 'x86_64-linux)))
+                   (nelix-fast-aot-input
+                    manifest
+                    '("magit" "ripgrep" "fd")))))
             (should (string-prefix-p "NELIX-AOT-MANIFEST-V1\n" payload))
             (should (string-match-p
                      (regexp-quote

@@ -78,7 +78,11 @@
 (ert-deftest nelix-core-pin-test-upgrade-all-with-no-pins-keeps-dot-star ()
   "pkg-upgrade nil keeps the existing \".*\" matcher when nothing is pinned."
   (let ((captured-args nil))
-    (cl-letf (((symbol-function 'pkg-list-generations) (lambda () nil))
+    ;; Keep the mock profile argument in its Linux fixture form.
+    (cl-letf (((symbol-function 'nelix-core--profile-args)
+               (lambda ()
+                 (list "--profile" nelix-core-profile-dir)))
+              ((symbol-function 'pkg-list-generations) (lambda () nil))
               ((symbol-function 'nelix-core--rollback-replay-emacs-hooks)
                (lambda () nil)))
       (nelix-core-pin-test--with-mock
@@ -93,7 +97,11 @@
 (ert-deftest nelix-core-pin-test-upgrade-all-skips-pinned-packages ()
   "pkg-upgrade nil enumerates installed packages minus the pinned ones."
   (let ((captured-args nil))
-    (cl-letf (((symbol-function 'pkg-list)
+    ;; Keep the mock profile argument in its Linux fixture form.
+    (cl-letf (((symbol-function 'nelix-core--profile-args)
+               (lambda ()
+                 (list "--profile" nelix-core-profile-dir)))
+              ((symbol-function 'pkg-list)
                (lambda ()
                  (list (list :name "ripgrep")
                        (list :name "magit")

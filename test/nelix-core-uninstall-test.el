@@ -50,7 +50,11 @@ in-process state cache is reset between tests."
 (ert-deftest nelix-core-uninstall-test-happy ()
   "pkg-uninstall returns t and forwards correct remove args on nix exit 0."
   (let ((remove-args nil))
-    (cl-letf (((symbol-function 'pkg-list-generations)
+    ;; Keep the mock profile argument in its Linux fixture form.
+    (cl-letf (((symbol-function 'nelix-core--profile-args)
+               (lambda ()
+                 (list "--profile" nelix-core-profile-dir)))
+              ((symbol-function 'pkg-list-generations)
                (lambda () 'ignored))
               ((symbol-function 'nelix-core--rollback-replay-emacs-hooks)
                (lambda () 'ignored)))

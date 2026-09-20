@@ -47,7 +47,11 @@ in-process state cache is reset between tests."
   "pkg-upgrade nil uses the portable \".*\" matcher."
   (let ((captured-args nil)
         (calls nil))
-    (cl-letf (((symbol-function 'pkg-list-generations)
+    ;; Keep the mock profile argument in its Linux fixture form.
+    (cl-letf (((symbol-function 'nelix-core--profile-args)
+               (lambda ()
+                 (list "--profile" nelix-core-profile-dir)))
+              ((symbol-function 'pkg-list-generations)
                (lambda ()
                  (push 'refresh calls)
                  nil))
@@ -67,7 +71,11 @@ in-process state cache is reset between tests."
 (ert-deftest nelix-core-upgrade-test-upgrade-one-happy ()
   "pkg-upgrade forwards a single string NAME as the matcher."
   (let ((captured-args nil))
-    (cl-letf (((symbol-function 'pkg-list-generations) (lambda () nil))
+    ;; Keep the mock profile argument in its Linux fixture form.
+    (cl-letf (((symbol-function 'nelix-core--profile-args)
+               (lambda ()
+                 (list "--profile" nelix-core-profile-dir)))
+              ((symbol-function 'pkg-list-generations) (lambda () nil))
               ((symbol-function 'nelix-core--rollback-replay-emacs-hooks)
                (lambda () nil)))
       (nelix-core-upgrade-test--with-mock
@@ -82,7 +90,11 @@ in-process state cache is reset between tests."
 (ert-deftest nelix-core-upgrade-test-symbol-coercion ()
   "pkg-upgrade coerces symbol NAME to a string matcher."
   (let ((captured-args nil))
-    (cl-letf (((symbol-function 'pkg-list-generations) (lambda () nil))
+    ;; Keep the mock profile argument in its Linux fixture form.
+    (cl-letf (((symbol-function 'nelix-core--profile-args)
+               (lambda ()
+                 (list "--profile" nelix-core-profile-dir)))
+              ((symbol-function 'pkg-list-generations) (lambda () nil))
               ((symbol-function 'nelix-core--rollback-replay-emacs-hooks)
                (lambda () nil)))
       (nelix-core-upgrade-test--with-mock
