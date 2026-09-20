@@ -1178,6 +1178,10 @@ registry-index:
 
 pages: registry-index
 	mkdir -p "$(PAGES_DIR)"
+	# Remove first: `cp -r src dst' nests src *inside* dst when dst exists, so
+	# a second `make pages' would publish the tree twice and the gate's count
+	# assertion would (correctly) fail.
+	rm -rf "$(PAGES_DIR)/packages"
 	cp -r registry/packages "$(PAGES_DIR)/packages"
 	@echo "published: $(PAGES_DIR)/index.el + $$(find $(PAGES_DIR)/packages -name '*.el' | wc -l) recipes"
 	@echo "index sha256: $$($(EMACS) -Q --batch -L . --eval '(progn (require (quote nelix-fetch)) (princ (nelix-fetch-sha256-file "$(PAGES_DIR)/index.el")))')"

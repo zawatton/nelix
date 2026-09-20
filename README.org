@@ -548,9 +548,72 @@ checkout picks up recipes you are editing.
 This is a starter archive, not a curated index: the Emacs recipes were
 generated from one user's init and cover widely used packages.  Add
 your own under =registry/packages/emacs/=, point
-=nelix-registry-roots= at another directory, or — once one is published
-— subscribe to a remote index through =nelix-registry-remotes=, which
-hash- and signature-verifies what it fetches.
+=nelix-registry-roots= at another directory, or subscribe to a remote
+index — see below.
+
+** Subscribing to a remote registry
+
+A registry can be served as static files; there is no server side.
+Point Nelix at an index and it fetches the recipes named there:
+
+#+begin_src elisp
+(setq nelix-registry-remotes
+      '((:name "zawatton"
+         :url "https://zawatton.github.io/nelix/index.el"
+         ;; The publisher's index hash.  `make pages' prints it; a
+         ;; literal here would be wrong the first time a recipe is added.
+         :sha256 "sha256-...")))
+
+(nelix-registry-update)
+#+end_src
+
+Two hashes are checked, not one.  You pin the index, and the index pins
+every recipe it names, so neither can be swapped after you subscribed.
+A changed byte anywhere is refused rather than installed.
+
+The pinned hash is a contract: when the publisher issues a new index,
+you update =:sha256= to match.  That is the cost of running unsigned.
+Signing removes the step — a subscriber trusts a key instead of a
+hash — through =nelix-registry-require-signature=,
+=nelix-registry-trusted-signers= and =nelix-registry-public-keys=.
+
+Remote recipes are cached locally, so a publisher who later turns
+hostile cannot replace content you already hold.
+
+To use *only* a remote and ignore what shipped with Nelix:
+
+#+begin_src elisp
+(setq nelix-registry-include-packaged-root nil)
+#+end_src
+
+** Publishing a registry
+
+#+begin_src shell
+make pages          # writes public/index.el plus the recipes it names
+#+end_src
+
+The target prints the index SHA-256; that is what subscribers pin.
+Serve =public/= from any static host.  For GitHub Pages, publish it on
+an orphan =gh-pages= branch so generated files stay out of the source
+history:
+
+#+begin_src shell
+make pages
+git checkout --orphan gh-pages
+git rm -rf --cached .
+mv public/* . && rmdir public
+git add -A && git commit -m "publish registry index"
+git push -u origin gh-pages
+#+end_src
+
+Publish deliberately, not on every push: each new index invalidates the
+hash subscribers pinned, so automating it on commit would break them
+continuously.
+
+#+begin_src shell
+make smoke-registry-pages   # subscribe to the tree you just built, and
+                            # confirm a tampered recipe is refused
+#+end_src
 
 ** Installing without Nix
 
