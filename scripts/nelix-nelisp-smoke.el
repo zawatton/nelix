@@ -71,24 +71,31 @@ contains the nelix checkout (e.g. `bin/nelix's `-L lispdir' runtime).")
   "Optional path to nelisp-http.el for high-level HTTP backend probes.")
 
 (defvar nelix-nelisp-smoke-suite-source-files
-  '("nelix-compat.el"
+  '(;; Load order matters and is not the dependency order: the require graph
+    ;; has genuine cycles (nelix-core <-> nelix-dsl, nelix-manifest <->
+    ;; nelix-backend, and more), so no topological sort exists.  Under host
+    ;; Emacs that is invisible -- `require' finds a file on `load-path' and
+    ;; loads it on demand -- but NeLisp's `require' does not search
+    ;; `load-path', so every feature has to be provided before anything asks
+    ;; for it.  This sequence was found by repeatedly loading whichever file
+    ;; could be loaded at that moment, then verified straight through in a
+    ;; fresh process.  Reordering it will fail under NeLisp and stay green on
+    ;; host Emacs, so check with `make smoke-nelix-nelisp'.
+    "nelix-compat.el"
     "nelix-state.el"
     "nelix-core.el"
-    "nelix-dsl.el"
+    "nelix-store.el"
+    "nelix-fetch.el"
     "nelix-import.el"
     "nelix-emacs.el"
-    "nelix-store.el"
     "nelix-registry.el"
-    "nelix-fetch.el"
     "nelix-builder.el"
     "nelix-backend.el"
     "nelix-manifest.el"
     "nelix-fast.el"
     "nelix-substitute.el"
-    "nelix-dsl.el"
-    "nelix-import.el"
-    "nelix-emacs.el"
     "nelix.el"
+    "nelix-dsl.el"
     "scripts/nelix-core-render.el")
   "Runtime and helper files loaded before a full standalone suite run.")
 
@@ -372,16 +379,7 @@ because async tests exercise that path directly."
   (condition-case err
       (progn
         (nelix-nelisp-smoke--load-suite-files
-         '("nelix-compat.el"
-           "nelix-state.el"
-           "nelix-core.el"
-           "nelix-dsl.el"
-           "nelix-import.el"
-           "nelix-emacs.el"
-           "nelix.el"
-           "nelix-dsl.el"
-           "nelix-import.el"
-           "nelix-emacs.el"))
+         nelix-nelisp-smoke-suite-source-files)
         (list :nelix-load t
               :runtime (nelix-compat-runtime)
               :nelix-install (fboundp 'nelix-install)
@@ -527,6 +525,13 @@ regressions become visible before the lower process / URL primitives
 needed for execution are available."
   (nelix-nelisp-smoke--load-compat)
   (nelix-nelisp-smoke--load-native-prereqs)
+  ;; The ERT files `require' the runtime they test, and NeLisp's `require'
+  ;; does not search `load-path', so those features have to be provided
+  ;; first.  Without this the probe reports (file-missing . nelix-core) for
+  ;; every test file -- a loader failure of its own making, not one in the
+  ;; file under test.
+  (unless nelix-nelisp-smoke-suite-source-loaded-p
+    (nelix-nelisp-smoke-preload-suite-runtime))
   (let ((nelix-compat--nelisp-runtime-p t)
         (nelix-compat--nelisp-backend-require-attempted t)
         (nelix-nelisp-ert-register-only t)

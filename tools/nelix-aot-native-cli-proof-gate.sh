@@ -55,7 +55,12 @@ test "$subset_cli_proof" = "556" || {
 
 subset_cli_output="$("$NELISP" native-exec-elisp-artifact "$artifact" nelix-aot-native-cli-lines-proof "$line_payload")"
 subset_cli_expected="$(printf 'ok\ttrue\npresent\tmagit')"
-subset_cli_expected_lisp='"ok\ttrue\npresent\tmagit\n"'
+# The runtime prints the returned string with `prin1'-style quoting, which
+# leaves tabs and newlines as the characters they are instead of escaping
+# them.  `emacs -Q --batch --eval '(format "%S" "a\tb")'' prints the same,
+# so this is Emacs behaviour, not a NeLisp quirk.  The previous literal here
+# spelled the escapes out, so it could never match what the proof returns.
+subset_cli_expected_lisp="$(printf '"ok\ttrue\npresent\tmagit\n"')"
 { test "$subset_cli_output" = "$subset_cli_expected" ||
   test "$subset_cli_output" = "$subset_cli_expected_lisp"; } || {
   echo "error: standalone subset CLI line fragment returned $subset_cli_output" >&2
@@ -65,7 +70,7 @@ subset_cli_expected_lisp='"ok\ttrue\npresent\tmagit\n"'
 id_line_payload="$(printf 'NELIX-AOT-MANIFEST-V1\ntarget-id\t1\t1\ntarget-id\t2\t2\ntarget-id\t3\t3\ninstalled-id\t1\ninstalled-id\t2\nend\n')"
 subset_cli_id_output="$("$NELISP" native-exec-elisp-artifact "$artifact" nelix-aot-native-cli-audit-id-lines-proof "$id_line_payload")"
 subset_cli_id_expected="$(printf 'ok\tfalse\npresent\tmagit\npresent\tripgrep\nmissing\tfd\nbackend\tnix')"
-subset_cli_id_expected_lisp='"ok\tfalse\npresent\tmagit\npresent\tripgrep\nmissing\tfd\nbackend\tnix\n"'
+subset_cli_id_expected_lisp="$(printf '"ok\tfalse\npresent\tmagit\npresent\tripgrep\nmissing\tfd\nbackend\tnix\n"')"
 { test "$subset_cli_id_output" = "$subset_cli_id_expected" ||
   test "$subset_cli_id_output" = "$subset_cli_id_expected_lisp"; } || {
   echo "error: standalone subset CLI ID audit line report returned $subset_cli_id_output" >&2
@@ -75,7 +80,7 @@ subset_cli_id_expected_lisp='"ok\tfalse\npresent\tmagit\npresent\tripgrep\nmissi
 id_upgrade_payload="$(printf 'NELIX-AOT-MANIFEST-V1\ntarget-id\t1\t1\ntarget-id\t2\t2\ntarget-id\t3\t3\npin-id\t2\ninstalled-id\t1\ninstalled-id\t2\nend\n')"
 subset_cli_id_upgrade_output="$("$NELISP" native-exec-elisp-artifact "$artifact" nelix-aot-native-cli-upgrade-id-lines-proof "$id_upgrade_payload")"
 subset_cli_id_upgrade_expected="$(printf 'operation\tupgrade\nupgrade\tmagit\npinned\tripgrep\nmissing\tfd\nbackend\tnix')"
-subset_cli_id_upgrade_expected_lisp='"operation\tupgrade\nupgrade\tmagit\npinned\tripgrep\nmissing\tfd\nbackend\tnix\n"'
+subset_cli_id_upgrade_expected_lisp="$(printf '"operation\tupgrade\nupgrade\tmagit\npinned\tripgrep\nmissing\tfd\nbackend\tnix\n"')"
 { test "$subset_cli_id_upgrade_output" = "$subset_cli_id_upgrade_expected" ||
   test "$subset_cli_id_upgrade_output" = "$subset_cli_id_upgrade_expected_lisp"; } || {
   echo "error: standalone subset CLI ID upgrade line report returned $subset_cli_id_upgrade_output" >&2
@@ -102,7 +107,7 @@ test "$large_id_scan_proof" = "770" || {
 
 large_id_summary_output="$("$NELISP" native-exec-elisp-artifact "$artifact" nelix-aot-native-cli-large-id-summary-proof "$large_id_payload")"
 large_id_summary_expected="$(printf 'target-id-rows\t768\npayload-threshold\tlarge\nscan-proof\tok')"
-large_id_summary_expected_lisp='"target-id-rows\t768\npayload-threshold\tlarge\nscan-proof\tok\n"'
+large_id_summary_expected_lisp="$(printf '"target-id-rows\t768\npayload-threshold\tlarge\nscan-proof\tok\n"')"
 { test "$large_id_summary_output" = "$large_id_summary_expected" ||
   test "$large_id_summary_output" = "$large_id_summary_expected_lisp"; } || {
   echo "error: standalone large ID summary proof returned $large_id_summary_output" >&2
