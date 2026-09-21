@@ -882,7 +882,7 @@ check-whitespace:
 	git diff --check
 
 nix-check:
-	NIX_CONFIG="$(NIX_CONFIG)" $(NIX) flake check
+	NIX_CONFIG="$(NIX_CONFIG)" $(NIX) flake check -L
 
 test:
 	$(EMACS_BATCH) -l test/nelix-test-isolate.el -l ert \
