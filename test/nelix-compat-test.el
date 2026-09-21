@@ -14,10 +14,13 @@
 
 (require 'ert)
 (require 'cl-lib)
-(require 'url)            ; Phase 4-G: ensure url-retrieve-synchronously is
-                          ; a real defun before cl-letf wraps it; otherwise
-                          ; the autoload trigger inside http-get-emacs
-                          ; overwrites our mock.
+;; Phase 4-G: on host Emacs, force `url-retrieve-synchronously' to be a real
+;; defun before `cl-letf' wraps it -- otherwise the autoload trigger inside
+;; http-get-emacs fires and overwrites the mock.  Standalone NeLisp has no
+;; `url' at all, and no autoloads either, so the hazard does not exist
+;; there; a hard require would just make this whole file unloadable, which
+;; is what kept `smoke-nelisp-suite-loadability' red.
+(require 'url nil t)
 (require 'nelix-compat)
 
 (defvar nelix-compat-test--seen nil

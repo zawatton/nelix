@@ -308,45 +308,169 @@ backslash forms needed for Nix profile element names."
           (setq i (1+ i))))))
     i))
 
-(defun nelix-core--parse-list-fast-element-names (json-str)
-  "Parse Nix profile element names from JSON-STR without a full JSON parser.
-This is a NeLisp fast path for `nix profile list --json', where the
-generic JSON parser is too expensive for large profile output."
+(defun nelix-core--json-skip-value (string index)
+  "Return index just after the JSON value in STRING starting at INDEX."
+  (let* ((n (length string))
+         (i (nelix-core--json-skip-ws string index)))
+    (if (>= i n)
+        i
+      (let ((ch (aref string i)))
+        (cond
+         ((eq ch ?\") (nelix-core--json-skip-string string i))
+         ((or (eq ch ?\{) (eq ch ?\[))
+          (let ((depth 0)
+                (done nil))
+            (while (and (< i n) (not done))
+              (let ((c (aref string i)))
+                (cond
+                 ((eq c ?\") (setq i (nelix-core--json-skip-string string i)))
+                 ((or (eq c ?\{) (eq c ?\[))
+                  (setq depth (1+ depth))
+                  (setq i (1+ i)))
+                 ((or (eq c ?\}) (eq c ?\]))
+                  (setq depth (1- depth))
+                  (setq i (1+ i))
+                  (when (<= depth 0) (setq done t)))
+                 (t (setq i (1+ i))))))
+            i))
+         (t
+          ;; Number, true, false or null: ends at the first delimiter.
+          (while (and (< i n)
+                      (let ((c (aref string i)))
+                        (not (or (eq c ?,) (eq c ?\}) (eq c ?\])
+                                 (eq c ?\s) (eq c ?\t)
+                                 (eq c ?\n) (eq c ?\r)))))
+            (setq i (1+ i)))
+          i))))))
+
+(defun nelix-core--json-read-string-array (string index)
+  "Read a JSON array of strings in STRING starting at INDEX.
+Return `(LIST . NEXT-INDEX)'.  Non-string members are skipped."
+  (let* ((n (length string))
+         (i (1+ index))
+         (done nil)
+         out)
+    (while (and (< i n) (not done))
+      (setq i (nelix-core--json-skip-ws string i))
+      (when (< i n)
+        (let ((ch (aref string i)))
+          (cond
+           ((eq ch ?\]) (setq done t) (setq i (1+ i)))
+           ((eq ch ?,) (setq i (1+ i)))
+           ((eq ch ?\")
+            (let ((pair (nelix-core--json-read-simple-string string i)))
+              (push (car pair) out)
+              (setq i (cdr pair))))
+           ;; Anything else is malformed; `nelix-core--json-skip-value'
+           ;; stands still on a stray delimiter, so force progress rather
+           ;; than spin here on output nix should never produce.
+           (t (setq i (max (1+ i)
+                           (nelix-core--json-skip-value string i))))))))
+    (cons (nreverse out) i)))
+
+(defun nelix-core--json-read-element-object (string index)
+  "Read one `nix profile list' element object in STRING starting at INDEX.
+Return `(PLIST . NEXT-INDEX)' carrying :attr-path, :original-url and
+:store-paths.  Members other than those are skipped without being
+parsed."
+  (let* ((n (length string))
+         (i (1+ index))
+         (done nil)
+         attr url paths)
+    (while (and (< i n) (not done))
+      (setq i (nelix-core--json-skip-ws string i))
+      (when (< i n)
+        (let ((ch (aref string i)))
+          (cond
+           ((eq ch ?\}) (setq done t) (setq i (1+ i)))
+           ((eq ch ?,) (setq i (1+ i)))
+           ((eq ch ?\")
+            (let* ((pair (nelix-core--json-read-simple-string string i))
+                   (key (car pair))
+                   (after (nelix-core--json-skip-ws string (cdr pair))))
+              (if (and (< after n) (eq (aref string after) ?:))
+                  (let ((vstart (nelix-core--json-skip-ws string (1+ after))))
+                    (cond
+                     ((and (string= key "attrPath")
+                           (< vstart n) (eq (aref string vstart) ?\"))
+                      (let ((v (nelix-core--json-read-simple-string
+                                string vstart)))
+                        (setq attr (car v))
+                        (setq i (cdr v))))
+                     ((and (string= key "originalUrl")
+                           (< vstart n) (eq (aref string vstart) ?\"))
+                      (let ((v (nelix-core--json-read-simple-string
+                                string vstart)))
+                        (setq url (car v))
+                        (setq i (cdr v))))
+                     ((and (string= key "storePaths")
+                           (< vstart n) (eq (aref string vstart) ?\[))
+                      (let ((v (nelix-core--json-read-string-array
+                                string vstart)))
+                        (setq paths (car v))
+                        (setq i (cdr v))))
+                     (t (setq i (nelix-core--json-skip-value string vstart)))))
+                (setq i after))))
+           (t (setq i (max (1+ i)
+                           (nelix-core--json-skip-value string i))))))))
+    (cons (list :attr-path attr :original-url url :store-paths paths) i)))
+
+(defun nelix-core--parse-list-fast (json-str)
+  "Parse `nix profile list --json' output JSON-STR without a full JSON parser.
+Returns the same plists as the `nelix-core--json-parse' branch of
+`nelix-core--parse-list'.
+
+Standalone NeLisp cannot `require' a JSON backend -- its `require' does
+not search `load-path', so `nelix-compat-json-parse' signals there --
+which makes this scanner the only reader on that runtime.  It therefore
+has to report every field the host path reports: when it returned names
+alone, `nelix list' silently lost the attr-path, URL and store-path
+columns under NeLisp while host Emacs showed them."
   (let* ((needle "\"elements\"")
          (elements-pos (nelix-core--string-find-substring json-str needle 0))
          (brace-pos (and elements-pos
                          (nelix-core--string-find-char
-                          json-str ?{ (+ elements-pos (length needle)))))
-         (i (and brace-pos (1+ brace-pos)))
+                          json-str ?\{ (+ elements-pos (length needle)))))
          (n (length json-str))
-         (depth 1)
+         (i (and brace-pos (1+ brace-pos)))
+         (done (null i))
          rows)
-    (while (and i (< i n) (> depth 0))
-      (let ((ch (aref json-str i)))
-        (cond
-         ((eq ch ?\")
-          (if (= depth 1)
-              (let* ((pair (nelix-core--json-read-simple-string json-str i))
-                     (key (car pair))
-                     (next (cdr pair))
-                     (colon (nelix-core--json-skip-ws json-str next)))
-                (when (and (< colon n)
-                           (eq (aref json-str colon) ?:))
-                  (push (list :name key
-                              :attr-path nil
-                              :original-url nil
-                              :store-paths nil)
-                        rows))
-                (setq i next))
-            (setq i (nelix-core--json-skip-string json-str i))))
-         ((eq ch ?{)
-          (setq depth (1+ depth))
-          (setq i (1+ i)))
-         ((eq ch ?})
-          (setq depth (1- depth))
-          (setq i (1+ i)))
-         (t
-          (setq i (1+ i))))))
+    (while (and (not done) (< i n))
+      (setq i (nelix-core--json-skip-ws json-str i))
+      (if (>= i n)
+          (setq done t)
+        (let ((ch (aref json-str i)))
+          (cond
+           ((eq ch ?\}) (setq done t))
+           ((eq ch ?,) (setq i (1+ i)))
+           ((eq ch ?\")
+            (let* ((pair (nelix-core--json-read-simple-string json-str i))
+                   (name (car pair))
+                   (after (nelix-core--json-skip-ws json-str (cdr pair))))
+              (if (and (< after n) (eq (aref json-str after) ?:))
+                  (let ((vstart (nelix-core--json-skip-ws json-str (1+ after))))
+                    (if (and (< vstart n) (eq (aref json-str vstart) ?\{))
+                        (let* ((elt (nelix-core--json-read-element-object
+                                     json-str vstart))
+                               (fields (car elt)))
+                          (push (list :name name
+                                      :attr-path (plist-get fields :attr-path)
+                                      :original-url (plist-get
+                                                     fields :original-url)
+                                      :store-paths (plist-get
+                                                    fields :store-paths))
+                                rows)
+                          (setq i (cdr elt)))
+                      (push (list :name name
+                                  :attr-path nil
+                                  :original-url nil
+                                  :store-paths nil)
+                            rows)
+                      (setq i (nelix-core--json-skip-value json-str vstart))))
+                (setq i after))))
+           (t (setq i (max (1+ i)
+                           (nelix-core--json-skip-value json-str i)))))))
+      (when (and (not done) (>= i n)) (setq done t)))
     (nreverse rows)))
 
 (defun nelix-core--parse-search (json-str)
@@ -375,7 +499,7 @@ Each plist carries :name :attr-path :original-url :store-paths.
 Accepts the modern Nix 2.18+ schema where `elements' is an object
 keyed by package name."
   (if (nelix-compat--standalone-nelisp-p)
-      (nelix-core--parse-list-fast-element-names json-str)
+      (nelix-core--parse-list-fast json-str)
     (let* ((data (nelix-core--json-parse json-str))
            (elements (alist-get 'elements data)))
       (when (and elements (consp elements))

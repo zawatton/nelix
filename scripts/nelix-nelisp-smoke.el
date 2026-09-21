@@ -89,6 +89,9 @@ contains the nelix checkout (e.g. `bin/nelix's `-L lispdir' runtime).")
     "nelix-import.el"
     "nelix-emacs.el"
     "nelix-registry.el"
+    ;; Only `nelix-builder' asks for this, and it does so from inside a
+    ;; function, so host Emacs never needs it up front.
+    "nelix-build.el"
     "nelix-builder.el"
     "nelix-backend.el"
     "nelix-manifest.el"
@@ -96,7 +99,12 @@ contains the nelix checkout (e.g. `bin/nelix's `-L lispdir' runtime).")
     "nelix-substitute.el"
     "nelix.el"
     "nelix-dsl.el"
-    "scripts/nelix-core-render.el")
+    "scripts/nelix-core-render.el"
+    ;; test/nelix-cli-test.el reaches these two, and NeLisp cannot resolve
+    ;; a `require' on its own; both load cleanly once the runtime above is
+    ;; in.  The engine comes first because the CLI requires it.
+    "scripts/nelix-aot-manifest-engine.el"
+    "scripts/nelix-cli.el")
   "Runtime and helper files loaded before a full standalone suite run.")
 
 (defvar nelix-nelisp-smoke-suite-test-files

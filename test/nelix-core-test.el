@@ -196,6 +196,64 @@ in-process state cache is reset between tests."
               :stderr ""))
     (should (null (pkg-list)))))
 
+(ert-deftest nelix-core-test-parse-list-fast-matches-full-parser ()
+  "The NeLisp scanner reports the same rows as the JSON parser.
+
+`nelix-core--parse-list' takes the scanner branch on standalone NeLisp,
+where no JSON backend can be required, so a gap between the two branches
+shows up as columns that exist under Emacs and are empty under NeLisp.
+The inputs below are the shapes that separate a scanner from a parser: a
+decoy key inside a nested object, braces and brackets inside string
+values, whitespace everywhere, an element with none of the fields, and
+an empty array."
+  (let ((cases
+         '(("{\"version\":3,\"elements\":{}}"
+            . nil)
+           ("{\"version\":3,\"elements\":{\"ripgrep\":{\"active\":true,\"attrPath\":\"ripgrep\",\"originalUrl\":\"flake:nixpkgs\",\"storePaths\":[\"/nix/store/abc-ripgrep-13.0.0\"]}}}"
+            . ((:name "ripgrep" :attr-path "ripgrep"
+                      :original-url "flake:nixpkgs"
+                      :store-paths ("/nix/store/abc-ripgrep-13.0.0"))))
+           ("{\"elements\":{\"a\":{\"meta\":{\"attrPath\":\"DECOY\",\"x\":[1,2,{\"y\":3}]},\"attrPath\":\"real.a\",\"storePaths\":[\"/nix/store/p1\",\"/nix/store/p2\"],\"originalUrl\":\"flake:nixpkgs\"}}}"
+            . ((:name "a" :attr-path "real.a"
+                      :original-url "flake:nixpkgs"
+                      :store-paths ("/nix/store/p1" "/nix/store/p2"))))
+           ("{ \"version\" : 3 , \"elements\" : { \"a\" : { \"priority\" : 5 , \"attrPath\" : \"x.a\" , \"storePaths\" : [ ] , \"originalUrl\" : null } , \"b\" : { \"attrPath\" : \"x.b\" , \"storePaths\" : [ \"/nix/store/b\" ] } } }"
+            . ((:name "a" :attr-path "x.a" :original-url nil :store-paths nil)
+               (:name "b" :attr-path "x.b" :original-url nil
+                      :store-paths ("/nix/store/b"))))
+           ("{\"elements\":{\"bare\":{\"active\":false}}}"
+            . ((:name "bare" :attr-path nil :original-url nil
+                      :store-paths nil)))
+           ("{\"elements\":{\"s\":{\"attrPath\":\"a}b{c\",\"originalUrl\":\"flake:x\",\"storePaths\":[\"/nix/store/}{\"]}}}"
+            . ((:name "s" :attr-path "a}b{c" :original-url "flake:x"
+                      :store-paths ("/nix/store/}{")))))))
+    (dolist (case cases)
+      (should (equal (cdr case) (nelix-core--parse-list-fast (car case))))
+      ;; Where a JSON backend exists -- host Emacs -- hold the scanner to
+      ;; the parser itself rather than to these transcribed expectations.
+      (let ((parsed (condition-case nil
+                        (list (nelix-core--json-parse (car case)))
+                      (error nil))))
+        (when parsed
+          (let* ((data (car parsed))
+                 (elements (alist-get 'elements data))
+                 (via-parser
+                  (when (and elements (consp elements))
+                    (mapcar (lambda (entry)
+                              (let ((name (car entry))
+                                    (info (cdr entry)))
+                                (list :name (if (symbolp name)
+                                                (symbol-name name)
+                                              (format "%s" name))
+                                      :attr-path (alist-get 'attrPath info)
+                                      :original-url (alist-get 'originalUrl
+                                                               info)
+                                      :store-paths (alist-get 'storePaths
+                                                              info))))
+                            elements))))
+            (should (equal via-parser
+                           (nelix-core--parse-list-fast (car case))))))))))
+
 (ert-deftest nelix-core-test-install-emacs-package-augments-load-path ()
   "pkg-install adds the installed emacs-package site-lisp dir to `load-path'."
   (require 'nelix-dsl)

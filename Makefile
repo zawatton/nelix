@@ -9,8 +9,16 @@ SCRIPT_SRC = scripts/nelix-core-render.el scripts/nelix-nelisp-smoke.el scripts/
 BIN_SRC = bin/nelix
 DOC_SRC = README.org examples/README.org docs/smoke-test.org packaging/README.org
 REGISTRY_SRC = $(sort $(wildcard registry/packages/*/*.el))
-EXPECTED_ERT_TESTS ?= 480
-EXPECTED_NELISP_ERT_TESTS ?= 130
+# Drift guards: what host Emacs registers for TEST_SRC and for
+# NELISP_EXEC_TEST_SRC.  Holding NeLisp to the host number is what makes
+# the gates mean "NeLisp sees every test the host sees" instead of "some
+# tests ran".  Bump them in the commit that adds or removes a test; the
+# gate prints both the number it saw and the number it wanted, and
+# `make check' prints the host total.  They sat at 480 / 130 from
+# 2026-06-24 to 2026-09-21 because the gates themselves were red, so
+# three months of new tests went unnoticed.
+EXPECTED_ERT_TESTS ?= 549
+EXPECTED_NELISP_ERT_TESTS ?= 133
 NELISP_CACHE_DIR ?= .cache/nelisp
 NELISP_SUITE_IMAGE ?= $(NELISP_CACHE_DIR)/nelix-core-suite.nlri
 NELIX_CLI_IMAGE ?= $(NELISP_CACHE_DIR)/nelix-cli.nlri
