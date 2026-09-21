@@ -1,0 +1,23 @@
+# TEMPORARY probe: delete or fold into test.yml once the result is known.
+name: probe-linux-gates
+
+on:
+  push:
+    branches: ['fix/**']
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Emacs
+        uses: purcell/setup-emacs@master
+        with:
+          version: '30.1'
+
+      - name: Show Emacs version
+        run: emacs --version | head -1
+
+      - name: Run the CLI smoke gates
+        run: make -k smoke-nelix-manifest-dsl-schema smoke-nelix-lock-schema smoke-nelix-native-cli smoke-nelix-aot-cache-cli
