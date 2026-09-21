@@ -30,6 +30,8 @@
               pkgs.emacs-nox
               pkgs.gnumake
               pkgs.git
+              pkgs.python3
+              pkgs.perl
             ];
 
             dontConfigure = true;
@@ -40,7 +42,9 @@
               runHook preCheck
               export HOME="$TMPDIR/home"
               mkdir -p "$HOME"
-              make check
+              # -k: one failed gate must not hide the gates after it; a failed nix build
+              # only shows its log, so report every failure in a single run.
+              make -k check
               runHook postCheck
             '';
 
