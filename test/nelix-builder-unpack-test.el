@@ -69,6 +69,12 @@ Locate tar and gzip on the ambient PATH, omitting missing tools and duplicates."
    (mapcar #'file-name-directory
            (delq nil (mapcar #'executable-find '("tar" "gzip"))))))
 
+(defun nelix-builder-unpack-test--invoke-usable-p ()
+  "Return non-nil when `nelix-invoke' can run a tool on this host.
+Mirror its two branches: Windows sets the environment around `call-process'
+directly; every other host uses /usr/bin/env, absent in the nix build sandbox."
+  (or (eq system-type 'windows-nt) (file-executable-p "/usr/bin/env")))
+
 (defun nelix-builder-unpack-test--unpack (make-archive name)
   "Build an archive with MAKE-ARCHIVE named NAME, unpack it, assert contents."
   (let* ((staging (make-temp-file "nelix-unpack-src-" t))
@@ -77,8 +83,8 @@ Locate tar and gzip on the ambient PATH, omitting missing tools and duplicates."
         (let* ((repo (nelix-builder-unpack-test--git-repo staging))
                (archive (expand-file-name name staging)))
           (funcall make-archive repo archive)
-          ;; The phase execs tar under hermetic /usr/bin:/bin, empty in nix's
-          ;; build sandbox, so supply the actual tar and gzip directories.
+          ;; The phase execs tar under hermetic /usr/bin:/bin, where tar and gzip
+          ;; may be absent (NixOS), so supply their actual directories.
           (let ((nelix-build--source-archive archive)
                 (nelix-build--tar-exclude nil)
                 (nelix-build-tool-paths (nelix-builder-unpack-test--tool-dirs)))
@@ -93,6 +99,7 @@ Locate tar and gzip on the ambient PATH, omitting missing tools and duplicates."
 
 (ert-deftest nelix-builder-unpack-test-wrapped-release-tarball ()
   "A .tar.gz wrapped in one top directory unpacks with the wrapper removed."
+  (skip-unless (nelix-builder-unpack-test--invoke-usable-p))
   (nelix-builder-unpack-test--unpack
    #'nelix-builder-unpack-test--release-tarball "pkg-1.0.tar.gz"))
 
@@ -102,6 +109,7 @@ Locate tar and gzip on the ambient PATH, omitting missing tools and duplicates."
 The failure this pins down is silent: strip a component off an archive
 that has no wrapper and every member is discarded, leaving an empty
 build directory."
+  (skip-unless (nelix-builder-unpack-test--invoke-usable-p))
   (nelix-builder-unpack-test--unpack
    #'nelix-builder-unpack-test--git-archive "pkg.git"))
 
