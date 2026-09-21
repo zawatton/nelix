@@ -241,12 +241,25 @@ prepended so a recipe can reach a toolchain outside it."
         ((numberp x) (number-to-string x))
         (t (format "%s" x))))
 
+(defun nelix-build--env-program ()
+  "Return the env(1) program `nelix-invoke' runs on POSIX hosts.
+That is /usr/bin/env whenever it is executable, so the build environment is
+what it always was.  A host without it, such as the nix build sandbox, falls
+back to the first `env' on the ambient PATH.  With neither, return
+/usr/bin/env so the `call-process' error names the path that was expected."
+  (if (or (not (fboundp 'file-executable-p))
+          (file-executable-p "/usr/bin/env"))
+      "/usr/bin/env"
+    (or (nelix-compat-executable-find "env") "/usr/bin/env")))
+
 ;;;###autoload
 (defun nelix-invoke (program &rest args)
   "Run PROGRAM with ARGS in the build dir with the deterministic build env.
 Signals `nelix-build-error' on a non-zero exit (with captured output).
 On POSIX, uses env(1) to set the env without a shell, so it behaves
-identically on host Emacs and the standalone NeLisp runtime.  Windows
+identically on host Emacs and the standalone NeLisp runtime.  env(1) is
+/usr/bin/env, or the first env on PATH when that is absent (see
+`nelix-build--env-program').  Windows
 has neither /usr/bin/env nor a shell(1) worth shelling out through for
 this, so there `process-environment' is let-bound directly around
 `call-process' instead — same KV pins, no env(1) hop."
@@ -258,7 +271,7 @@ this, so there `process-environment' is let-bound directly around
       (if (eq system-type 'windows-nt)
           (let ((process-environment (append env-kv process-environment)))
             (setq exit (apply #'call-process prog nil t nil argv)))
-        (setq exit (apply #'call-process "/usr/bin/env" nil t nil
+        (setq exit (apply #'call-process (nelix-build--env-program) nil t nil
                           (append env-kv (cons prog argv)))))
       (setq out (buffer-string)))
     (unless (eq exit 0)

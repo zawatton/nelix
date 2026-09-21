@@ -3,7 +3,7 @@ SRC = nelix-compat.el nelix-state.el nelix-core.el nelix-dsl.el nelix-import.el 
 PKG_METADATA = nelix-pkg.el
 TEST_SRC = test/nelix-core-test.el test/nelix-core-uninstall-test.el test/nelix-core-upgrade-test.el test/nelix-core-pin-test.el test/nelix-core-info-test.el test/nelix-core-doctor-test.el test/nelix-dsl-test.el test/nelix-core-buildsys-test.el test/nelix-import-test.el test/nelix-compat-test.el test/nelix-emacs-test.el test/nelix-state-test.el test/nelix-manifest-test.el test/nelix-store-test.el test/nelix-cli-test.el test/nelix-emacs-package-test.el test/nelix-build-test.el test/nelix-backend-system-nixfree-test.el test/nelix-emacs-activate-test.el test/nelix-builder-unpack-test.el test/nelix-builder-builtin-dep-test.el test/nelix-builder-input-test.el test/nelix-fetch-cache-test.el test/nelix-upgrade-plan-parity-test.el test/nelix-cli-verdict-exit-test.el test/nelix-smoke-suite-path-test.el
 # Host-Emacs-only tests stay separate to preserve NeLisp suite counts.
-EMACS_ONLY_TEST_SRC = test/nelix-tar-test.el test/nelix-test-isolate-test.el
+EMACS_ONLY_TEST_SRC = test/nelix-tar-test.el test/nelix-test-isolate-test.el test/nelix-invoke-env-test.el
 NELISP_EXEC_TEST_SRC ?= test/nelix-core-test.el test/nelix-core-uninstall-test.el test/nelix-core-upgrade-test.el test/nelix-core-pin-test.el test/nelix-core-info-test.el test/nelix-core-doctor-test.el test/nelix-dsl-test.el test/nelix-core-buildsys-test.el test/nelix-import-test.el
 SCRIPT_SRC = scripts/nelix-core-render.el scripts/nelix-nelisp-smoke.el scripts/nelix-nelisp-ert-shim.el scripts/nelix-cli.el scripts/nelix-aot-manifest-engine.el scripts/nelix-aot-native-subset.el scripts/nelix-aot-native-cli-proof.el
 BIN_SRC = bin/nelix

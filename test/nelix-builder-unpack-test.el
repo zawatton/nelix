@@ -72,8 +72,9 @@ Locate tar and gzip on the ambient PATH, omitting missing tools and duplicates."
 (defun nelix-builder-unpack-test--invoke-usable-p ()
   "Return non-nil when `nelix-invoke' can run a tool on this host.
 Mirror its two branches: Windows sets the environment around `call-process'
-directly; every other host uses /usr/bin/env, absent in the nix build sandbox."
-  (or (eq system-type 'windows-nt) (file-executable-p "/usr/bin/env")))
+directly; every other host needs an env(1), /usr/bin/env or one on PATH
+(`nelix-build--env-program')."
+  (or (eq system-type 'windows-nt) (file-executable-p (nelix-build--env-program))))
 
 (defun nelix-builder-unpack-test--unpack (make-archive name)
   "Build an archive with MAKE-ARCHIVE named NAME, unpack it, assert contents."
