@@ -34,6 +34,12 @@
               pkgs.perl
             ];
 
+            # The build sandbox has no /usr/bin/env, which the gate scripts'
+            # `#!/usr/bin/env bash' shebangs need; point them at the store bash.
+            postPatch = ''
+              patchShebangs bin packaging tools
+            '';
+
             dontConfigure = true;
             dontBuild = true;
             doCheck = true;
