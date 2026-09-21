@@ -62,6 +62,13 @@ Wrapped in one top directory, the way codeload and elpa serve one."
                   "--prefix=pkg-1.0/"
                   "--output" (expand-file-name dest) "HEAD")))
 
+(defun nelix-builder-unpack-test--tool-dirs ()
+  "Return the directories of the archive tools the unpack phase execs.
+Locate tar and gzip on the ambient PATH, omitting missing tools and duplicates."
+  (delete-dups
+   (mapcar #'file-name-directory
+           (delq nil (mapcar #'executable-find '("tar" "gzip"))))))
+
 (defun nelix-builder-unpack-test--unpack (make-archive name)
   "Build an archive with MAKE-ARCHIVE named NAME, unpack it, assert contents."
   (let* ((staging (make-temp-file "nelix-unpack-src-" t))
@@ -70,8 +77,11 @@ Wrapped in one top directory, the way codeload and elpa serve one."
         (let* ((repo (nelix-builder-unpack-test--git-repo staging))
                (archive (expand-file-name name staging)))
           (funcall make-archive repo archive)
+          ;; The phase execs tar under hermetic /usr/bin:/bin, empty in nix's
+          ;; build sandbox, so supply the actual tar and gzip directories.
           (let ((nelix-build--source-archive archive)
-                (nelix-build--tar-exclude nil))
+                (nelix-build--tar-exclude nil)
+                (nelix-build-tool-paths (nelix-builder-unpack-test--tool-dirs)))
             (nelix-builder--run-phase-elisp
              'unpack (nelix-builder-unpack-test--preset-form) build build))
           ;; The source tree itself, not its wrapper, ends up in the build dir.
