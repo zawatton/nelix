@@ -27,14 +27,15 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: Set up MSYS2 MinGW64
+      - name: Set up MSYS2 UCRT64
         uses: msys2/setup-msys2@v2
         with:
-          msystem: MINGW64
+          msystem: UCRT64
           update: true
           # make: runs check; git: creates repository/archive test fixtures.
-          # mingw-w64-x86_64-emacs: native Windows lint and ERT runtime.
-          # mingw-w64-x86_64-python: python3 -m json.tool schema validation.
+          # mingw-w64-ucrt-x86_64-emacs: native Windows lint and ERT runtime (MSYS2 dropped
+          # Emacs from mingw64 on 2026-09-16; ucrt64 still has it).
+          # mingw-w64-ucrt-x86_64-python: python3 -m json.tool schema validation.
           # perl: edits lock fixtures; openssl: signs/verifies test payloads.
           # diffutils: cmp checks copied profile files in the native CLI gate.
           # https://packages.msys2.org/packages/base lists GNU tar, sed, gawk,
@@ -42,8 +43,8 @@ jobs:
           install: >-
             make
             git
-            mingw-w64-x86_64-emacs
-            mingw-w64-x86_64-python
+            mingw-w64-ucrt-x86_64-emacs
+            mingw-w64-ucrt-x86_64-python
             perl
             openssl
             diffutils
