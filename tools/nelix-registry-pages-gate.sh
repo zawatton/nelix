@@ -12,6 +12,12 @@ PAGES_DIR="${1:-public}"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 EMACS="${EMACS:-emacs}"
 TMP_DIR="$(mktemp -d)"
+# A native Windows Emacs cannot read MSYS paths such as /tmp/tmp.X (it maps them
+# to c:/tmp), so hand it the mixed form (C:/msys64/tmp/tmp.X) when cygpath exists.
+if command -v cygpath >/dev/null 2>&1; then
+  TMP_DIR="$(cygpath -m "$TMP_DIR")"
+  PAGES_DIR="$(cygpath -m "$PAGES_DIR")"
+fi
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 [ -f "$PAGES_DIR/index.el" ] || {
